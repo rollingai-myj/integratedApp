@@ -28,10 +28,16 @@ const envSchema = z.object({
     .optional()
     .default('http://localhost:5173/auth/callback'),
 
-  // 会话
-  SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(7200),
+  // 会话（默认 7 天；账密 / 飞书登录共用此 TTL）
+  SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(604800),
   COOKIE_DOMAIN: z.string().default('localhost'),
-  COOKIE_SECURE: z.coerce.boolean().default(false),
+  // 注意：不能用 z.coerce.boolean() —— 它走 Boolean()，"false" 会被当成 true（非空字符串）
+  COOKIE_SECURE: z
+    .preprocess(
+      (v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : Boolean(v)),
+      z.boolean(),
+    )
+    .default(false),
 
   // 阿里云 OSS（M2+ 用，M0 允许空）
   OSS_REGION: z.string().optional().default('oss-cn-shanghai'),

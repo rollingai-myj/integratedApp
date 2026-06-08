@@ -11,7 +11,7 @@
  */
 import express, { type Express } from 'express';
 import cookieParser from 'cookie-parser';
-import pinoHttp from 'pino-http';
+import { pinoHttp } from 'pino-http';
 
 import { requestIdMiddleware } from './middleware/request-id.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
