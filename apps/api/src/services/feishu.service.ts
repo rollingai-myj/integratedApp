@@ -1,40 +1,258 @@
 /**
- * 飞书服务接入点
+ * 飞书开放平台 API 客户端
  *
- * 涉及接口：
- * - POST /api/v1/auth/feishu/callback
- * - POST /api/v1/auth/feishu/h5-sign
+ * 覆盖：
+ *   - tenant_access_token 缓存（提前 5 分钟刷新）
+ *   - 网页授权 code → user_access_token
+ *   - user_access_token → 通讯录完整用户信息（含 department_path）
+ *   - jsapi_ticket 缓存
+ *   - H5 SDK 签名（hash 算法见 https://open.feishu.cn/document/uYjL24iN/uYjL24iN/...）
  *
- * M0：方法签名占位，全部抛 NotImplementedError。M1 接入飞书 OAuth 与 H5 免登。
+ * 设计要点：
+ *   - 所有方法都是 async，发出 fetch 真实请求；失败抛 AppError 让上层统一处理
+ *   - 缓存在进程内存（单实例足够；多实例后续可换 Redis）
+ *   - 不打印 token；日志只记结构化字段（code、route 等）
  */
-import { NotImplementedError } from '../lib/errors.js';
+import { createHash } from 'node:crypto';
+import { config } from '../config/env.js';
+import { AppError, ErrorCodes } from '../lib/errors.js';
+import { logger } from '../lib/logger.js';
 
-export interface FeishuUserProfile {
-  openId: string;
-  unionId: string;
-  name: string;
-  email?: string;
-  avatar?: string;
+// ---- Feishu 通讯录返回类型（按 docs/reference/feishu-user-info-api.md 整理）------
+
+export interface FeishuDeptPathItem {
+  department_id: string;
+  department_name: {
+    name: string;
+    i18n_name?: { en_us?: string; ja_jp?: string; zh_cn?: string };
+  };
+  department_path?: {
+    department_ids?: string[];
+    department_path_name?: {
+      name: string;
+      i18n_name?: { en_us?: string; ja_jp?: string; zh_cn?: string };
+    };
+  };
 }
 
+export interface FeishuUserContact {
+  open_id: string;
+  union_id?: string;
+  user_id?: string;
+  name: string;
+  en_name?: string;
+  email?: string;
+  enterprise_email?: string;
+  mobile?: string;
+  avatar?: {
+    avatar_72?: string;
+    avatar_240?: string;
+    avatar_640?: string;
+    avatar_origin?: string;
+  };
+  employee_no?: string;
+  department_ids?: string[];
+  department_path?: FeishuDeptPathItem[];
+  is_tenant_manager?: boolean;
+  is_frozen?: boolean;
+  is_resigned?: boolean;
+  is_activated?: boolean;
+}
+
+/** 网页授权 code 兑换返回 */
+export interface FeishuUserTokenInfo {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number; // 秒
+  refresh_expires_in: number;
+  open_id: string;
+  union_id?: string;
+  scope?: string;
+}
+
+interface CachedToken {
+  token: string;
+  expiresAt: number; // ms epoch
+}
+
+const FEISHU_BASE = 'https://open.feishu.cn';
+
 export class FeishuService {
-  /** OAuth code → access_token → user profile */
-  async exchangeCodeForProfile(_code: string): Promise<FeishuUserProfile> {
-    throw new NotImplementedError(
-      '[feishu.exchangeCodeForProfile] will be implemented in M1',
+  private tenantToken: CachedToken | null = null;
+  private jsapiTicket: CachedToken | null = null;
+
+  /** tenant_access_token：应用身份，2 小时有效，本类内提前 5 分钟刷 */
+  async getTenantAccessToken(): Promise<string> {
+    if (this.tenantToken && this.tenantToken.expiresAt > Date.now() + 5 * 60 * 1000) {
+      return this.tenantToken.token;
+    }
+
+    const res = await fetch(
+      `${FEISHU_BASE}/open-apis/auth/v3/tenant_access_token/internal`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_id: config.FEISHU_APP_ID,
+          app_secret: config.FEISHU_APP_SECRET,
+        }),
+      },
     );
+    const data = (await res.json()) as {
+      code: number;
+      msg?: string;
+      tenant_access_token?: string;
+      expire?: number;
+    };
+    if (data.code !== 0 || !data.tenant_access_token) {
+      logger.error({ feishuCode: data.code, msg: data.msg }, 'feishu tenant_access_token 失败');
+      throw new AppError(
+        502,
+        ErrorCodes.UPSTREAM_ERROR,
+        `获取飞书 tenant_access_token 失败：${data.msg ?? data.code}`,
+      );
+    }
+
+    this.tenantToken = {
+      token: data.tenant_access_token,
+      expiresAt: Date.now() + (data.expire ?? 7200) * 1000,
+    };
+    return data.tenant_access_token;
   }
 
-  /** 生成飞书 H5 SDK 所需的 signature（jsapi_ticket 派生） */
-  async signH5Url(_url: string): Promise<{
+  /**
+   * 网页授权码兑换：code → user_access_token + open_id
+   *
+   * 用 app_access_token (tenant_access_token) 作 Bearer 调用
+   * https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/create
+   */
+  async exchangeCodeForUserToken(code: string): Promise<FeishuUserTokenInfo> {
+    const appToken = await this.getTenantAccessToken();
+    const res = await fetch(`${FEISHU_BASE}/open-apis/authen/v1/access_token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${appToken}`,
+      },
+      body: JSON.stringify({
+        grant_type: 'authorization_code',
+        code,
+      }),
+    });
+    const data = (await res.json()) as {
+      code: number;
+      msg?: string;
+      data?: FeishuUserTokenInfo;
+    };
+    if (data.code !== 0 || !data.data) {
+      logger.warn({ feishuCode: data.code, msg: data.msg }, 'feishu code 兑换失败');
+      // code 已使用 / 过期 → 让前端重新触发授权
+      throw new AppError(
+        401,
+        ErrorCodes.TOKEN_INVALID,
+        `飞书授权码无效：${data.msg ?? data.code}`,
+      );
+    }
+    return data.data;
+  }
+
+  /**
+   * 用 user_access_token 取完整用户信息（含 department_path）
+   *
+   * 必须用 user_access_token；tenant_access_token 拿不到 department_path（接口文档第 7 条注意事项）
+   */
+  async fetchUserContact(
+    openId: string,
+    userAccessToken: string,
+  ): Promise<FeishuUserContact> {
+    const url = new URL(`${FEISHU_BASE}/open-apis/contact/v3/users/${openId}`);
+    url.searchParams.set('user_id_type', 'open_id');
+    url.searchParams.set('department_id_type', 'open_department_id');
+
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${userAccessToken}` },
+    });
+    const data = (await res.json()) as {
+      code: number;
+      msg?: string;
+      data?: { user: FeishuUserContact };
+    };
+    if (data.code !== 0 || !data.data?.user) {
+      logger.error({ feishuCode: data.code, msg: data.msg, openId }, 'feishu 通讯录查询失败');
+      throw new AppError(
+        502,
+        ErrorCodes.UPSTREAM_ERROR,
+        `获取飞书用户信息失败：${data.msg ?? data.code}`,
+      );
+    }
+    return data.data.user;
+  }
+
+  /** jsapi_ticket：用 tenant_access_token 换，2 小时有效 */
+  async getJsapiTicket(): Promise<string> {
+    if (this.jsapiTicket && this.jsapiTicket.expiresAt > Date.now() + 5 * 60 * 1000) {
+      return this.jsapiTicket.token;
+    }
+    const appToken = await this.getTenantAccessToken();
+    const res = await fetch(`${FEISHU_BASE}/open-apis/jssdk/ticket/get`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${appToken}` },
+    });
+    const data = (await res.json()) as {
+      code: number;
+      msg?: string;
+      data?: { ticket: string; expire_in: number };
+    };
+    if (data.code !== 0 || !data.data?.ticket) {
+      logger.error({ feishuCode: data.code, msg: data.msg }, 'feishu jsapi_ticket 失败');
+      throw new AppError(
+        502,
+        ErrorCodes.UPSTREAM_ERROR,
+        `获取飞书 jsapi_ticket 失败：${data.msg ?? data.code}`,
+      );
+    }
+    this.jsapiTicket = {
+      token: data.data.ticket,
+      expiresAt: Date.now() + (data.data.expire_in ?? 7200) * 1000,
+    };
+    return data.data.ticket;
+  }
+
+  /**
+   * H5 SDK 签名：tt.config 需要 { appId, timestamp, nonceStr, signature }
+   *
+   * 签名算法：sha1(jsapi_ticket + noncestr + timestamp + url 拼接的字符串)
+   * 文档：https://open.feishu.cn/document/uYjL24iN/uYjL24iN/h5/...
+   */
+  async signH5Url(url: string): Promise<{
     appId: string;
-    signature: string;
     timestamp: number;
     nonceStr: string;
+    signature: string;
   }> {
-    throw new NotImplementedError(
-      '[feishu.signH5Url] will be implemented in M1',
-    );
+    const ticket = await this.getJsapiTicket();
+    const timestamp = Math.floor(Date.now() / 1000);
+    const nonceStr = Math.random().toString(36).slice(2, 18);
+
+    const raw = `jsapi_ticket=${ticket}&noncestr=${nonceStr}&timestamp=${timestamp}&url=${url}`;
+    const signature = createHash('sha1').update(raw, 'utf8').digest('hex');
+
+    return {
+      appId: config.FEISHU_APP_ID,
+      timestamp,
+      nonceStr,
+      signature,
+    };
+  }
+
+  /** 构造 OAuth 跳转 URL（前端打开后由飞书引导用户授权，回跳到 redirect_uri） */
+  buildAuthorizeUrl(state: string, redirectUri?: string): string {
+    const url = new URL(`${FEISHU_BASE}/open-apis/authen/v1/authorize`);
+    url.searchParams.set('app_id', config.FEISHU_APP_ID);
+    url.searchParams.set('redirect_uri', redirectUri ?? config.FEISHU_REDIRECT_URI);
+    url.searchParams.set('state', state);
+    return url.toString();
   }
 }
 
