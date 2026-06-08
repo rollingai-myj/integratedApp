@@ -1,120 +1,238 @@
 /**
  * 模块 3 + 模块 4：门店主数据 + 商品/销售主数据
- *
- * 覆盖统一接口规划文档中：
- *   模块 3：
- *     - GET  /master/stores            门店主数据查询（SK-B1 升级）
- *     - PUT  /master/stores/:id        新增 / 更新门店（SK-B2）
- *     - GET  /master/environment/:storeId   门店周边洞察查询（SK-H1）
- *     - PUT  /master/environment/:storeId   门店周边洞察更新（SK-H2）
- *
- *   模块 4：
- *     - GET  /master/categories            商品分类树
- *     - GET  /master/products              商品基本信息
- *     - GET  /master/stores/:id/skus       门店在售 SKU（合并 SK-C1 + PR-A1）
- *     - POST /master/stores/:id/skus:import  批量导入门店 SKU 数据（SK-C2）
- *     - GET  /master/competitors           竞品价格（合并 SK-C3 + PR-A3）
- *     - GET  /master/baseline-skus         基准 SKU 名单（SK-C6）
- *     - GET  /master/promotion-skus        有促销文案的 SKU 列表（SK-C4）
- *     - GET  /master/promotions-text       促销文案详情（SK-C5）
- *
- * 注：周边洞察按规划文档归在「模块 3：门店与组织主数据」，因此挂在 master 下，
- *     未来若希望单独走 /api/v1/environment 也只是改 path 前缀，handler 不动。
  */
 import { Router } from 'express';
-import { NotImplementedError } from '../lib/errors.js';
+import type { Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
+import { AppError, ErrorCodes } from '../lib/errors.js';
 import { requireAuth } from '../middleware/auth.js';
+import {
+  listStores,
+  upsertStore,
+  getEnvironmentInsight,
+  upsertEnvironmentInsight,
+  listCategories,
+  listProducts,
+  listStoreSkus,
+  importStoreSkus,
+  queryCompetitors,
+  listBenchmarkSkus,
+  listPromoSkus,
+  listPromoText,
+} from '../services/master.service.js';
 
 export const masterRouter = Router();
 
-// 模块 3 ------------------------------------------------------------------
+function asyncHandler(
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>,
+) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
 
-/** 门店主数据查询（可带 ?id= 单查） */
-masterRouter.get('/master/stores', requireAuth, (_req, _res, next) => {
-  next(new NotImplementedError());
+// ---- 模块 3 ---------------------------------------------------------------
+
+masterRouter.get(
+  '/master/stores',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const id = typeof req.query.id === 'string' ? req.query.id : undefined;
+    const stores = await listStores({
+      userId: req.user!.id,
+      isSuperAdmin: req.user!.roles.includes('super_admin'),
+      id,
+    });
+    res.json({ stores, total: stores.length });
+  }),
+);
+
+const upsertStoreSchema = z.object({
+  storeCode: z.string().min(1),
+  storeName: z.string().min(1),
+  ownership: z.enum(['direct', 'franchise']).optional(),
+  province: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  district: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
+  openedAt: z.string().nullable().optional(),
+  status: z.enum(['active', 'disabled']).optional(),
 });
 
-/** 新增 / 更新门店（PUT 同时承载 upsert） */
-masterRouter.put('/master/stores/:id', requireAuth, (_req, _res, next) => {
-  next(new NotImplementedError());
-});
+masterRouter.put(
+  '/master/stores/:id',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (!req.user!.roles.includes('super_admin')) {
+      throw new AppError(403, ErrorCodes.FORBIDDEN, '仅超管可改门店主数据');
+    }
+    const body = upsertStoreSchema.parse(req.body);
+    const store = await upsertStore(req.params.id!, body);
+    res.json({ store });
+  }),
+);
 
-/** 门店周边洞察 - 查询（SK-H1） */
 masterRouter.get(
   '/master/environment/:storeId',
   requireAuth,
-  (_req, _res, next) => {
-    next(new NotImplementedError());
-  },
+  asyncHandler(async (req, res) => {
+    const insight = await getEnvironmentInsight(req.params.storeId!);
+    res.json({ insight });
+  }),
 );
 
-/** 门店周边洞察 - 更新（SK-H2） */
+const upsertInsightSchema = z.object({
+  city: z.string().nullable().optional(),
+  mainDemographic: z.string().nullable().optional(),
+  consumptionLevel: z.string().nullable().optional(),
+  competitorCount: z.number().int().nullable().optional(),
+  populationDensity: z.string().nullable().optional(),
+  insightData: z.record(z.unknown()).optional(),
+  source: z.string().nullable().optional(),
+});
+
 masterRouter.put(
   '/master/environment/:storeId',
   requireAuth,
-  (_req, _res, next) => {
-    next(new NotImplementedError());
-  },
+  asyncHandler(async (req, res) => {
+    const body = upsertInsightSchema.parse(req.body);
+    const insight = await upsertEnvironmentInsight(
+      req.params.storeId!,
+      body,
+      req.user!.id,
+    );
+    res.json({ insight });
+  }),
 );
 
-// 模块 4 ------------------------------------------------------------------
+// ---- 模块 4 ---------------------------------------------------------------
 
-/** 商品分类树 */
-masterRouter.get('/master/categories', requireAuth, (_req, _res, next) => {
-  next(new NotImplementedError());
-});
+masterRouter.get(
+  '/master/categories',
+  requireAuth,
+  asyncHandler(async (_req, res) => {
+    const categories = await listCategories();
+    res.json({ categories });
+  }),
+);
 
-/** 商品基本信息（主数据查询） */
-masterRouter.get('/master/products', requireAuth, (_req, _res, next) => {
-  next(new NotImplementedError());
-});
+masterRouter.get(
+  '/master/products',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+    const categoryId =
+      typeof req.query.categoryId === 'string' ? req.query.categoryId : undefined;
+    const limit = Number(req.query.limit) || undefined;
+    const products = await listProducts({ search, categoryId, limit });
+    res.json({ products });
+  }),
+);
 
-/** 门店在售 SKU（合并 SK-C1 + PR-A1） */
 masterRouter.get(
   '/master/stores/:id/skus',
   requireAuth,
-  (_req, _res, next) => {
-    next(new NotImplementedError());
-  },
+  asyncHandler(async (req, res) => {
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+    const categoryPath =
+      typeof req.query.categoryPath === 'string' ? req.query.categoryPath : undefined;
+    const skus = await listStoreSkus({
+      storeId: req.params.id!,
+      search,
+      categoryPath,
+    });
+    res.json({ skus, total: skus.length });
+  }),
 );
 
-/** 批量导入门店 SKU 数据（SK-C2 / ERP 同步） */
+const skuImportSchema = z.object({
+  rows: z.array(
+    z.object({
+      skuCode: z.string().min(1),
+      productName: z.string().optional(),
+      brand: z.string().optional(),
+      spec: z.string().optional(),
+      unit: z.string().optional(),
+      categoryPath: z.string().optional(),
+      wholesalePrice: z.number().optional(),
+      retailPrice: z.number().optional(),
+      originalPrice: z.number().optional(),
+      salesQty30d: z.number().int().optional(),
+      salesAmount30d: z.number().optional(),
+      salesQty90d: z.number().int().optional(),
+      salesAmount90d: z.number().optional(),
+      grossMargin30d: z.number().optional(),
+      stockQty: z.number().int().optional(),
+      lastDeliveryAt: z.string().optional(),
+      snapshotDate: z.string().optional(),
+    }),
+  ),
+});
+
 masterRouter.post(
   '/master/stores/:id/skus:import',
   requireAuth,
-  (_req, _res, next) => {
-    next(new NotImplementedError());
-  },
+  asyncHandler(async (req, res) => {
+    const body = skuImportSchema.parse(req.body);
+    const result = await importStoreSkus(req.params.id!, body.rows);
+    res.json(result);
+  }),
 );
 
-/** 竞品价格（按大类或按 SKU 查，合并 SK-C3 + PR-A3） */
-masterRouter.get('/master/competitors', requireAuth, (_req, _res, next) => {
-  next(new NotImplementedError());
-});
+masterRouter.get(
+  '/master/competitors',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const byCategoryPath =
+      typeof req.query.categoryPath === 'string'
+        ? req.query.categoryPath
+        : undefined;
+    const skuCsv =
+      typeof req.query.skuCodes === 'string' ? req.query.skuCodes : undefined;
+    const bySkuCodes = skuCsv
+      ? skuCsv.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const competitors = await queryCompetitors({ byCategoryPath, bySkuCodes });
+    res.json({ competitors });
+  }),
+);
 
-/** 基准 SKU 名单（SK-C6） */
 masterRouter.get(
   '/master/baseline-skus',
   requireAuth,
-  (_req, _res, next) => {
-    next(new NotImplementedError());
-  },
+  asyncHandler(async (req, res) => {
+    const segment =
+      req.query.segment === 'core' || req.query.segment === 'innovation'
+        ? req.query.segment
+        : undefined;
+    const skus = await listBenchmarkSkus({ segment });
+    res.json({ skus });
+  }),
 );
 
-/** 有促销文案的 SKU 列表（SK-C4） */
 masterRouter.get(
   '/master/promotion-skus',
   requireAuth,
-  (_req, _res, next) => {
-    next(new NotImplementedError());
-  },
+  asyncHandler(async (_req, res) => {
+    const skus = await listPromoSkus();
+    res.json({ skus });
+  }),
 );
 
-/** 促销文案详情（SK-C5） */
 masterRouter.get(
   '/master/promotions-text',
   requireAuth,
-  (_req, _res, next) => {
-    next(new NotImplementedError());
-  },
+  asyncHandler(async (req, res) => {
+    const categoryPath =
+      typeof req.query.categoryPath === 'string' ? req.query.categoryPath : undefined;
+    const skuCsv =
+      typeof req.query.skuCodes === 'string' ? req.query.skuCodes : undefined;
+    const skuCodes = skuCsv
+      ? skuCsv.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const promotions = await listPromoText({ categoryPath, skuCodes });
+    res.json({ promotions });
+  }),
 );
