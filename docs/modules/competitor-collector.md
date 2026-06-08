@@ -20,7 +20,9 @@ dim_competitor_product     ← 你登记竞品商品并映射到我们的 SKU
 fact_competitor_price_weekly  ← 你按周写入价格快照
 ```
 
-定义位置：[apps/api/src/db/migrations/V005__competitor.sql](../../apps/api/src/db/migrations/V005__competitor.sql)
+定义位置：
+- 主表：[V005__competitor.sql](../../apps/api/src/db/migrations/V005__competitor.sql)
+- 增量字段：[V020__competitor_extras.sql](../../apps/api/src/db/migrations/V020__competitor_extras.sql) — 给 `dim_competitor_product` 加 `series` 列
 
 依赖的两张主数据表（你只读，不写）：
 - `dim_product`（[V004](../../apps/api/src/db/migrations/V004__dim_master_data.sql)）—— 我们自己的 SKU，竞品商品的 `mapped_product_id` 指向它
@@ -137,9 +139,33 @@ const monday = mondayOf(collectedAt);  // 自己写个 helper
 
 ```
 apps/api/src/db/migrations/
-├── V005__competitor.sql      ← 不动
-├── V015__seed.sql            ← 不动
-├── V020__competitor_extras.sql ← 你新加，把要的字段加上
+├── V005__competitor.sql           ← 不动
+├── V015__seed.sql                 ← 不动
+├── V020__competitor_extras.sql    ← 已加：给 dim_competitor_product 加了 series 列
+└── V021__你要的下一个增量.sql       ← 你需要更多字段就这样加
+```
+
+### F. `dim_competitor_product.series` 字段填法
+
+V020 加了一个可空的 `series TEXT` 列，用来记录商品所属系列名（例：罗森 "おにぎりプレミアム"、农夫山泉 "茶π"）。
+
+填写约定：
+- **有系列概念的渠道**（罗森、7-11、便利蜂等品牌商）：尽量把系列名填上，便于后续按系列做对比、归类。
+- **没有系列概念的渠道**（综合电商：天猫超市、京东超市）：留空即可。
+- 系列名按竞品平台显示的中文/原文照搬，不要做翻译/规整（后续如要规范化，单独写归一化 job）。
+
+```typescript
+// adapter 解析时
+const series = page.querySelector('.series-tag')?.textContent?.trim() || null;
+await db.query(
+  `INSERT INTO dim_competitor_product (channel_id, external_sku, product_name, series, ...)
+   VALUES ($1, $2, $3, $4, ...)
+   ON CONFLICT (channel_id, external_sku) WHERE external_sku IS NOT NULL DO UPDATE
+     SET product_name = EXCLUDED.product_name,
+         series       = EXCLUDED.series,
+         updated_at   = now()`,
+  [channelId, externalSku, productName, series, /* ... */],
+);
 ```
 
 ---
