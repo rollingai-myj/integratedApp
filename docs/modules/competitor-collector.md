@@ -10,15 +10,15 @@
 
 **输入**：你自己的采集源（爬虫、第三方 API、CSV 导入、人工录入）
 
-**输出**：写入下面三张表
+**输出**：写入下面两张维度表
 
 ```
 dim_competitor_channel     ← 你登记新渠道
        ↓ (channel_id FK)
 dim_competitor_product     ← 你登记竞品商品并映射到我们的 SKU
-       ↓ (competitor_product_id FK)
-fact_competitor_price_weekly  ← 你按周写入价格快照
 ```
+
+> `fact_competitor_price_weekly`（价格快照表）不归你写，由后续的价盘 / 调度任务统一维护。你只负责把"有哪些渠道、哪些竞品商品、它们对应我们哪个 SKU"这部分维度数据做准做全。
 
 定义位置：
 - 主表：[V005__competitor.sql](../../apps/api/src/db/migrations/V005__competitor.sql)
@@ -47,22 +47,32 @@ cd integratedApp
 npm install
 docker compose up -d                  # 起本地 Postgres（5432）
 cp apps/api/.env.example apps/api/.env
-npm run -w apps/api migrate           # 跑 V001-V015，建好 35 张表
+npm run -w apps/api migrate           # 跑 V001-V020，建好 35 张表
 ```
 
-跑完之后 `dim_competitor_channel` / `dim_competitor_product` / `fact_competitor_price_weekly` 三张表就都建好了，老库迁过来的 9 个真实竞品渠道也已经在里面（罗森、7-11、天猫超市等）。
+跑完之后 `dim_competitor_channel` / `dim_competitor_product` / `fact_competitor_price_weekly` 三张表就都建好了，但**默认是空的**——V015 种子里没有渠道数据，老库的 9 条真实渠道（罗森、7-11、天猫超市等）只在 prod 数据库里，需要跑 [`apps/api/scripts/migrate-from-legacy-db.ts`](../../apps/api/scripts/migrate-from-legacy-db.ts) 才能迁过来，而你本地一般连不到 prod。
 
-### 3. 验证你能看到数据
+### 3. 验证表建好了 + 自己塞一条渠道
+
+先确认三张表都在：
+
+```bash
+docker exec myj-postgres psql -U myj -d myj_dev -c "\dt dim_competitor_*"
+docker exec myj-postgres psql -U myj -d myj_dev -c "\dt fact_competitor_*"
+```
+
+塞一条你打算开发的渠道（以天猫超市为例），后续 adapter 就用这个 `channel_id`：
 
 ```bash
 docker exec myj-postgres psql -U myj -d myj_dev -c "
-  SELECT channel_code, channel_name, kind
-  FROM dim_competitor_channel
-  ORDER BY channel_code;
+  INSERT INTO dim_competitor_channel (channel_code, channel_name, kind, price_uniform)
+  VALUES ('TMALL_SUPER', '天猫超市', 'online', TRUE)
+  ON CONFLICT (channel_code) DO NOTHING
+  RETURNING id, channel_code, channel_name;
 "
 ```
 
-应该看到 9 条左右的渠道。
+> 想要主仓那 9 条真实渠道的清单（名称 + 编码 + kind）做参考？开 issue 找仓库 owner 要，会贴一份 INSERT 给你。
 
 ### 4. 把你的代码放在哪里
 
