@@ -21,6 +21,22 @@ import type {
   PortalStoresResponse,
   SwitchStoreRequest,
   SwitchStoreResponse,
+  // M2/M3/M4
+  ListStoresResponse,
+  ListStoreSkusResponse,
+  PriceCurveResponse,
+  SubmitPriceChangeRequest,
+  SubmitPriceChangeResponse,
+  DiagnoseBatchResponse,
+  DiagnoseSkuResult,
+  PosterGenerateRequest,
+  PosterGenerateResponse,
+  PosterListResponse,
+  ActivePromotionsResponse,
+  RecommendPromotionsResponse,
+  ListShelfConfigsResponse,
+  ListScenesResponse,
+  ListSceneAdjustmentCountsResponse,
 } from '@myj/shared';
 
 const BASE_URL = '/api/v1';
@@ -120,6 +136,115 @@ export const portalApi = {
       method: 'POST',
       body,
     }),
+};
+
+// ============================================================================
+// 模块 3+4 · 主数据
+// ============================================================================
+
+export const masterApi = {
+  /** 当前用户可见门店（超管全部） */
+  listStores: () => request<ListStoresResponse>('/master/stores'),
+
+  /** 门店在册 SKU（含当前售价 + 销量快照） */
+  listStoreSkus: (storeId: string, params?: { search?: string; categoryPath?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.categoryPath) qs.set('categoryPath', params.categoryPath);
+    const q = qs.toString();
+    return request<ListStoreSkusResponse>(
+      `/master/stores/${encodeURIComponent(storeId)}/skus${q ? `?${q}` : ''}`,
+    );
+  },
+};
+
+// ============================================================================
+// 模块 5 · 货架 / 场景
+// ============================================================================
+
+export const shelvesApi = {
+  /** 当前门店的货架配置 */
+  listConfigs: (storeId: string) =>
+    request<ListShelfConfigsResponse>(
+      `/shelves/config/${encodeURIComponent(storeId)}`,
+    ),
+};
+
+export const scenesApi = {
+  /** 全部场景定义（货架位 + 品类） */
+  list: () => request<ListScenesResponse>('/scenes'),
+
+  /** 当前门店各场景的调改次数 */
+  adjustmentCounts: (storeId: string) =>
+    request<ListSceneAdjustmentCountsResponse>(
+      `/scenes/${encodeURIComponent(storeId)}/adjustments-count`,
+    ),
+};
+
+// ============================================================================
+// 模块 6 · 价盘
+// ============================================================================
+
+export const pricesApi = {
+  /** 价格曲线（按 SKU 时间序列） */
+  curve: (storeId: string, params?: { skuCodes?: string[]; daysBack?: number }) => {
+    const qs = new URLSearchParams({ storeId });
+    if (params?.skuCodes?.length) qs.set('skuCodes', params.skuCodes.join(','));
+    if (params?.daysBack) qs.set('daysBack', String(params.daysBack));
+    return request<PriceCurveResponse>(`/prices/curve?${qs.toString()}`);
+  },
+
+  /** 提交一次调价（D3：写流水 + 同时插一行 snapshot） */
+  adjust: (body: SubmitPriceChangeRequest) =>
+    request<SubmitPriceChangeResponse>('/prices/adjust', { method: 'POST', body }),
+
+  /** 批量 AI 诊断（走 Dify） */
+  diagnose: (storeId: string, skus: Array<{
+    skuCode: string;
+    currentPrice: number;
+    wholesalePrice?: number;
+    salesQty30d?: number;
+    grossMargin30d?: number;
+    competitorPrices?: Array<{ channel: string; price: number }>;
+  }>) =>
+    request<DiagnoseBatchResponse>('/prices/diagnose', {
+      method: 'POST',
+      body: { storeId, skus },
+    }),
+};
+
+export type { DiagnoseSkuResult };
+
+// ============================================================================
+// 模块 7 · 海报
+// ============================================================================
+
+export const postersApi = {
+  /** 单张同步生成（PO-C1） */
+  generate: (body: PosterGenerateRequest) =>
+    request<PosterGenerateResponse>('/posters/generate', { method: 'POST', body }),
+
+  /** 我的历史 / 全部（仅超管 scope=all） */
+  list: (params?: { scope?: 'mine' | 'all'; storeId?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.scope) qs.set('scope', params.scope);
+    if (params?.storeId) qs.set('storeId', params.storeId);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<PosterListResponse>(`/posters${q ? `?${q}` : ''}`);
+  },
+};
+
+// ============================================================================
+// 模块 8 · 促销
+// ============================================================================
+
+export const promotionsApi = {
+  /** 当前生效的促销批次（含 products + groups） */
+  active: () => request<ActivePromotionsResponse>('/promotions/active'),
+
+  /** 个性化推荐（按用户近 30 天海报品类重排） */
+  recommend: () => request<RecommendPromotionsResponse>('/promotions/recommend'),
 };
 
 // ============================================================================

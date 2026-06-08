@@ -144,3 +144,308 @@ export interface SwitchStoreRequest {
 export interface SwitchStoreResponse {
   currentStore: StoreRef;
 }
+
+// ============================================================================
+// 模块 3 + 4 · 主数据 (Master)
+// ============================================================================
+
+export interface StoreDetail {
+  id: string;
+  code: string;
+  name: string;
+  ownership: 'direct' | 'franchise';
+  province: string | null;
+  city: string | null;
+  district: string | null;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  openedAt: string | null;
+  status: 'active' | 'disabled';
+}
+
+export interface ProductRow {
+  id: string;
+  skuCode: string;
+  productName: string;
+  brand: string | null;
+  spec: string | null;
+  unit: string | null;
+  shelfLifeDays: number | null;
+  lengthMm: number | null;
+  widthMm: number | null;
+  heightMm: number | null;
+  categoryId: string | null;
+  categoryPath: string | null;
+  isNewProduct: boolean;
+  isPrivateLabel: boolean;
+  wholesalePrice: number | null;
+  suggestedRetailPrice: number | null;
+  introducedAt: string | null;
+  officialImageUrl: string | null;
+  status: 'active' | 'delisted';
+}
+
+export interface StoreSkuRow extends ProductRow {
+  retailPrice: number | null;
+  originalPrice: number | null;
+  hasPriceChange: boolean;
+  salesQty30d: number | null;
+  salesAmount30d: number | null;
+  salesQty90d: number | null;
+  salesAmount90d: number | null;
+  grossMargin30d: number | null;
+  stockQty: number | null;
+  lastDeliveryAt: string | null;
+  snapshotDate: string | null;
+}
+
+export interface ListStoresResponse {
+  stores: StoreDetail[];
+  total: number;
+}
+
+export interface ListStoreSkusResponse {
+  skus: StoreSkuRow[];
+  total: number;
+}
+
+// ============================================================================
+// 模块 6 · 价盘 (Prices)
+// ============================================================================
+
+export interface PriceCurvePoint {
+  snapshotDate: string;
+  retailPrice: number | null;
+  originalPrice: number | null;
+  wholesalePrice: number | null;
+  salesQty30d: number | null;
+  salesAmount30d: number | null;
+  grossMargin30d: number | null;
+  source: string;
+  priceChangeId: string | null;
+}
+
+export interface PriceCurveSku {
+  skuCode: string;
+  productName: string | null;
+  points: PriceCurvePoint[];
+}
+
+export interface PriceCurveResponse {
+  curves: PriceCurveSku[];
+}
+
+export interface PriceChangeRecord {
+  id: string;
+  storeId: string;
+  productId: string;
+  skuCode: string;
+  oldPrice: number | null;
+  newPrice: number;
+  source: 'manual' | 'ai_suggest' | 'rule_engine';
+  effectiveDate: string;
+  createdAt: string;
+}
+
+export interface SubmitPriceChangeRequest {
+  storeId: string;
+  skuCode: string;
+  newPrice: number;
+  oldPrice?: number;
+  source?: 'manual' | 'ai_suggest' | 'rule_engine';
+  note?: string;
+}
+
+export interface SubmitPriceChangeResponse {
+  record: PriceChangeRecord;
+}
+
+export interface DiagnoseSkuResult {
+  skuCode: string;
+  suggestion: 'up' | 'down' | 'hold' | 'unknown';
+  suggestedPrice: number | null;
+  reasoning: string;
+  confidence: number;
+  source: string;
+}
+
+export interface DiagnoseBatchResponse {
+  results: DiagnoseSkuResult[];
+}
+
+// ============================================================================
+// 模块 7 · 海报 (Posters)
+// ============================================================================
+
+export type PosterTemplate = 'vibrant' | 'premium' | 'minimal' | 'custom';
+export type PosterMode = 'photo_compose' | 'official_bg_only' | 'multi_product';
+
+export interface PosterGenerateRequest {
+  template: PosterTemplate;
+  mode: PosterMode;
+  copyText: string;
+  sourcePhotoUrl?: string;
+  productImageUrl?: string;
+  officialImageUrls?: string[];
+  customStyleDescription?: string;
+  skuCode?: string;
+  categoryName?: string;
+  storeId?: string;
+}
+
+export interface PosterRecord {
+  id: string;
+  jobId: string | null;
+  userId: string;
+  storeId: string | null;
+  template: PosterTemplate;
+  mode: PosterMode;
+  copyText: string;
+  skuCode: string | null;
+  categoryName: string | null;
+  posterImageUrl: string;
+  thumbnailUrl: string | null;
+  aiModel: string | null;
+  aiPrompt: string | null;
+  generationMs: number | null;
+  createdAt: string;
+}
+
+export interface PosterGenerateResponse {
+  poster: PosterRecord;
+}
+
+export interface PosterListResponse {
+  posters: PosterRecord[];
+}
+
+// ============================================================================
+// 模块 8 · 促销 (Promotions)
+// ============================================================================
+
+export interface PromotionUpload {
+  id: string;
+  fileName: string;
+  sourceFileUrl: string | null;
+  rowTotal: number;
+  productCount: number;
+  groupCount: number;
+  isActive: boolean;
+  activatedAt: string | null;
+  notes: string | null;
+  uploadedBy: string | null;
+  createdAt: string;
+}
+
+export interface ProductPromotion {
+  id: string;
+  uploadId: string;
+  rowIndex: number;
+  skuCode: string;
+  productName: string;
+  unit: string | null;
+  categoryName: string | null;
+  originalPrice: number | null;
+  bestLabel: string | null;
+  bestRequiredQty: number | null;
+  bestTotalPrice: number | null;
+  bestEffectiveUnitPrice: number | null;
+  bestSavingPercent: number | null;
+  validFrom: string | null;
+  validTo: string | null;
+  validDates: string[] | null;
+  mixGroupCode: string | null;
+  displayText: string | null;
+}
+
+export interface PromotionGroupRow {
+  id: string;
+  uploadId: string;
+  mixGroupCode: string;
+  displayName: string | null;
+  categoryName: string | null;
+  skuCodes: string[];
+  productCount: number;
+  bestLabel: string | null;
+  bestTotalPrice: number | null;
+  bestSavingPercent: number | null;
+  representativeImageUrl: string | null;
+}
+
+export interface ActivePromotionsResponse {
+  upload: PromotionUpload | null;
+  products: ProductPromotion[];
+  groups: PromotionGroupRow[];
+}
+
+export interface RecommendPromotionsResponse {
+  upload: PromotionUpload | null;
+  products: ProductPromotion[];
+}
+
+// ============================================================================
+// 模块 5 · 货架/场景 (Shelves & Scenes)
+// ============================================================================
+
+export interface ShelfConfig {
+  id: string;
+  storeId: string;
+  shelfCode: string;
+  positionCode: number;
+  groupName: string | null;
+  widthCm: number | null;
+  layerCount: number | null;
+  supportedCategories: string[];
+  displayOrder: number;
+  notes: string | null;
+  attributes: Record<string, unknown>;
+}
+
+export interface ListShelfConfigsResponse {
+  configs: ShelfConfig[];
+}
+
+export interface SceneDefinition {
+  positionCode: number;
+  positionName: string;
+  categories: Array<{ name: string; code: string | null; displayOrder: number }>;
+}
+
+export interface SceneAdjustmentCount {
+  positionCode: number;
+  positionName: string | null;
+  remakeCount: number;
+  lastRemakeAt: string | null;
+}
+
+export interface SceneAdjustmentItem {
+  action: 'add' | 'remove' | 'replace';
+  skuCode: string;
+  productName?: string | null;
+  reasonCode?: string;
+  reasonText?: string | null;
+}
+
+export interface SceneAdjustment {
+  id: string;
+  storeId: string;
+  positionCode: number;
+  summaryText: string | null;
+  addedCount: number;
+  removedCount: number;
+  replacedCount: number;
+  items: SceneAdjustmentItem[];
+  aiSessionId: string | null;
+  triggeredBy: string | null;
+  triggeredDisplay: string | null;
+  triggeredAt: string;
+}
+
+export interface ListScenesResponse {
+  scenes: SceneDefinition[];
+}
+
+export interface ListSceneAdjustmentCountsResponse {
+  counts: SceneAdjustmentCount[];
+}
