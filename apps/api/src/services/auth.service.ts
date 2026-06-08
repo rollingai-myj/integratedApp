@@ -14,8 +14,11 @@ import { AppError, ErrorCodes } from '../lib/errors.js';
 import { verifyLegacyPassword } from '../lib/password.js';
 import { hashToken, issueToken } from '../lib/session.js';
 import { config } from '../config/env.js';
+import { feishuService } from './feishu.service.js';
+import { upsertUserFromFeishu } from './feishu-identity.service.js';
 import type {
   AuthenticatedUser,
+  AuthNotice,
   MeResponse,
   StoreRef,
 } from '../types/api.js';
@@ -133,6 +136,84 @@ export async function loginWithPassword(args: {
 }
 
 /**
+ * 飞书 OAuth code 登录：code → user_token → 用户信息 → upsert → session
+ *
+ * 返回：颁发的 session token（明文，调用方种 cookie）+ 用户 + notice
+ */
+export async function loginWithFeishu(args: {
+  code: string;
+  clientType: 'feishu_h5' | 'feishu_pc' | 'browser';
+  userAgent: string | null;
+  ip: string | null;
+}): Promise<{
+  token: string;
+  expiresAt: Date;
+  user: AuthenticatedUser;
+  notice: AuthNotice | null;
+}> {
+  // 1. code → user_access_token + open_id
+  const tokenInfo = await feishuService.exchangeCodeForUserToken(args.code);
+
+  // 2. user_access_token + open_id → 通讯录完整信息（含 department_path）
+  const feishuUser = await feishuService.fetchUserContact(
+    tokenInfo.open_id,
+    tokenInfo.access_token,
+  );
+
+  // 3. 解析身份 + 匹配门店 + upsert 本地账号
+  const upsert = await upsertUserFromFeishu(
+    feishuUser,
+    tokenInfo.access_token,
+    tokenInfo.expires_in,
+  );
+
+  // 4. 颁发会话
+  const { token, tokenHash } = issueToken();
+  const expiresAt = new Date(Date.now() + config.SESSION_TTL_SECONDS * 1000);
+
+  const authMethod =
+    args.clientType === 'feishu_h5' || args.clientType === 'feishu_pc'
+      ? 'feishu_h5'
+      : 'feishu_qr';
+
+  await withTransaction(async (client) => {
+    await client.query(
+      `INSERT INTO auth_sessions
+        (user_id, token_hash, auth_method, client_type, active_store_id, user_agent, ip, expires_at)
+       VALUES ($1, $2, $3::auth_method, $4::feishu_client_type, $5, $6, $7::inet, $8)`,
+      [
+        upsert.userId,
+        tokenHash,
+        authMethod,
+        args.clientType,
+        upsert.defaultStoreId,
+        args.userAgent,
+        args.ip,
+        expiresAt,
+      ],
+    );
+    await client.query(`UPDATE users SET last_login_at = now() WHERE id = $1`, [
+      upsert.userId,
+    ]);
+  });
+
+  const roles = await loadRoles(upsert.userId);
+
+  return {
+    token,
+    expiresAt,
+    user: {
+      id: upsert.userId,
+      name: upsert.displayName,
+      email: upsert.email ?? undefined,
+      avatarUrl: upsert.avatarUrl ?? undefined,
+      roles,
+    },
+    notice: upsert.notice,
+  };
+}
+
+/**
  * 根据 token 装配 MeResponse。token 无效/过期返回未登录态。
  */
 export async function getMeByToken(token: string | null): Promise<MeResponse> {
@@ -178,11 +259,22 @@ export async function getMeByToken(token: string | null): Promise<MeResponse> {
     /* 静默：心跳更新失败不影响读取 */
   });
 
-  // 飞书绑定（M1-PR2 实际写入；这里查一下，没绑就是 false）
   const feishuRes = await query<{ user_id: string }>(
     `SELECT user_id FROM user_feishu_identities WHERE user_id = $1 LIMIT 1`,
     [user.id],
   );
+  const feishuLinked = feishuRes.rows.length > 0;
+
+  // notice 合成规则：飞书绑定 + 非超管 + 0 门店 → 提示部门指向的门店未登记
+  // （首次登录时 loginWithFeishu 已带 notice；这里是后续 /auth/me 的兜底合成）
+  const notice: AuthNotice | null =
+    feishuLinked && !isSuperAdmin && stores.length === 0
+      ? {
+          code: 'NO_STORE_MATCHED',
+          message:
+            '您的飞书账号没有匹配到任何门店。请联系超管核对您的部门归属，或在系统中开通对应门店。',
+        }
+      : null;
 
   return {
     user: {
@@ -194,8 +286,9 @@ export async function getMeByToken(token: string | null): Promise<MeResponse> {
     },
     currentStore,
     stores,
-    feishuLinked: feishuRes.rows.length > 0,
+    feishuLinked,
     modules,
+    notice,
   };
 }
 
