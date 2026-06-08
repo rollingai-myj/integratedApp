@@ -32,7 +32,7 @@
 
 ---
 
-## M1 · 身份认证与门户 ⏳ 进行中
+## M1 · 身份认证与门户 ✅ 已完成（除 store/:id/profile 留 M2）
 
 **目标**：飞书 SSO 登录跑通，店长能在门户首页看到自己的店和可访问的模块。
 
@@ -43,10 +43,10 @@
 - ✅ `GET /api/v1/auth/feishu/authorize` — 飞书 OAuth 跳转 URL 构造 + state cookie（M1-PR2）
 - ✅ `POST /api/v1/auth/feishu/exchange` — code → user_token → 通讯录 → upsert → session（M1-PR2）
 - ✅ `GET /api/v1/auth/feishu/jsapi-config` — 飞书 H5 SDK 签名（M1-PR2）
-- ⏳ `GET /api/v1/portal/modules` — 当前用户可访问的模块（M1-PR3）
-- ⏳ `GET /api/v1/portal/stores` — 当前用户可访问的门店列表（M1-PR3）
-- ⏳ `POST /api/v1/portal/switch-store` — 切换当前激活的门店（M1-PR3）
-- ⏳ `GET /api/v1/portal/store/:storeId/profile` — 门店基本信息（M1-PR3）
+- ✅ `GET /api/v1/portal/modules` — 当前用户可访问的模块（M1-PR3）
+- ✅ `GET /api/v1/portal/stores` — 当前用户可访问的门店列表（M1-PR3）
+- ✅ `POST /api/v1/portal/active-store` — 切换当前激活的门店（M1-PR3，实际命名 active-store）
+- ⏳ `GET /api/v1/portal/store/:storeId/profile` — 门店基本信息（M2 落，需配合 store schema 字段细化）
 
 **前端**：
 - 登录页（飞书登录按钮 + 账号密码兜底）

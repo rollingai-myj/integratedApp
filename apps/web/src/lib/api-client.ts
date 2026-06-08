@@ -6,9 +6,22 @@
  *   - 统一错误格式解析
  *   - 统一请求 ID 透传
  *
- * 接口字段定义优先复用 @myj/shared，避免前后端类型漂移。
+ * 接口字段定义复用 @myj/shared 作为前后端契约的 single source of truth。
  */
-import type { MeResponse, HealthResponse, ApiErrorBody } from '@myj/shared';
+import type {
+  ApiErrorBody,
+  FeishuAuthorizeResponse,
+  FeishuExchangeRequest,
+  FeishuJsapiConfigResponse,
+  HealthResponse,
+  LoginRequest,
+  LoginResponse,
+  MeResponse,
+  PortalModulesResponse,
+  PortalStoresResponse,
+  SwitchStoreRequest,
+  SwitchStoreResponse,
+} from '@myj/shared';
 
 const BASE_URL = '/api/v1';
 
@@ -35,18 +48,21 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, signal } = opts;
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
-    credentials: 'include', // 带 cookie
+    credentials: 'include',
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
   });
+
+  // 204 No Content 没有 body，直接返回 undefined（调用方自己 cast）
+  if (res.status === 204) return undefined as unknown as T;
 
   if (!res.ok) {
     let errBody: ApiErrorBody | null = null;
     try {
       errBody = (await res.json()) as ApiErrorBody;
     } catch {
-      // 非 JSON 响应
+      /* 非 JSON 响应 */
     }
     throw new ApiError(
       res.status,
@@ -68,18 +84,48 @@ export const authApi = {
   /** 当前登录用户 */
   me: () => request<MeResponse>('/auth/me'),
 
-  /** 退出登录 */
-  logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+  /** 账密兜底登录 */
+  login: (body: LoginRequest) =>
+    request<LoginResponse>('/auth/login', { method: 'POST', body }),
 
-  // TODO M1: login, feishuAuthorize, feishuCallback, feishuExchange, feishuH5Sign
+  /** 退出登录（204） */
+  logout: () => request<void>('/auth/logout', { method: 'POST' }),
+
+  /** 飞书 OAuth：拿跳转 URL（后端顺便种 state cookie） */
+  feishuAuthorize: (redirectUri?: string) => {
+    const qs = redirectUri ? `?redirect_uri=${encodeURIComponent(redirectUri)}` : '';
+    return request<FeishuAuthorizeResponse>(`/auth/feishu/authorize${qs}`);
+  },
+
+  /** 飞书 OAuth：code → session */
+  feishuExchange: (body: FeishuExchangeRequest) =>
+    request<LoginResponse>('/auth/feishu/exchange', { method: 'POST', body }),
+
+  /** 飞书 H5 SDK 签名 */
+  feishuJsapiConfig: (url: string) =>
+    request<FeishuJsapiConfigResponse>(
+      `/auth/feishu/jsapi-config?url=${encodeURIComponent(url)}`,
+    ),
 };
 
 // ============================================================================
-// 健康检查（不在规划，但通用）
+// 模块 2 · 门户
+// ============================================================================
+
+export const portalApi = {
+  modules: () => request<PortalModulesResponse>('/portal/modules'),
+  stores: () => request<PortalStoresResponse>('/portal/stores'),
+  switchStore: (body: SwitchStoreRequest) =>
+    request<SwitchStoreResponse>('/portal/active-store', {
+      method: 'POST',
+      body,
+    }),
+};
+
+// ============================================================================
+// 健康检查
 // ============================================================================
 
 export const healthApi = {
   check: () => request<HealthResponse>('/health'),
 };
-
-// TODO M1+: 其它 9 个模块的客户端按需补全
