@@ -1,0 +1,89 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-dark: var(--primary-dark);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-hairline: var(--hairline);
+  --color-surface: var(--surface);
+  --color-canvas: var(--canvas);
+}
+
+:root {
+  --radius: 1rem;
+
+  /* Brand — 美宜佳红 ≈ #F11E1C */
+  --primary: oklch(0.605 0.234 27.5);
+  --primary-foreground: oklch(1 0 0);
+  --primary-dark: oklch(0.498 0.198 27.5);
+  --primary-soft: oklch(0.94 0.045 25);
+
+  /* Surfaces */
+  --canvas: oklch(0.905 0.025 75);       /* 米色桌面背景 */
+  --background: oklch(0.965 0.018 75);    /* 应用内 bg */
+  --surface: oklch(1 0 0);                 /* 卡片/输入白 */
+  --foreground: oklch(0.18 0.012 40);
+  --ink: oklch(0.18 0.012 40);
+  --ink-muted: oklch(0.56 0.018 50);
+  --hairline: oklch(0.18 0.012 40 / 0.08);
+
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --secondary: oklch(0.95 0.008 75);
+  --secondary-foreground: var(--ink);
+  --muted: oklch(0.95 0.008 75);
+  --muted-foreground: var(--ink-muted);
+  --accent: oklch(0.78 0.13 70);
+  --accent-foreground: var(--ink);
+  --destructive: oklch(0.605 0.234 27.5);
+  --destructive-foreground: oklch(1 0 0);
+  --border: var(--hairline);
+  --input: var(--hairline);
+  --ring: var(--primary);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html, body {
+    background-color: var(--color-canvas);
+    color: var(--color-foreground);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .tabular { font-variant-numeric: tabular-nums; }
+}

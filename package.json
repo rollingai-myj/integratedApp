@@ -1,0 +1,25 @@
+{
+  "name": "myj-integrated-app",
+  "version": "0.1.0-m0",
+  "private": true,
+  "description": "美宜佳门店助手统一应用（货盘选品 + 价盘管理 + 活动海报 + 门户）",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev:api": "npm run -w apps/api dev",
+    "dev:web": "npm run -w apps/web dev",
+    "build": "npm run -w apps/api build && npm run -w apps/web build",
+    "typecheck": "npm run -w apps/api typecheck && npm run -w apps/web typecheck",
+    "migrate": "npm run -w apps/api migrate",
+    "migrate:status": "npm run -w apps/api migrate:status",
+    "db:up": "docker-compose up -d postgres",
+    "db:down": "docker-compose down",
+    "db:reset": "docker-compose down -v && docker-compose up -d postgres && sleep 3 && npm run migrate"
+  }
+}

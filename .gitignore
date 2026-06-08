@@ -1,0 +1,58 @@
+# ========== Node ==========
+node_modules/
+.npm/
+.pnpm-debug.log*
+.yarn-error.log
+package-lock.json.bak
+
+# ========== Build ==========
+dist/
+build/
+*.tsbuildinfo
+
+# ========== Env ==========
+.env
+.env.local
+.env.*.local
+apps/*/.env
+apps/*/.env.local
+!.env.example
+!apps/*/.env.example
+
+# ========== Editor / OS ==========
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ========== Logs ==========
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ========== Test / Coverage ==========
+coverage/
+.nyc_output/
+*.lcov
+
+# ========== Cache ==========
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.vite/
+
+# ========== Database ==========
+postgres_data/
+*.dump
+*.sql.bak
+
+# ========== Misc ==========
+.tmp/
+tmp/
+*.local
