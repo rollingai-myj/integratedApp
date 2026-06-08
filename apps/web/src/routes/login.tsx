@@ -1,17 +1,33 @@
 /**
  * 登录页 (/login)
  *
- * M0：占位页。
- *   - 飞书登录按钮（M1 实现，当前禁用）
- *   - 账号 + 密码兜底（M1 实现，当前禁用）
+ * M1-PR3：
+ *   - 飞书登录按钮：调 /auth/feishu/authorize 拿 URL → window.location.href 跳转
+ *   - 账号 + 密码兜底（D2 决策的过渡期通路）
+ *   - 飞书回跳：当 URL 上有 ?code=&state= 时自动调 /auth/feishu/exchange
  *
  * 视觉沿用门户 demo 的渐变 hero + 卡片样式。
  */
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router';
+import { useEffect, useState } from 'react';
+import { z } from 'zod';
 import { IOSDevice } from '@/components/IOSDevice';
 import { BrandMark } from '@/components/BrandMark';
+import {
+  useLogin,
+  useFeishuExchange,
+  useMe,
+  isAuthenticated,
+} from '@/lib/auth';
+import { authApi, ApiError } from '@/lib/api-client';
+
+const searchSchema = z.object({
+  code: z.string().optional(),
+  state: z.string().optional(),
+});
 
 export const Route = createFileRoute('/login')({
+  validateSearch: searchSchema,
   head: () => ({
     meta: [
       { title: '登录 · 美宜佳门店助手' },
@@ -22,6 +38,82 @@ export const Route = createFileRoute('/login')({
 });
 
 function LoginPage() {
+  const navigate = useNavigate();
+  const search = useSearch({ from: '/login' });
+  const meQuery = useMe();
+  const login = useLogin();
+  const feishuExchange = useFeishuExchange();
+
+  const [account, setAccount] = useState('');
+  const [password, setPassword] = useState('');
+  const [feishuStarting, setFeishuStarting] = useState(false);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  // 已登录 → 跳首页
+  useEffect(() => {
+    if (meQuery.isSuccess && isAuthenticated(meQuery.data)) {
+      void navigate({ to: '/' });
+    }
+  }, [meQuery.isSuccess, meQuery.data, navigate]);
+
+  // 飞书回跳：URL 有 code 时自动兑换
+  useEffect(() => {
+    if (!search.code) return;
+    if (feishuExchange.isPending || feishuExchange.isSuccess) return;
+    feishuExchange.mutate(search.code, {
+      onSuccess: () => {
+        void navigate({ to: '/', search: undefined as never });
+      },
+      onError: (err) => {
+        if (err instanceof ApiError) {
+          setErrMsg(err.message);
+        } else {
+          setErrMsg('飞书登录失败，请重试');
+        }
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.code]);
+
+  const onSubmitPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrMsg(null);
+    login.mutate(
+      { account: account.trim(), password },
+      {
+        onSuccess: () => {
+          void navigate({ to: '/' });
+        },
+        onError: (err) => {
+          if (err instanceof ApiError) {
+            setErrMsg(err.message);
+          } else {
+            setErrMsg('登录失败，请重试');
+          }
+        },
+      },
+    );
+  };
+
+  const onFeishuLogin = async () => {
+    setErrMsg(null);
+    setFeishuStarting(true);
+    try {
+      const redirectUri = `${window.location.origin}/login`;
+      const { authorizeUrl } = await authApi.feishuAuthorize(redirectUri);
+      window.location.href = authorizeUrl;
+    } catch (err) {
+      setFeishuStarting(false);
+      if (err instanceof ApiError) {
+        setErrMsg(err.message);
+      } else {
+        setErrMsg('飞书登录初始化失败');
+      }
+    }
+  };
+
+  const exchanging = feishuExchange.isPending;
+
   return (
     <IOSDevice>
       <div className="relative min-h-full bg-background pb-10">
@@ -29,7 +121,8 @@ function LoginPage() {
         <div
           className="absolute inset-x-0 top-0 h-[360px] overflow-hidden"
           style={{
-            background: 'linear-gradient(160deg, var(--primary) 0%, var(--primary-dark) 100%)',
+            background:
+              'linear-gradient(160deg, var(--primary) 0%, var(--primary-dark) 100%)',
           }}
         >
           <div
@@ -46,7 +139,9 @@ function LoginPage() {
           <div className="flex items-center gap-3">
             <BrandMark size={44} bg="#fff" fg="var(--primary)" />
             <div>
-              <div className="text-[18px] font-semibold tracking-wide">门店助手</div>
+              <div className="text-[18px] font-semibold tracking-wide">
+                门店助手
+              </div>
               <div className="text-[12px] opacity-75 mt-0.5 tracking-wide">
                 MERCHANT PORTAL · 美宜佳
               </div>
@@ -71,47 +166,81 @@ function LoginPage() {
               '0 24px 60px -20px rgba(31,26,23,0.25), 0 2px 6px rgba(31,26,23,0.04)',
           }}
         >
-          <div className="text-[18px] font-semibold text-ink mb-5 tracking-wide">登录方式</div>
+          {exchanging ? (
+            <div className="py-10 text-center text-ink-muted text-sm">
+              正在验证飞书登录…
+            </div>
+          ) : (
+            <>
+              <div className="text-[18px] font-semibold text-ink mb-5 tracking-wide">
+                登录方式
+              </div>
 
-          {/* 飞书登录（M1 启用） */}
-          <button
-            disabled
-            type="button"
-            className="w-full h-[50px] rounded-2xl text-white text-[15px] font-semibold transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              background: 'var(--primary)',
-              letterSpacing: '0.15em',
-            }}
-          >
-            飞书登录（M1 接入）
-          </button>
+              {/* 飞书登录 */}
+              <button
+                onClick={() => void onFeishuLogin()}
+                disabled={feishuStarting}
+                type="button"
+                className="w-full h-[50px] rounded-2xl text-white text-[15px] font-semibold transition-transform active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  background: 'var(--primary)',
+                  letterSpacing: '0.15em',
+                }}
+              >
+                {feishuStarting ? '正在跳转…' : '飞书登录'}
+              </button>
 
-          {/* 分隔 */}
-          <div className="flex items-center gap-3 my-5 text-[11px] text-ink-muted tracking-widest">
-            <div className="flex-1 h-px bg-hairline" />
-            或
-            <div className="flex-1 h-px bg-hairline" />
-          </div>
+              <div className="flex items-center gap-3 my-5 text-[11px] text-ink-muted tracking-widest">
+                <div className="flex-1 h-px bg-hairline" />
+                或
+                <div className="flex-1 h-px bg-hairline" />
+              </div>
 
-          {/* 账密兜底（M1 启用） */}
-          <button
-            disabled
-            type="button"
-            className="w-full h-[50px] rounded-2xl border border-hairline text-ink text-[15px] font-medium transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            账号 + 密码登录（M1 接入）
-          </button>
+              {/* 账密兜底 */}
+              <form onSubmit={onSubmitPassword} className="space-y-3">
+                <input
+                  type="text"
+                  required
+                  placeholder="账号（如 admin 或门店编号）"
+                  value={account}
+                  onChange={(e) => setAccount(e.target.value)}
+                  className="w-full h-[46px] px-4 rounded-xl border border-hairline text-[14px] focus:outline-none focus:border-primary"
+                  autoComplete="username"
+                />
+                <input
+                  type="password"
+                  required
+                  placeholder="密码"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full h-[46px] px-4 rounded-xl border border-hairline text-[14px] focus:outline-none focus:border-primary"
+                  autoComplete="current-password"
+                />
+                <button
+                  type="submit"
+                  disabled={login.isPending}
+                  className="w-full h-[50px] rounded-2xl border border-hairline text-ink text-[15px] font-medium transition-transform active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {login.isPending ? '登录中…' : '账号密码登录'}
+                </button>
+              </form>
 
-          <div className="mt-5 text-[11.5px] text-ink-muted leading-relaxed tracking-wide">
-            当前为 M0 骨架阶段，登录功能将在 M1 里程碑实现。
-            <br />
-            如需查看可点击的功能，请前往 GitHub 仓库的 docs/milestones.md。
-          </div>
+              {errMsg && (
+                <div className="mt-4 px-3 py-2 rounded-lg bg-red-50 text-red-700 text-[12px] leading-snug">
+                  {errMsg}
+                </div>
+              )}
+
+              <div className="mt-5 text-[11.5px] text-ink-muted leading-relaxed tracking-wide">
+                飞书登录是主路径；账号密码是过渡期兜底（飞书全量上线后会下线）。
+              </div>
+            </>
+          )}
         </div>
 
         {/* Footer */}
         <div className="mt-10 text-center text-[11px] text-ink-muted leading-relaxed tracking-wide px-6">
-          <div className="opacity-60">v 0.1.0-m0</div>
+          <div className="opacity-60">v 0.1.0-m1</div>
         </div>
       </div>
     </IOSDevice>

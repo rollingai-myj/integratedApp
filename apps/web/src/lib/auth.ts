@@ -1,24 +1,73 @@
 /**
  * 认证状态（基于 @tanstack/react-query 缓存 /auth/me）
- *
- * M0 只暴露最小接口；M1 接通飞书后会扩展更多状态。
  */
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { authApi, ApiError } from './api-client.js';
-import type { MeResponse } from '@myj/shared';
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { authApi, portalApi, ApiError } from './api-client.js';
+import type {
+  LoginRequest,
+  MeResponse,
+  SwitchStoreRequest,
+} from '@myj/shared';
 
 const ME_QUERY_KEY = ['auth', 'me'] as const;
+const STORES_QUERY_KEY = ['portal', 'stores'] as const;
 
 /** Hook：当前登录用户（含门店、可访问模块） */
 export function useMe() {
   return useQuery<MeResponse>({
     queryKey: ME_QUERY_KEY,
     queryFn: () => authApi.me(),
-    staleTime: 60_000, // 1 分钟内不重复拉
+    staleTime: 60_000,
     retry: (failureCount, err) => {
-      // 401 不重试
       if (err instanceof ApiError && err.status === 401) return false;
       return failureCount < 2;
+    },
+  });
+}
+
+/** Hook：账密登录（成功后失效 me 缓存） */
+export function useLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: LoginRequest) => authApi.login(body),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
+    },
+  });
+}
+
+/** Hook：飞书 code 兑换登录 */
+export function useFeishuExchange() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (code: string) =>
+      authApi.feishuExchange({ code, client: 'browser' }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
+    },
+  });
+}
+
+/** Hook：可见门店列表（仅在已登录且多店时使用） */
+export function useVisibleStores() {
+  return useQuery({
+    queryKey: STORES_QUERY_KEY,
+    queryFn: () => portalApi.stores(),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Hook：切店 */
+export function useSwitchStore() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SwitchStoreRequest) => portalApi.switchStore(body),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
     },
   });
 }
@@ -31,6 +80,7 @@ export function useLogout() {
       await authApi.logout();
     } finally {
       await qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
+      await qc.invalidateQueries({ queryKey: STORES_QUERY_KEY });
     }
   };
 }

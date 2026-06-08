@@ -20,6 +20,7 @@ import type {
   AuthenticatedUser,
   AuthNotice,
   MeResponse,
+  ModuleKey,
   StoreRef,
 } from '../types/api.js';
 
@@ -47,7 +48,7 @@ interface StoreRow {
   is_primary: boolean;
 }
 
-const MODULES_BY_ROLE: Record<string, string[]> = {
+const MODULES_BY_ROLE: Record<string, ModuleKey[]> = {
   super_admin: ['shelves', 'prices', 'posters', 'admin'],
   store_owner: ['shelves', 'prices', 'posters'],
   analyst: ['shelves', 'prices'],
@@ -365,8 +366,8 @@ function pickCurrentStore(
   return primary ?? stores[0] ?? null;
 }
 
-function computeModules(roles: string[]): string[] {
-  const set = new Set<string>();
+function computeModules(roles: string[]): ModuleKey[] {
+  const set = new Set<ModuleKey>();
   for (const role of roles) {
     for (const m of MODULES_BY_ROLE[role] ?? []) set.add(m);
   }
