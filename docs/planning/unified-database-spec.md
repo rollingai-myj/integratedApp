@@ -1,6 +1,5 @@
 # 美宜佳门店助手 · 统一数据库规划文档
 
-版本：v2.1（as-built 实施版）
 更新日期：2026-06-08
 读者：业务负责人、新加入开发的同事、外部审核人员
 配套文档：[统一接口规划文档](./unified-api-spec.md) · [里程碑追踪](../milestones.md) · [老库数据迁移说明](../legacy-data-migration.md)
@@ -811,7 +810,7 @@ URL（如 `/shelves/config/:storeId`）或 body（如 `/prices/adjust { storeId,
 | D10 | 周边洞察存法 | C（关键字段 + JSONB） | [V003 store_environment_insights](../../apps/api/src/db/migrations/V003__users_and_org.sql) | ✅ schema 就位，⏳ M2 落业务 |
 | D11 | AI 调用是否落库 | C（关键调用 + 出错调用） | [V002 audit_event_kind: shelf_virtual_generate / price_ai_diagnose](../../apps/api/src/db/migrations/V002__enum_types.sql) | ⏳ 各 PR 埋点 |
 | D12 | 老数据清理 | B（自动清理过程数据） | （定时任务，未实现） | ⏳ M5 落业务 |
-| D13 | 业务接口 storeId 来源 | B（从 session 读，不接受入参） | session middleware + [unified-api-spec.md § 0](unified-api-spec.md) | ⏳ 大重构 PR 落地 |
+| D13 | 业务接口 storeId 来源 | B（从 session 读，不接受入参） | session middleware + [unified-api-spec.md § 0](unified-api-spec.md) | ⏳ 待实施 |
 
 ---
 
@@ -831,7 +830,7 @@ URL（如 `/shelves/config/:storeId`）或 body（如 `/prices/adjust { storeId,
 
 | 项目 | 现有数据 | 合并后实际状态 |
 |---|---|---|
-| **选品** | 25 张表 | ✅ 已并入新统一 schema，结构按 v2.0 规划重组（详见 V004-V010）。老库 10,956 行业务数据已迁移过来 |
+| **选品** | 25 张表 | ✅ 已并入新统一 schema，结构按本文档重组（详见 V004-V010）。老库 10,956 行业务数据已迁移过来 |
 | **价盘** | 0 张专属表（借用选品） | ✅ 不需要迁移任何专属数据，加上登录后即可使用新统一 schema 中的销售+竞品+调价表 |
 | **海报** | 13 张表 | ✅ 已并入新统一 schema（V011），不过老库本身的 posters/poster_jobs 是空的（业务还没真正跑起来），所以只迁移了 promotion_uploads / product_promotions / promotion_groups 共 7,830 行 |
 | **新增** | - | ✅ 飞书身份绑定、登录会话、用户-门店关联、统一审计表 schema 已就位（V003 / V012）；业务层等 M1 落地 |

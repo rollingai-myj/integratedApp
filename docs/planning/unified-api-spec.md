@@ -1,9 +1,9 @@
-# 美宜佳门店助手 · 统一接口规划 v2
+# 美宜佳门店助手 · 统一接口规划
 
 > 这份文档是**接口的 single source of truth**。
 > 改接口的步骤：① 先改这份 → ② 改 `packages/shared/src/index.ts` → ③ 改后端 routes/services → ④ 改前端 hooks/UI。
 >
-> **v1 → v2 最大的变化**：门店上下文统一从会话读取，业务接口不再接受 `storeId` 入参。下面 § 0 是全局硬约束，所有人必读。
+> § 0 是全局硬约束（门店上下文规则），所有人必读，再看后面的模块。
 
 ---
 
@@ -76,49 +76,17 @@
 
 前端拦截这个 code 后跳到门店选择 UI。
 
-### 0.6 与 v1 spec 的差异速览
+### 0.6 路径里允许出现 `:storeId` / `:id` 的少数例外
 
-| v1 接口 | v2 接口 | 变化 |
-|---|---|---|
-| `GET /master/stores/:id/skus` | `GET /skus` | path 去掉 `:id`，从 session 读 |
-| `POST /master/stores/:id/skus:import` | `POST /skus:import` | 同上 |
-| `GET /shelves/config/:storeId` | `GET /shelves/config` | 同上 |
-| `POST /shelves/config/:storeId` | `POST /shelves/config` | 同上 |
-| `PUT /shelves/config/:storeId/:shelfId` | `PUT /shelves/config/:shelfId` | 同上 |
-| `DELETE /shelves/config/:storeId` | `DELETE /shelves/config` | 同上 |
-| `PUT /shelves/config/:storeId:replace-all` | `PUT /shelves/config:replace-all` | 同上 |
-| `GET /scenes/:storeId/adjustments-count` | `GET /scenes/adjustments-count` | 同上 |
-| `POST /scenes/:storeId/:sceneId/apply` | `POST /scenes/:sceneId/apply` | 同上 |
-| `GET /scenes/:storeId/:sceneId/history` | `GET /scenes/:sceneId/history` | 同上 |
-| `GET /scenes/:storeId/:sceneId/virtual-shelf-history` | `GET /scenes/:sceneId/virtual-shelf-history` | 同上 |
-| `POST /scenes/:storeId/:sceneId/virtual-shelf` | `POST /scenes/:sceneId/virtual-shelf` | 同上 |
-| `GET /shelves/state/:storeId` | `GET /shelves/state` | 同上 |
-| `PUT /shelves/state/:storeId/:shelfId` | `PUT /shelves/state/:shelfId` | 同上 |
-| `DELETE /shelves/state/:storeId` | `DELETE /shelves/state` | 同上 |
-| `GET /shelves/photos/:storeId/:shelfId` | `GET /shelves/photos/:shelfId` | 同上 |
-| `POST /shelves/photos/:storeId/:shelfId` | `POST /shelves/photos/:shelfId` | 同上 |
-| `PUT /shelves/photos/:storeId/:shelfId/current` | `PUT /shelves/photos/:shelfId/current` | 同上 |
-| `GET /surveys/:storeId/:shelfId/questions` | `GET /surveys/:shelfId/questions` | 同上 |
-| `PUT /surveys/:storeId/:shelfId/questions` | `PUT /surveys/:shelfId/questions` | 同上 |
-| `GET /surveys/:storeId/:shelfId/answers` | `GET /surveys/:shelfId/answers` | 同上 |
-| `PUT /surveys/:storeId/:shelfId/answers` | `PUT /surveys/:shelfId/answers` | 同上 |
-| `GET /shelves/errata/:storeId` | `GET /shelves/errata` | 同上 |
-| `POST /shelves/errata/:storeId` | `POST /shelves/errata` | 同上 |
-| `GET /prices/curve?storeId=xxx` | `GET /prices/curve` | 去掉 query |
-| `GET /prices/changes/:storeId` | `GET /prices/changes` | 同上 |
-| `POST /prices/adjust` body 含 `storeId` | body 不含 | body 删字段 |
-| `POST /prices/diagnose` body 含 `storeId` | body 不含 | 同上 |
-| `POST /posters/generate` body 含 `storeId` | body 不含 | 同上 |
-| `POST /posters/queue/enqueue` body 含 `storeId` | body 不含 | 同上 |
-| `GET /posters?storeId=xxx` | `GET /posters` | 去掉 query（scope=mine 看自己跨店的，scope=current 看本店；超管 scope=all） |
+只在"操作某条记录本身"时出现，不是"以这家店身份执行业务"。一共 3 处：
 
-**保留的 `:id` / `:storeId`（资源 CRUD 例外）**：
-
-| 接口 | 为什么保留 |
+| 接口 | 为什么允许 |
 |---|---|
-| `GET /master/stores?id=xxx` 和 `PUT /master/stores/:id` | 操作门店实体本身，不是"以这家店身份" |
-| `GET /master/environment/:storeId` 和 `PUT /master/environment/:storeId` | 同上，门店周边洞察绑定到具体门店行 |
+| `GET /master/stores?id=xxx` 和 `PUT /master/stores/:id` | 操作门店实体本身（开关店、改地址） |
+| `GET /master/environment/:storeId` 和 `PUT /master/environment/:storeId` | 门店周边洞察，绑定到具体门店行 |
 | `POST /portal/active-store` body `{ storeId }` | 这是**改 storeId 本身**的接口，必须显式 |
+
+除了上面 3 处，业务路径里**绝不出现** `storeId` / `:storeId` / `?storeId=` / body 字段。
 
 ---
 
@@ -248,10 +216,6 @@
 | GET | `/master/promotion-skus` | 已登录 | 有促销文案的 SKU 列表 |
 | GET | `/master/promotions-text?categoryPath&skuCodes` | 已登录 | 促销文案详情 |
 
-**v1 → v2 路径变化**：
-- `GET /master/stores/:id/skus` → `GET /skus`
-- `POST /master/stores/:id/skus:import` → `POST /skus:import`
-
 ---
 
 ## 6. 模块 5：货盘选品
@@ -318,8 +282,6 @@
 | GET | `/prices/changes?skuCode&limit` | 已登录 | 本店调价历史 |
 | POST | `/prices/adjust` | 店主 / 超管 | body `{skuCode, newPrice, oldPrice?, source?, aiAdvice?, aiModel?, effectiveDate?, note?}`。**不含 storeId** |
 | POST | `/prices/diagnose` | 店主 / 超管 | body `{skus: [{skuCode, currentPrice, ...}]}` 批量 AI 诊断 |
-
-**v1 → v2 body 变化**：`/prices/adjust` 和 `/prices/diagnose` 的 body 都去掉 `storeId` 字段。
 
 ---
 
@@ -426,71 +388,3 @@
 | Method | Path | 说明 |
 |---|---|---|
 | GET | `/health` | 返 `{status: 'ok', version}` |
-
----
-
-## 附录 A：v1 → v2 实施清单（给后续 PR 当 checklist）
-
-### A.1 后端 routes 改名
-
-| 文件 | 路由变化 |
-|---|---|
-| `apps/api/src/routes/master.routes.ts` | `GET /master/stores/:id/skus` → `GET /skus`；`POST /master/stores/:id/skus:import` → `POST /skus:import` |
-| `apps/api/src/routes/shelves.routes.ts` | 全部 `/shelves/config/:storeId*` 和 `/shelves/state/:storeId*` 去掉 `:storeId` 段；`/scenes/:storeId/*` 去掉 `:storeId`；`/surveys/:storeId/:shelfId/*` 去掉 `:storeId`；`/shelves/errata/:storeId` 去掉 `:storeId`；`/shelves/photos/:storeId/:shelfId` 去掉 `:storeId` |
-| `apps/api/src/routes/prices.routes.ts` | `?storeId=` query 去掉；body 去 `storeId` 字段 |
-| `apps/api/src/routes/posters.routes.ts` | body 去 `storeId` 字段；`/posters?storeId` query 去掉，改 `scope` 语义 |
-
-### A.2 后端 services 签名
-
-所有 service 的 `storeId: string` 参数应改为从 `req.user.currentStoreId` 取（在 route handler 里读，再传给 service）。Middleware 增加：业务路由命中前确保 `currentStoreId !== null`，否则直接返 `409 NO_STORE_SELECTED`。
-
-### A.3 前端 shared 类型
-
-`packages/shared/src/index.ts` 删字段：
-- `SubmitPriceChangeRequest.storeId`
-- `PosterGenerateRequest.storeId`
-- `EnqueuePostersRequest.storeId`（如果有）
-
-### A.4 前端 api-client
-
-- `pricesApi.curve(storeId, ...)` → `pricesApi.curve(params)`（去掉 storeId）
-- `pricesApi.adjust(body)` body 不含 storeId
-- `postersApi.generate(body)` body 不含 storeId
-- `postersApi.list({ scope })` 含义改为：`scope=mine`（默认）/ `scope=current` / `scope=all`
-- `masterApi.listStoreSkus(storeId, ...)` → `masterApi.listSkus(params)`
-- `shelvesApi.listConfigs(storeId)` → `shelvesApi.listConfigs()`
-- 等等
-
-### A.5 前端 hooks 与 UI
-
-- `useStoreSkus(storeId, ...)` → `useSkus(...)`
-- `usePriceCurve(storeId, skus, days)` → `usePriceCurve(skus, days)`
-- `useShelfConfigs(storeId)` → `useShelfConfigs()`
-- 全局加一个 ErrorBoundary：捕获 `409 NO_STORE_SELECTED` → 跳门店选择 UI
-- 切店 mutation 成功后失效所有业务 query
-
-### A.6 v1 兼容期？
-
-**不做**。v1 已经在 main 上但未上线，直接强切。
-
----
-
-## 附录 B：错误码完整清单
-
-见 § 1.5。新增的 `NO_STORE_SELECTED` 是 v2 唯一引入的 code。
-
----
-
-## 附录 C：v1 历史（已废弃，仅供参考）
-
-v1 spec 含 3 个层次：
-1. 三个旧项目（skuSelection / priceChange / poster）的原始接口清单
-2. 合并分析（哪些接口可以合并、怎么合）
-3. 12 个统一模块的清单
-
-v2 已把这些信息固化进上面的模块描述，原始 v1 完整内容在 git 历史里：
-```bash
-git show <在本文件加入 v2 之前的最后一个 commit>:docs/planning/unified-api-spec.md
-```
-
-如果想看历史合并决策的来龙去脉，再去看 v1；做日常开发参考 v2 即可。
