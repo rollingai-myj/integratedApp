@@ -112,10 +112,11 @@ npm run -w apps/web dev
 
 | 我想知道 | 看哪里 |
 |---|---|
+| **第一次接手本仓的同事看这里** | **[docs/team-quickstart.md](docs/team-quickstart.md)** |
 | 项目要做什么、当前进度 | 这份 README + [docs/milestones.md](docs/milestones.md) |
 | 所有接口的设计 | [docs/planning/unified-api-spec.md](docs/planning/unified-api-spec.md) |
 | 所有数据库表的设计 + 12 个决策点 | [docs/planning/unified-database-spec.md](docs/planning/unified-database-spec.md) |
-| 怎么贡献代码 | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| 怎么贡献代码（规则参考） | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 后端怎么写、跑、调试 | [apps/api/README.md](apps/api/README.md) |
 | 前端怎么写、跑、调试 | [apps/web/README.md](apps/web/README.md) |
 | 飞书登录怎么接入 | [docs/reference/feishu-auth-integration.md](docs/reference/feishu-auth-integration.md) |
