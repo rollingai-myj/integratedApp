@@ -131,19 +131,7 @@ if (!ourSku) {
 
 V005 已有 partial unique index `uq_competitor_product_ext`。重复采集同一商品要用 `INSERT ... ON CONFLICT (channel_id, external_sku) WHERE external_sku IS NOT NULL DO UPDATE`（partial index 必须显式带 WHERE 子句）。
 
-### C. 同一 (`competitor_product_id`, `snapshot_date`) 唯一
-
-V005 已有 `uq_competitor_price_weekly`。同一竞品同一日只能有一行。如果你按日采集，`snapshot_date` 推荐对齐到**周一**（与我们自己的销售快照对齐方便后续 join 比较）。
-
-```typescript
-const monday = mondayOf(collectedAt);  // 自己写个 helper
-```
-
-### D. `source` 字段建议值：`'crawler'` / `'api'` / `'manual'` / `'csv_import'`
-
-不是强约束，但便于后续做"数据来源归因"统计。如果你引入新 source，加进枚举值或保持字符串都行。
-
-### E. 不要改 V005
+### C. 不要改 V005
 
 你要的字段如果不够（要加 `category_path` 给竞品商品、给 channel 加 `region_code` 之类），**不要改 V005**，加新的 migration。本仓约定 V020+ 范围留给业务模块自己的 schema 增量。比如：
 
@@ -155,7 +143,7 @@ apps/api/src/db/migrations/
 └── V021__你要的下一个增量.sql       ← 你需要更多字段就这样加
 ```
 
-### F. `dim_competitor_product.series` 字段填法
+### D. `dim_competitor_product.series` 字段填法
 
 V020 加了一个可空的 `series TEXT` 列，用来记录商品所属系列名（例：罗森 "おにぎりプレミアム"、农夫山泉 "茶π"）。
 
@@ -184,9 +172,9 @@ await db.query(
 
 | 阶段 | 我建议做的事 | 完成的标志 |
 |---|---|---|
-| **P0 · 跑通最小路径** | 选一个最容易拿数据的渠道（如天猫超市），写一个 adapter，能把一个 SKU 的当前价采下来塞进 fact_competitor_price_weekly | 数据库里多了一行 fact 数据 |
-| **P1 · 多 SKU 多渠道** | 配置化（哪些渠道、哪些 SKU 要采）、定时任务（每周一次）、错误重试 | 一次跑完产出 N 行新 fact，无重复 |
-| **P2 · 接审计** | 采集成功 / 失败写一条 [audit_events](../../apps/api/src/db/migrations/V012__audit.sql)（`event_kind = 'competitor_price_import'`） | 超管在审计页能看到每次采集 |
+| **P0 · 跑通最小路径** | 选一个最容易拿数据的渠道（如天猫超市），写一个 adapter，能把一个 SKU 的商品基本信息采下来塞进 `dim_competitor_product`，并完成到 `dim_product` 的 SKU 映射 | 数据库里多了一行竞品商品，`mapped_product_id` 不为空 |
+| **P1 · 多 SKU 多渠道** | 配置化（哪些渠道、哪些 SKU 要采）、定时任务（每周一次重新拉一遍商品基本信息 / 上下架 / 系列归类）、错误重试 | `dim_competitor_product` 持续维护 N 条记录，重复采集走 ON CONFLICT 不产生脏数据 |
+| **P2 · 接审计** | 采集成功 / 失败写一条 [audit_events](../../apps/api/src/db/migrations/V012__audit.sql)（`event_kind = 'competitor_product_import'`） | 超管在审计页能看到每次采集 |
 | **P3 · SKU 映射工具** | 当采集到的商品名找不到对应我们的 SKU 时，进入"待映射队列"，人工/AI 完成映射 | 不再有 unmapped 竞品商品 |
 | **P4 · 上线** | 跑通生产环境的定时任务、监控告警、产品验收 | M5 上线打磨阶段把这块纳进 CI/CD |
 
