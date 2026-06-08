@@ -12,7 +12,6 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { ArrowLeft, Sparkles, Loader2 } from 'lucide-react';
 import { IOSDevice } from '@/components/IOSDevice';
-import { useMe } from '@/lib/auth';
 import {
   useGeneratePoster,
   usePosters,
@@ -115,8 +114,6 @@ function GenerateTab({
   prefill: { copyText?: string; skuCode?: string; categoryName?: string; productImageUrl?: string } | null;
   onConsumePrefill: () => void;
 }) {
-  const meQuery = useMe();
-  const storeId = meQuery.data?.currentStore?.id;
   const generate = useGeneratePoster();
 
   const [template, setTemplate] = useState<PosterTemplate>('vibrant');
@@ -156,7 +153,6 @@ function GenerateTab({
         sourcePhotoUrl: sourcePhotoUrl.trim() || undefined,
         customStyleDescription:
           template === 'custom' ? customStyle.trim() || undefined : undefined,
-        storeId,
       },
       {
         onSuccess: (data) => setResult(data.poster),

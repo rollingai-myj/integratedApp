@@ -1,19 +1,14 @@
 /**
  * 模块 6：价盘管理（业务接口）
  *
- * 覆盖统一接口规划文档：
- *   - GET  /prices/curve            查询价格曲线（PR-A2）
- *   - GET  /prices/changes/:storeId 历史调价记录（新增辅助）
- *   - POST /prices/adjust           提交一次调价（PR-A4，决策 D3 两层写入）
- *   - POST /prices/diagnose         批量价盘 AI 诊断（PR-B1，走统一 AI 网关）
- *
- * 注：商品列表（含价格）和竞品价已合并到 master.routes.ts（按规划文档"已并入模块 4"）。
+ * 全部业务接口从 session.currentStoreId 取门店，不接受客户端传 storeId。
+ * 详见 docs/planning/unified-api-spec.md § 0。
  */
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { AppError, ErrorCodes } from '../lib/errors.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireStore } from '../middleware/require-store.js';
 import {
   getPriceCurve,
   submitPriceChange,
@@ -36,19 +31,19 @@ function asyncHandler(
 pricesRouter.get(
   '/prices/curve',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
-    const storeId =
-      typeof req.query.storeId === 'string' ? req.query.storeId : undefined;
-    if (!storeId) {
-      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'storeId 必填');
-    }
     const skuCsv =
       typeof req.query.skuCodes === 'string' ? req.query.skuCodes : undefined;
     const skuCodes = skuCsv
       ? skuCsv.split(',').map((s) => s.trim()).filter(Boolean)
       : undefined;
     const daysBack = Number(req.query.daysBack) || undefined;
-    const curves = await getPriceCurve({ storeId, skuCodes, daysBack });
+    const curves = await getPriceCurve({
+      storeId: req.user!.currentStoreId!,
+      skuCodes,
+      daysBack,
+    });
     res.json({ curves });
   }),
 );
@@ -56,14 +51,15 @@ pricesRouter.get(
 // ---- 历史调价记录 --------------------------------------------------------
 
 pricesRouter.get(
-  '/prices/changes/:storeId',
+  '/prices/changes',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const skuCode =
       typeof req.query.skuCode === 'string' ? req.query.skuCode : undefined;
     const limit = Number(req.query.limit) || undefined;
     const changes = await listPriceChanges({
-      storeId: req.params.storeId!,
+      storeId: req.user!.currentStoreId!,
       skuCode,
       limit,
     });
@@ -74,7 +70,6 @@ pricesRouter.get(
 // ---- PR-A4 调价（决策 D3：同时写流水 + 销售快照） ------------------------
 
 const adjustSchema = z.object({
-  storeId: z.string().uuid(),
   skuCode: z.string().min(1),
   newPrice: z.number().nonnegative(),
   oldPrice: z.number().nonnegative().optional(),
@@ -88,20 +83,12 @@ const adjustSchema = z.object({
 pricesRouter.post(
   '/prices/adjust',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = adjustSchema.parse(req.body);
     const record = await submitPriceChange(
-      body.storeId,
-      {
-        skuCode: body.skuCode,
-        newPrice: body.newPrice,
-        oldPrice: body.oldPrice,
-        source: body.source,
-        aiAdvice: body.aiAdvice,
-        aiModel: body.aiModel,
-        effectiveDate: body.effectiveDate,
-        note: body.note,
-      },
+      req.user!.currentStoreId!,
+      body,
       req.user!.id,
       req.user!.name,
     );
@@ -112,7 +99,6 @@ pricesRouter.post(
 // ---- PR-B1 批量 AI 诊断 --------------------------------------------------
 
 const diagnoseSchema = z.object({
-  storeId: z.string().uuid(),
   skus: z
     .array(
       z.object({
@@ -138,9 +124,14 @@ const diagnoseSchema = z.object({
 pricesRouter.post(
   '/prices/diagnose',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = diagnoseSchema.parse(req.body);
-    const results = await diagnoseBatch(body.storeId, body.skus, req.user!.id);
+    const results = await diagnoseBatch(
+      req.user!.currentStoreId!,
+      body.skus,
+      req.user!.id,
+    );
     res.json({ results });
   }),
 );

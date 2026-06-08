@@ -1,11 +1,16 @@
 /**
  * 模块 7：活动海报（业务接口）
+ *
+ * 生成 / 入队 / 历史等"以当前店身份执行"的接口，全部从 session.currentStoreId
+ * 取门店，不接受客户端传 storeId。GET /posters 改用 scope 表达跨店 / 本店 / 全部。
+ * 详见 docs/planning/unified-api-spec.md § 0 / § 8。
  */
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AppError, ErrorCodes } from '../lib/errors.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireStore } from '../middleware/require-store.js';
 import {
   generatePosterSync,
   enqueueBatch,
@@ -44,10 +49,14 @@ const generateInputSchema = z.object({
 postersRouter.post(
   '/posters/generate',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = generateInputSchema.parse(req.body);
-    const storeId = typeof req.body.storeId === 'string' ? req.body.storeId : null;
-    const record = await generatePosterSync(body, req.user!.id, storeId);
+    const record = await generatePosterSync(
+      body,
+      req.user!.id,
+      req.user!.currentStoreId!,
+    );
     res.status(201).json({ poster: record });
   }),
 );
@@ -55,16 +64,20 @@ postersRouter.post(
 // ---- PO-D1 批量入队 ------------------------------------------------------
 
 const enqueueSchema = z.object({
-  storeId: z.string().uuid().optional(),
   jobs: z.array(generateInputSchema).min(1).max(10),
 });
 
 postersRouter.post(
   '/posters/queue/enqueue',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = enqueueSchema.parse(req.body);
-    const result = await enqueueBatch(body.jobs, req.user!.id, body.storeId ?? null);
+    const result = await enqueueBatch(
+      body.jobs,
+      req.user!.id,
+      req.user!.currentStoreId!,
+    );
     res.status(201).json(result);
   }),
 );
@@ -135,8 +148,11 @@ postersRouter.post(
   }),
 );
 
-// ---- 历史海报（PO-F2 + 店长"我的历史"） --------------------------------
+// ---- 历史海报 ------------------------------------------------------------
 
+// scope=mine     默认；当前用户跨店生成的全部海报
+// scope=current  当前用户 + 当前 session 门店
+// scope=all      仅超管；全部海报（可加 ?storeId= 过滤超管后台用）
 postersRouter.get(
   '/posters',
   requireAuth,
@@ -146,14 +162,31 @@ postersRouter.get(
     if (scope === 'all' && !isSuperAdmin) {
       throw new AppError(403, ErrorCodes.FORBIDDEN, '仅超管可查全部海报');
     }
-    const storeId =
-      typeof req.query.storeId === 'string' ? req.query.storeId : undefined;
     const limit = Number(req.query.limit) || undefined;
-    const posters = await listPosters({
-      userId: scope === 'all' ? undefined : req.user!.id,
-      storeId,
-      limit,
-    });
+
+    let userId: string | undefined;
+    let storeId: string | undefined;
+    if (scope === 'all') {
+      // 超管后台：可选 ?storeId= 过滤；不强制 currentStoreId
+      storeId =
+        typeof req.query.storeId === 'string' ? req.query.storeId : undefined;
+    } else if (scope === 'current') {
+      // 当前用户 + 当前 session 门店
+      if (!req.user!.currentStoreId) {
+        throw new AppError(
+          409,
+          ErrorCodes.NO_STORE_SELECTED,
+          '请先选择门店再查本店海报',
+        );
+      }
+      userId = req.user!.id;
+      storeId = req.user!.currentStoreId;
+    } else {
+      // scope=mine：当前用户跨店历史
+      userId = req.user!.id;
+    }
+
+    const posters = await listPosters({ userId, storeId, limit });
     res.json({ posters });
   }),
 );
