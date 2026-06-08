@@ -1,32 +1,46 @@
 /**
- * 鉴权中间件 requireAuth
+ * 鉴权中间件 requireAuth / optionalAuth
  *
  * 凭证来源（按优先级）：
  *   1. HTTP-only Cookie `sso_token`
  *   2. Header `Authorization: Bearer <token>`
  *
- * M0：JWT 的真正校验逻辑（用 jose）会在 M1 接入飞书时补齐。
- * 当前只要能识别到 token 就算未实现；任何调用 requireAuth 的请求都返回 401，
- * 直到 M1 把会话存储/JWT 校验接上为止。
+ * 校验：token → SHA-256 → auth_sessions.token_hash 查找；过期 / revoked / 用户停用都视为未登录
  *
- * 这样做的目的是：
- * - 所有 routes 文件里都能正确写出 `requireAuth` 中间件链
- * - M1 只改这一个文件就能让所有受保护路由瞬间可用
+ * 中间件挂上的 req.user 包含基础字段（id / name / roles / currentStoreId），
+ * 进一步的门店列表等让 handler 自己再去查（保持中间件轻）
  */
 import type { Request, Response, NextFunction } from 'express';
 import { AppError, ErrorCodes } from '../lib/errors.js';
+import { COOKIE_NAME, hashToken } from '../lib/session.js';
+import { query } from '../db/index.js';
+import type { AuthenticatedUser } from '../types/api.js';
 
-const COOKIE_NAME = 'sso_token';
+declare module 'express-serve-static-core' {
+  interface Request {
+    user?: AuthenticatedUser;
+    sessionToken?: string;
+  }
+}
 
-function extractToken(req: Request): string | null {
-  // Cookie
+interface SessionLookupRow {
+  user_id: string;
+  display_name: string;
+  status: 'active' | 'disabled';
+  active_store_id: string | null;
+  expires_at: Date;
+  revoked_at: Date | null;
+  email: string | null;
+  avatar_url: string | null;
+}
+
+export function extractToken(req: Request): string | null {
   const cookieToken =
     (req as Request & { cookies?: Record<string, string> }).cookies?.[
       COOKIE_NAME
     ] ?? null;
   if (cookieToken) return cookieToken;
 
-  // Bearer
   const auth = req.header('authorization');
   if (auth && auth.toLowerCase().startsWith('bearer ')) {
     return auth.slice(7).trim();
@@ -34,53 +48,107 @@ function extractToken(req: Request): string | null {
   return null;
 }
 
-/**
- * 强制要求登录。
- * - 无 token → 401 UNAUTHENTICATED
- * - 有 token 但校验未实现 → 501 NOT_IMPLEMENTED（M0 当前状态）
- *
- * 注：M0 整体策略是「所有需要登录的路由先返回 501」，但这里特别区分了
- * 「没带 token」（401）与「带了但还没接 JWT」（M1 实现），前端能据此调试。
- */
+async function loadUserFromToken(
+  token: string,
+): Promise<AuthenticatedUser | null> {
+  const tokenHash = hashToken(token);
+  const sessionRes = await query<SessionLookupRow>(
+    `SELECT s.user_id,
+            u.display_name,
+            u.email,
+            u.avatar_url,
+            u.status,
+            s.active_store_id,
+            s.expires_at,
+            s.revoked_at
+       FROM auth_sessions s
+       JOIN users u ON u.id = s.user_id AND u.deleted_at IS NULL
+      WHERE s.token_hash = $1
+      LIMIT 1`,
+    [tokenHash],
+  );
+  const row = sessionRes.rows[0];
+  if (!row) return null;
+  if (row.revoked_at) return null;
+  if (row.expires_at.getTime() < Date.now()) return null;
+  if (row.status !== 'active') return null;
+
+  const rolesRes = await query<{ role: string }>(
+    `SELECT role FROM user_roles WHERE user_id = $1 ORDER BY role`,
+    [row.user_id],
+  );
+
+  return {
+    id: row.user_id,
+    name: row.display_name,
+    email: row.email ?? undefined,
+    avatarUrl: row.avatar_url ?? undefined,
+    roles: rolesRes.rows.map((r) => r.role),
+  };
+}
+
+/** 强制登录，未登录 401 */
 export function requireAuth(
   req: Request,
   _res: Response,
   next: NextFunction,
 ): void {
-  const token = extractToken(req);
-  if (!token) {
-    next(
-      new AppError(
-        401,
-        ErrorCodes.UNAUTHENTICATED,
-        'Authentication required',
-      ),
-    );
-    return;
-  }
-
-  // TODO(M1): 用 jose 验证 token，加载 req.user。
-  // 目前先按 NOT_IMPLEMENTED 处理，避免假装登录成功。
-  next(
-    new AppError(
-      501,
-      ErrorCodes.NOT_IMPLEMENTED,
-      'Session verification will be implemented in M1',
-    ),
-  );
+  void (async () => {
+    const token = extractToken(req);
+    if (!token) {
+      next(
+        new AppError(
+          401,
+          ErrorCodes.UNAUTHENTICATED,
+          'Authentication required',
+        ),
+      );
+      return;
+    }
+    try {
+      const user = await loadUserFromToken(token);
+      if (!user) {
+        next(
+          new AppError(
+            401,
+            ErrorCodes.TOKEN_INVALID,
+            'Session not found or expired',
+          ),
+        );
+        return;
+      }
+      req.user = user;
+      req.sessionToken = token;
+      next();
+    } catch (err) {
+      next(err);
+    }
+  })();
 }
 
-/**
- * 可选鉴权：有 token 就尝试解析，无 token 不报错。
- * 用于 /auth/me 这种"未登录也要能调"的接口。
- *
- * M0 阶段：什么都不做，直接 next()。
- */
+/** 可选登录：无 token 直接 next；token 无效也直接 next（不挂 user） */
 export function optionalAuth(
-  _req: Request,
+  req: Request,
   _res: Response,
   next: NextFunction,
 ): void {
-  // TODO(M1): 同 requireAuth，但失败时静默 next()
-  next();
+  void (async () => {
+    const token = extractToken(req);
+    if (!token) {
+      next();
+      return;
+    }
+    try {
+      const user = await loadUserFromToken(token);
+      if (user) {
+        req.user = user;
+        req.sessionToken = token;
+      }
+      next();
+    } catch (err) {
+      // optional 鉴权失败不阻塞请求
+      next();
+      void err;
+    }
+  })();
 }

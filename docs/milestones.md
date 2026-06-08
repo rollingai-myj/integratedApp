@@ -32,22 +32,22 @@
 
 ---
 
-## M1 · 身份认证与门户 ⏳ 待开始
+## M1 · 身份认证与门户 ⏳ 进行中
 
 **目标**：飞书 SSO 登录跑通，店长能在门户首页看到自己的店和可访问的模块。
 
 **涉及接口**（来自统一接口规划文档的"模块 1"和"模块 2"）：
-- `GET /api/v1/auth/me` — 升级为返回真实身份
-- `POST /api/v1/auth/login` — 账密兜底登录（D2 决策的过渡期方案）
-- `GET /api/v1/auth/feishu/authorize` — 飞书 OAuth 发起
-- `GET /api/v1/auth/feishu/callback` — 飞书 OAuth 回调
-- `POST /api/v1/auth/feishu/exchange` — 飞书 H5 SDK 码兑换
-- `GET /api/v1/auth/feishu/jsapi-config` — 飞书 H5 SDK 签名
-- `POST /api/v1/auth/logout` — 退出登录
-- `GET /api/v1/portal/modules` — 当前用户可访问的模块
-- `GET /api/v1/portal/stores` — 当前用户可访问的门店列表
-- `POST /api/v1/portal/switch-store` — 切换当前激活的门店
-- `GET /api/v1/portal/store/:storeId/profile` — 门店基本信息
+- ✅ `GET /api/v1/auth/me` — 返回真实身份 + 可见门店 + 可访问模块（M1-PR1）
+- ✅ `POST /api/v1/auth/login` — 账密兜底登录（D2 决策的过渡期方案，M1-PR1）
+- ✅ `POST /api/v1/auth/logout` — 退出登录（M1-PR1）
+- ⏳ `GET /api/v1/auth/feishu/authorize` — 飞书 OAuth 发起（M1-PR2）
+- ⏳ `GET /api/v1/auth/feishu/callback` — 飞书 OAuth 回调（M1-PR2）
+- ⏳ `POST /api/v1/auth/feishu/exchange` — 飞书 H5 SDK 码兑换（M1-PR2）
+- ⏳ `GET /api/v1/auth/feishu/jsapi-config` — 飞书 H5 SDK 签名（M1-PR2）
+- ⏳ `GET /api/v1/portal/modules` — 当前用户可访问的模块（M1-PR3）
+- ⏳ `GET /api/v1/portal/stores` — 当前用户可访问的门店列表（M1-PR3）
+- ⏳ `POST /api/v1/portal/switch-store` — 切换当前激活的门店（M1-PR3）
+- ⏳ `GET /api/v1/portal/store/:storeId/profile` — 门店基本信息（M1-PR3）
 
 **前端**：
 - 登录页（飞书登录按钮 + 账号密码兜底）
@@ -151,7 +151,7 @@
 | 决策 | 默认实现 | 状态 |
 |---|---|---|
 | D1 一人一店 + 超管特权 | C | ✅ M0 落地 |
-| D2 分阶段切换登录 | C | ⏳ M1 落实 |
+| D2 分阶段切换登录 | C | 🟡 账密兜底 done (M1-PR1)，飞书 OAuth ⏳ M1-PR2 |
 | D3 调价插快照 | B | ⏳ M3 落实 |
 | D4 调改记录 + SKU 流水两层 | C | ⏳ M2 落实 |
 | D5 海报批次独立实体 | B | ⏳ M4 落实 |

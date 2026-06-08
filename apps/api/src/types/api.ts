@@ -10,10 +10,18 @@ export interface AuthenticatedUser {
   name: string;
   /** 邮箱（可选） */
   email?: string;
-  /** 角色列表，如 ['shop_owner', 'super_admin'] */
+  /** 头像（可选） */
+  avatarUrl?: string;
+  /** 角色列表，如 ['store_owner']、['super_admin'] */
   roles: string[];
-  /** 当前激活的门店编号（可选） */
-  currentStoreId?: string | null;
+}
+
+/** 门店引用（门户、auth/me、切店等共用） */
+export interface StoreRef {
+  id: string;
+  code: string;
+  name: string;
+  isPrimary?: boolean;
 }
 
 /** 统一错误响应体 */
@@ -32,13 +40,27 @@ export interface ApiSuccessResponse<T> {
   requestId?: string;
 }
 
-/** /api/v1/auth/me 在 M0 的返回结构 */
+/** /api/v1/auth/me 返回结构 */
 export interface MeResponse {
   user: AuthenticatedUser | null;
-  currentStore: { id: string; name: string } | null;
-  stores: Array<{ id: string; name: string }>;
+  currentStore: StoreRef | null;
+  stores: StoreRef[];
   feishuLinked: boolean;
+  /** 可见的功能模块 key：'shelves' | 'prices' | 'posters' | 'admin' */
   modules: string[];
+}
+
+/** POST /api/v1/auth/login 请求体 */
+export interface LoginRequest {
+  account: string;
+  password: string;
+}
+
+/** POST /api/v1/auth/login 响应体 */
+export interface LoginResponse {
+  user: AuthenticatedUser;
+  /** ISO 时间戳，方便前端做"会话快过期"提示 */
+  expiresAt: string;
 }
 
 /** /api/v1/health 返回结构 */
