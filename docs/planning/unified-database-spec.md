@@ -765,6 +765,36 @@
 
 ---
 
+## 决策 13：业务接口的门店上下文从哪里读？
+
+**背景**：用户登录后，业务接口（货盘 / 价盘 / 海报）需要知道"在操作哪家门店"。这个 `storeId` 可以从客户端传，也可以从会话推断。决策 D1 已经定了"一人多店"的可能性，所以多店用户必须有个明确的"当前激活门店"概念。
+
+### 选项 A：每个业务接口都接受 storeId 入参
+URL（如 `/shelves/config/:storeId`）或 body（如 `/prices/adjust { storeId, ... }`）显式传。
+
+- **好处**：接口签名清楚、可以同一会话内同时操作多家店
+- **坏处**：① 每个接口都得加 storeId 校验（权限 + 存在性）；② 多模块容易写不一致；③ 客户端要在每个调用点都拿好 storeId；④ 一旦漏传或传错，越权风险大
+
+### 选项 B：从会话读，业务接口不接受 storeId
+登录确定 storeId，多店用户通过 `POST /portal/active-store` 切换会话；所有业务接口从 `session.currentStoreId` 取。
+
+- **好处**：① 业务接口签名干净、无 storeId 字段；② 越权风险集中在切店一处；③ 客户端代码零分叉；④ 超管"以某店身份看数据"和店主走完全一样的链路
+- **坏处**：① 多店用户在不同店之间跳要多调一次切店接口；② 超管查别店要先切；③ 需要一个明确的"当前没选店"错误码
+
+### 选项 C：业务接口默认走 session，允许 `?storeId=` query 给超管 override
+混合方案。普通用户走 session，超管可以临时传 query 看别店。
+
+- **好处**：超管查多店时省一次切店调用
+- **坏处**：每个接口都要写"是否超管 override"分支，spec 永远要说明"超管可以这样、普通用户那样"，前端代码也要分叉
+
+**📌 我的推荐：B**。理由：① 把会话状态收敛到一个地方（`session.currentStoreId`）；② 业务接口签名最简单、Zod schema 最干净；③ 超管的"切店再操作"虽然多一次点击，但只在他想查别店时才有，日常自己负责的店操作零成本；④ 越权风险只在切店一处，安全审计简单。
+
+**新增错误码**：`409 NO_STORE_SELECTED` — 当 `session.currentStoreId` 为 `null` 时业务接口抛这个，前端拦截后跳门店选择 UI。
+
+**例外（资源 CRUD）**：操作门店实体本身的接口（`PUT /master/stores/:id`、`GET /master/environment/:storeId`）保留路径里的 `:id`，因为这些不是"以这家店身份操作"，而是"管理这条记录"。详见 [unified-api-spec.md § 0.3](unified-api-spec.md)。
+
+---
+
 ## 决策总览表
 
 | 决策编号 | 决策内容 | 选定方案 | 实现位置 | 状态 |
@@ -781,12 +811,13 @@
 | D10 | 周边洞察存法 | C（关键字段 + JSONB） | [V003 store_environment_insights](../../apps/api/src/db/migrations/V003__users_and_org.sql) | ✅ schema 就位，⏳ M2 落业务 |
 | D11 | AI 调用是否落库 | C（关键调用 + 出错调用） | [V002 audit_event_kind: shelf_virtual_generate / price_ai_diagnose](../../apps/api/src/db/migrations/V002__enum_types.sql) | ⏳ 各 PR 埋点 |
 | D12 | 老数据清理 | B（自动清理过程数据） | （定时任务，未实现） | ⏳ M5 落业务 |
+| D13 | 业务接口 storeId 来源 | B（从 session 读，不接受入参） | session middleware + [unified-api-spec.md § 0](unified-api-spec.md) | ⏳ 大重构 PR 落地 |
 
 ---
 
 ## 下一步与变更流程
 
-12 个决策已全部按推荐方案落 schema。业务推进按 [里程碑文档](../milestones.md) 一个一个 PR 走。
+13 个决策已全部按推荐方案定下。业务推进按 [里程碑文档](../milestones.md) 一个一个 PR 走。
 
 **如果某条决策你后续想推翻**：
 1. 在 GitHub Issues 上开个 issue 说理由
