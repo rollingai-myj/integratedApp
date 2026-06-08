@@ -15,7 +15,7 @@ import { ArrowLeft, Search, X, TrendingUp, TrendingDown } from 'lucide-react';
 import { IOSDevice } from '@/components/IOSDevice';
 import { useMe } from '@/lib/auth';
 import {
-  useStoreSkus,
+  useSkus,
   usePriceCurve,
   useSubmitPriceChange,
 } from '@/lib/hooks';
@@ -28,13 +28,12 @@ export const Route = createFileRoute('/prices/')({
 
 function PricesPage() {
   const meQuery = useMe();
-  const storeId = meQuery.data?.currentStore?.id ?? null;
   const storeCode = meQuery.data?.currentStore?.code ?? '';
 
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<StoreSkuRow | null>(null);
 
-  const skusQuery = useStoreSkus(storeId, { search: search.trim() || undefined });
+  const skusQuery = useSkus({ search: search.trim() || undefined });
 
   const skus = skusQuery.data?.skus ?? [];
 
@@ -103,12 +102,8 @@ function PricesPage() {
         </div>
 
         {/* Detail sheet */}
-        {selected && storeId && (
-          <PriceSheet
-            sku={selected}
-            storeId={storeId}
-            onClose={() => setSelected(null)}
-          />
+        {selected && (
+          <PriceSheet sku={selected} onClose={() => setSelected(null)} />
         )}
       </div>
     </IOSDevice>
@@ -179,14 +174,12 @@ function SkuRow({ sku, onClick }: { sku: StoreSkuRow; onClick: () => void }) {
 
 function PriceSheet({
   sku,
-  storeId,
   onClose,
 }: {
   sku: StoreSkuRow;
-  storeId: string;
   onClose: () => void;
 }) {
-  const curveQuery = usePriceCurve(storeId, [sku.skuCode], 90);
+  const curveQuery = usePriceCurve([sku.skuCode], 90);
   const submit = useSubmitPriceChange();
 
   const [newPrice, setNewPrice] = useState(
@@ -207,7 +200,6 @@ function PriceSheet({
     }
     submit.mutate(
       {
-        storeId,
         skuCode: sku.skuCode,
         newPrice: price,
         oldPrice: sku.retailPrice ?? undefined,

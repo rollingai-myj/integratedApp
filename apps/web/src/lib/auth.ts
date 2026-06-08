@@ -61,13 +61,19 @@ export function useVisibleStores() {
   });
 }
 
-/** Hook：切店 */
+/** Hook：切店 — 成功后失效所有业务 query（数据都是按当前门店缓存的） */
 export function useSwitchStore() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: SwitchStoreRequest) => portalApi.switchStore(body),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
+      // 业务模块的 query 都按当前 session 门店取，切店后必须重新拉
+      await qc.invalidateQueries({ queryKey: ['skus'] });
+      await qc.invalidateQueries({ queryKey: ['shelves'] });
+      await qc.invalidateQueries({ queryKey: ['scenes'] });
+      await qc.invalidateQueries({ queryKey: ['prices'] });
+      await qc.invalidateQueries({ queryKey: ['posters'] });
     },
   });
 }

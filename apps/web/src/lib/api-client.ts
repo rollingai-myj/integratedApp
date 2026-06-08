@@ -146,15 +146,13 @@ export const masterApi = {
   /** 当前用户可见门店（超管全部） */
   listStores: () => request<ListStoresResponse>('/master/stores'),
 
-  /** 门店在册 SKU（含当前售价 + 销量快照） */
-  listStoreSkus: (storeId: string, params?: { search?: string; categoryPath?: string }) => {
+  /** 当前 session 门店的在册 SKU（含售价 + 销量快照） */
+  listSkus: (params?: { search?: string; categoryPath?: string }) => {
     const qs = new URLSearchParams();
     if (params?.search) qs.set('search', params.search);
     if (params?.categoryPath) qs.set('categoryPath', params.categoryPath);
     const q = qs.toString();
-    return request<ListStoreSkusResponse>(
-      `/master/stores/${encodeURIComponent(storeId)}/skus${q ? `?${q}` : ''}`,
-    );
+    return request<ListStoreSkusResponse>(`/skus${q ? `?${q}` : ''}`);
   },
 };
 
@@ -163,22 +161,17 @@ export const masterApi = {
 // ============================================================================
 
 export const shelvesApi = {
-  /** 当前门店的货架配置 */
-  listConfigs: (storeId: string) =>
-    request<ListShelfConfigsResponse>(
-      `/shelves/config/${encodeURIComponent(storeId)}`,
-    ),
+  /** 当前 session 门店的货架配置 */
+  listConfigs: () => request<ListShelfConfigsResponse>('/shelves/config'),
 };
 
 export const scenesApi = {
   /** 全部场景定义（货架位 + 品类） */
   list: () => request<ListScenesResponse>('/scenes'),
 
-  /** 当前门店各场景的调改次数 */
-  adjustmentCounts: (storeId: string) =>
-    request<ListSceneAdjustmentCountsResponse>(
-      `/scenes/${encodeURIComponent(storeId)}/adjustments-count`,
-    ),
+  /** 当前 session 门店各场景的调改次数 */
+  adjustmentCounts: () =>
+    request<ListSceneAdjustmentCountsResponse>('/scenes/adjustments-count'),
 };
 
 // ============================================================================
@@ -186,30 +179,33 @@ export const scenesApi = {
 // ============================================================================
 
 export const pricesApi = {
-  /** 价格曲线（按 SKU 时间序列） */
-  curve: (storeId: string, params?: { skuCodes?: string[]; daysBack?: number }) => {
-    const qs = new URLSearchParams({ storeId });
+  /** 价格曲线（按 SKU 时间序列）— 当前 session 门店 */
+  curve: (params?: { skuCodes?: string[]; daysBack?: number }) => {
+    const qs = new URLSearchParams();
     if (params?.skuCodes?.length) qs.set('skuCodes', params.skuCodes.join(','));
     if (params?.daysBack) qs.set('daysBack', String(params.daysBack));
-    return request<PriceCurveResponse>(`/prices/curve?${qs.toString()}`);
+    const q = qs.toString();
+    return request<PriceCurveResponse>(`/prices/curve${q ? `?${q}` : ''}`);
   },
 
-  /** 提交一次调价（D3：写流水 + 同时插一行 snapshot） */
+  /** 提交一次调价（D3：写流水 + 同时插一行 snapshot）— 当前 session 门店 */
   adjust: (body: SubmitPriceChangeRequest) =>
     request<SubmitPriceChangeResponse>('/prices/adjust', { method: 'POST', body }),
 
-  /** 批量 AI 诊断（走 Dify） */
-  diagnose: (storeId: string, skus: Array<{
-    skuCode: string;
-    currentPrice: number;
-    wholesalePrice?: number;
-    salesQty30d?: number;
-    grossMargin30d?: number;
-    competitorPrices?: Array<{ channel: string; price: number }>;
-  }>) =>
+  /** 批量 AI 诊断（走 Dify）— 当前 session 门店 */
+  diagnose: (
+    skus: Array<{
+      skuCode: string;
+      currentPrice: number;
+      wholesalePrice?: number;
+      salesQty30d?: number;
+      grossMargin30d?: number;
+      competitorPrices?: Array<{ channel: string; price: number }>;
+    }>,
+  ) =>
     request<DiagnoseBatchResponse>('/prices/diagnose', {
       method: 'POST',
-      body: { storeId, skus },
+      body: { skus },
     }),
 };
 
@@ -224,8 +220,17 @@ export const postersApi = {
   generate: (body: PosterGenerateRequest) =>
     request<PosterGenerateResponse>('/posters/generate', { method: 'POST', body }),
 
-  /** 我的历史 / 全部（仅超管 scope=all） */
-  list: (params?: { scope?: 'mine' | 'all'; storeId?: string; limit?: number }) => {
+  /**
+   * 海报历史：
+   * - scope=mine（默认）我跨店生成的全部
+   * - scope=current  我在当前 session 门店生成的（需要已选门店）
+   * - scope=all      仅超管，全部海报（可附 storeId 过滤）
+   */
+  list: (params?: {
+    scope?: 'mine' | 'current' | 'all';
+    storeId?: string;
+    limit?: number;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.scope) qs.set('scope', params.scope);
     if (params?.storeId) qs.set('storeId', params.storeId);

@@ -84,6 +84,7 @@ async function loadUserFromToken(
     email: row.email ?? undefined,
     avatarUrl: row.avatar_url ?? undefined,
     roles: rolesRes.rows.map((r) => r.role),
+    currentStoreId: row.active_store_id,
   };
 }
 

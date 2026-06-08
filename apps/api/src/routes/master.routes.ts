@@ -6,6 +6,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AppError, ErrorCodes } from '../lib/errors.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireStore } from '../middleware/require-store.js';
 import {
   listStores,
   upsertStore,
@@ -132,14 +133,15 @@ masterRouter.get(
 );
 
 masterRouter.get(
-  '/master/stores/:id/skus',
+  '/skus',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const search = typeof req.query.search === 'string' ? req.query.search : undefined;
     const categoryPath =
       typeof req.query.categoryPath === 'string' ? req.query.categoryPath : undefined;
     const skus = await listStoreSkus({
-      storeId: req.params.id!,
+      storeId: req.user!.currentStoreId!,
       search,
       categoryPath,
     });
@@ -172,11 +174,15 @@ const skuImportSchema = z.object({
 });
 
 masterRouter.post(
-  '/master/stores/:id/skus:import',
+  '/skus:import',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
+    if (!req.user!.roles.includes('super_admin')) {
+      throw new AppError(403, ErrorCodes.FORBIDDEN, '仅超管可批量导入');
+    }
     const body = skuImportSchema.parse(req.body);
-    const result = await importStoreSkus(req.params.id!, body.rows);
+    const result = await importStoreSkus(req.user!.currentStoreId!, body.rows);
     res.json(result);
   }),
 );
