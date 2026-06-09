@@ -336,6 +336,22 @@ export interface PromotionUpload {
   createdAt: string;
 }
 
+export interface ProductPromotionDealOption {
+  label: string;
+  requiredQty: number;
+  totalPrice: number;
+  effectiveUnitPrice: number;
+  savingPercent: number;
+  channel?: string;
+  sources?: string[];
+  promoType?: string;
+  detail?: string;
+  validFrom?: string | null;
+  validTo?: string | null;
+  validDates?: string[] | null;
+  validDayOfWeek?: number[] | null;
+}
+
 export interface ProductPromotion {
   id: string;
   uploadId: string;
@@ -350,6 +366,7 @@ export interface ProductPromotion {
   bestTotalPrice: number | null;
   bestEffectiveUnitPrice: number | null;
   bestSavingPercent: number | null;
+  allOptions: ProductPromotionDealOption[] | null;
   validFrom: string | null;
   validTo: string | null;
   validDates: string[] | null;
