@@ -1,11 +1,15 @@
 /**
  * 模块 5：货盘选品业务接口
+ *
+ * 全部业务路由从 session.currentStoreId 取门店，不再接受 :storeId 路径段。
+ * 详见 docs/planning/unified-api-spec.md § 0。
  */
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AppError, ErrorCodes } from '../lib/errors.js';
 import { requireAuth } from '../middleware/auth.js';
+import { requireStore } from '../middleware/require-store.js';
 import {
   listShelfConfigs,
   createShelfConfig,
@@ -48,7 +52,7 @@ function asyncHandler(
   };
 }
 
-// ---- 货架配置 SK-D1～D5 ---------------------------------------------------
+// ---- 货架配置 ------------------------------------------------------------
 
 const upsertConfigSchema = z.object({
   shelfCode: z.string().min(1),
@@ -63,31 +67,34 @@ const upsertConfigSchema = z.object({
 });
 
 shelvesRouter.get(
-  '/shelves/config/:storeId',
+  '/shelves/config',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
-    const configs = await listShelfConfigs(req.params.storeId!);
+    const configs = await listShelfConfigs(req.user!.currentStoreId!);
     res.json({ configs });
   }),
 );
 
 shelvesRouter.post(
-  '/shelves/config/:storeId',
+  '/shelves/config',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = upsertConfigSchema.parse(req.body);
-    const config = await createShelfConfig(req.params.storeId!, body);
+    const config = await createShelfConfig(req.user!.currentStoreId!, body);
     res.status(201).json({ config });
   }),
 );
 
 shelvesRouter.put(
-  '/shelves/config/:storeId/:shelfId',
+  '/shelves/config/:shelfId',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = upsertConfigSchema.partial().parse(req.body);
     const config = await updateShelfConfig(
-      req.params.storeId!,
+      req.user!.currentStoreId!,
       req.params.shelfId!,
       body,
     );
@@ -98,11 +105,15 @@ shelvesRouter.put(
 const deleteSchema = z.object({ shelfCodes: z.array(z.string().min(1)).min(1) });
 
 shelvesRouter.delete(
-  '/shelves/config/:storeId',
+  '/shelves/config',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = deleteSchema.parse(req.body);
-    const result = await deleteShelfConfigs(req.params.storeId!, body.shelfCodes);
+    const result = await deleteShelfConfigs(
+      req.user!.currentStoreId!,
+      body.shelfCodes,
+    );
     res.json(result);
   }),
 );
@@ -110,16 +121,20 @@ shelvesRouter.delete(
 const replaceAllSchema = z.object({ configs: z.array(upsertConfigSchema) });
 
 shelvesRouter.put(
-  '/shelves/config/:storeId:replace-all',
+  '/shelves/config:replace-all',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = replaceAllSchema.parse(req.body);
-    const result = await replaceAllShelfConfigs(req.params.storeId!, body.configs);
+    const result = await replaceAllShelfConfigs(
+      req.user!.currentStoreId!,
+      body.configs,
+    );
     res.json(result);
   }),
 );
 
-// ---- 场景定义 SK-D6 -------------------------------------------------------
+// ---- 场景定义（全局，不需要门店） --------------------------------------
 
 shelvesRouter.get(
   '/scenes',
@@ -130,13 +145,14 @@ shelvesRouter.get(
   }),
 );
 
-// ---- 场景调改 SK-E1～E5 ---------------------------------------------------
+// ---- 场景调改 ------------------------------------------------------------
 
 shelvesRouter.get(
-  '/scenes/:storeId/adjustments-count',
+  '/scenes/adjustments-count',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
-    const counts = await listSceneAdjustmentCounts(req.params.storeId!);
+    const counts = await listSceneAdjustmentCounts(req.user!.currentStoreId!);
     res.json({ counts });
   }),
 );
@@ -158,8 +174,9 @@ const applySchema = z.object({
 });
 
 shelvesRouter.post(
-  '/scenes/:storeId/:sceneId/apply',
+  '/scenes/:sceneId/apply',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = applySchema.parse(req.body);
     const positionCode = Number(req.params.sceneId);
@@ -167,7 +184,7 @@ shelvesRouter.post(
       throw new AppError(400, ErrorCodes.BAD_REQUEST, 'sceneId 必须是数字');
     }
     const result = await applyAdjustment(
-      req.params.storeId!,
+      req.user!.currentStoreId!,
       { ...body, positionCode },
       req.user!.id,
       req.user!.name,
@@ -177,24 +194,30 @@ shelvesRouter.post(
 );
 
 shelvesRouter.get(
-  '/scenes/:storeId/:sceneId/history',
+  '/scenes/:sceneId/history',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const positionCode = Number(req.params.sceneId);
     const limit = Number(req.query.limit) || 50;
-    const records = await listSceneHistory(req.params.storeId!, positionCode, limit);
+    const records = await listSceneHistory(
+      req.user!.currentStoreId!,
+      positionCode,
+      limit,
+    );
     res.json({ records });
   }),
 );
 
 shelvesRouter.get(
-  '/scenes/:storeId/:sceneId/virtual-shelf-history',
+  '/scenes/:sceneId/virtual-shelf-history',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const positionCode = Number(req.params.sceneId);
     const limit = Number(req.query.limit) || 20;
     const records = await listVirtualShelfHistory(
-      req.params.storeId!,
+      req.user!.currentStoreId!,
       positionCode,
       limit,
     );
@@ -211,13 +234,14 @@ const recordVirtualSchema = z.object({
 });
 
 shelvesRouter.post(
-  '/scenes/:storeId/:sceneId/virtual-shelf',
+  '/scenes/:sceneId/virtual-shelf',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = recordVirtualSchema.parse(req.body);
     const positionCode = Number(req.params.sceneId);
     const record = await recordVirtualShelf(
-      req.params.storeId!,
+      req.user!.currentStoreId!,
       { ...body, positionCode },
       req.user!.id,
     );
@@ -225,15 +249,16 @@ shelvesRouter.post(
   }),
 );
 
-// ---- 货架运行时 SK-F1～F6 -------------------------------------------------
+// ---- 货架运行时 ----------------------------------------------------------
 
 shelvesRouter.get(
-  '/shelves/state/:storeId',
+  '/shelves/state',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const shelfCode =
       typeof req.query.shelfCode === 'string' ? req.query.shelfCode : undefined;
-    const states = await getShelfRuntime(req.params.storeId!, shelfCode);
+    const states = await getShelfRuntime(req.user!.currentStoreId!, shelfCode);
     res.json({ states });
   }),
 );
@@ -252,13 +277,14 @@ const updateRuntimeSchema = z.object({
 });
 
 shelvesRouter.put(
-  '/shelves/state/:storeId/:shelfId',
+  '/shelves/state/:shelfId',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = updateRuntimeSchema.parse(req.body);
     const state = await updateShelfRuntime(
-      req.params.storeId!,
-      req.params.shelfId!, // 这里 shelfId 实际是 shelf_code
+      req.user!.currentStoreId!,
+      req.params.shelfId!, // shelf_code
       body,
       req.user!.id,
     );
@@ -267,23 +293,25 @@ shelvesRouter.put(
 );
 
 shelvesRouter.delete(
-  '/shelves/state/:storeId',
+  '/shelves/state',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const shelfCode =
       typeof req.query.shelfCode === 'string' ? req.query.shelfCode : undefined;
-    const result = await deleteShelfRuntime(req.params.storeId!, shelfCode);
+    const result = await deleteShelfRuntime(req.user!.currentStoreId!, shelfCode);
     res.json(result);
   }),
 );
 
 shelvesRouter.get(
-  '/shelves/photos/:storeId/:shelfId',
+  '/shelves/photos/:shelfId',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const limit = Number(req.query.limit) || 20;
     const history = await listShelfPhotoHistory(
-      req.params.storeId!,
+      req.user!.currentStoreId!,
       req.params.shelfId!, // shelf_code
       limit,
     );
@@ -297,12 +325,13 @@ const addPhotosSchema = z.object({
 });
 
 shelvesRouter.post(
-  '/shelves/photos/:storeId/:shelfId',
+  '/shelves/photos/:shelfId',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = addPhotosSchema.parse(req.body);
     const result = await addShelfPhotoHistory(
-      req.params.storeId!,
+      req.user!.currentStoreId!,
       req.params.shelfId!, // shelf_code
       body.imageUrls,
       body.detectSummary ?? {},
@@ -317,12 +346,13 @@ const updateCurrentPhotosSchema = z.object({
 });
 
 shelvesRouter.put(
-  '/shelves/photos/:storeId/:shelfId/current',
+  '/shelves/photos/:shelfId/current',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = updateCurrentPhotosSchema.parse(req.body);
     await updateCurrentShelfPhotos(
-      req.params.storeId!,
+      req.user!.currentStoreId!,
       req.params.shelfId!,
       body.urls,
       req.user!.id,
@@ -331,13 +361,17 @@ shelvesRouter.put(
   }),
 );
 
-// ---- 调研问卷 SK-G1～G4 ---------------------------------------------------
+// ---- 调研问卷 ------------------------------------------------------------
 
 shelvesRouter.get(
-  '/surveys/:storeId/:shelfId/questions',
+  '/surveys/:shelfId/questions',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
-    const questions = await listQuestions(req.params.storeId!, req.params.shelfId!);
+    const questions = await listQuestions(
+      req.user!.currentStoreId!,
+      req.params.shelfId!,
+    );
     res.json({ questions });
   }),
 );
@@ -358,12 +392,13 @@ const saveQuestionsSchema = z.object({
 });
 
 shelvesRouter.put(
-  '/surveys/:storeId/:shelfId/questions',
+  '/surveys/:shelfId/questions',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = saveQuestionsSchema.parse(req.body);
     const result = await saveQuestions(
-      req.params.storeId!,
+      req.user!.currentStoreId!,
       req.params.shelfId!,
       body,
       req.user!.id,
@@ -373,10 +408,14 @@ shelvesRouter.put(
 );
 
 shelvesRouter.get(
-  '/surveys/:storeId/:shelfId/answers',
+  '/surveys/:shelfId/answers',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
-    const answers = await listAnswers(req.params.storeId!, req.params.shelfId!);
+    const answers = await listAnswers(
+      req.user!.currentStoreId!,
+      req.params.shelfId!,
+    );
     res.json({ answers });
   }),
 );
@@ -393,12 +432,13 @@ const saveAnswersSchema = z.object({
 });
 
 shelvesRouter.put(
-  '/surveys/:storeId/:shelfId/answers',
+  '/surveys/:shelfId/answers',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = saveAnswersSchema.parse(req.body);
     const result = await saveAnswers(
-      req.params.storeId!,
+      req.user!.currentStoreId!,
       req.params.shelfId!,
       body,
       req.user!.id,
@@ -407,14 +447,17 @@ shelvesRouter.put(
   }),
 );
 
-// ---- 勘误反馈 SK-N1 / SK-N2 -----------------------------------------------
+// ---- 勘误反馈 ------------------------------------------------------------
 
 shelvesRouter.get(
-  '/shelves/errata/:storeId',
+  '/shelves/errata',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const onlyPending = req.query.pending === '1' || req.query.pending === 'true';
-    const corrections = await listCorrections(req.params.storeId!, { onlyPending });
+    const corrections = await listCorrections(req.user!.currentStoreId!, {
+      onlyPending,
+    });
     res.json({ corrections });
   }),
 );
@@ -429,11 +472,16 @@ const submitCorrectionSchema = z.object({
 });
 
 shelvesRouter.post(
-  '/shelves/errata/:storeId',
+  '/shelves/errata',
   requireAuth,
+  requireStore,
   asyncHandler(async (req, res) => {
     const body = submitCorrectionSchema.parse(req.body);
-    const result = await submitCorrection(req.params.storeId!, body, req.user!.id);
+    const result = await submitCorrection(
+      req.user!.currentStoreId!,
+      body,
+      req.user!.id,
+    );
     res.status(201).json(result);
   }),
 );

@@ -394,7 +394,8 @@ taskkill /PID <进程号> /F
 | 项目要做什么、当前进度 | [README.md](../README.md) + [docs/milestones.md](milestones.md) |
 | 所有接口的设计 | [docs/planning/unified-api-spec.md](planning/unified-api-spec.md) |
 | **接口交互式文档（可点 Try it out 直接调）** | 启动后端后访问 <http://localhost:8787/api/v1/docs> |
-| 所有数据库表的设计 + 决策点 | [docs/planning/unified-database-spec.md](planning/unified-database-spec.md) |
+| 所有数据库表的设计 + 决策点（业务视角） | [docs/planning/unified-database-spec.md](planning/unified-database-spec.md) |
+| **每张表 / 每个字段 / 索引 / 外键的真实定义**（工程视角） | [docs/planning/database-schema-reference.md](planning/database-schema-reference.md) |
 | 协作详细规则 | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | 后端代码 / 启动 / 调试 | [apps/api/README.md](../apps/api/README.md) |
 | 前端代码 / 启动 / 调试 | [apps/web/README.md](../apps/web/README.md) |

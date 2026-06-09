@@ -249,7 +249,6 @@ export interface PriceChangeRecord {
 }
 
 export interface SubmitPriceChangeRequest {
-  storeId: string;
   skuCode: string;
   newPrice: number;
   oldPrice?: number;
@@ -291,7 +290,6 @@ export interface PosterGenerateRequest {
   customStyleDescription?: string;
   skuCode?: string;
   categoryName?: string;
-  storeId?: string;
 }
 
 export interface PosterRecord {

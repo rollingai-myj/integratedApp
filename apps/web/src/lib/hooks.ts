@@ -1,8 +1,11 @@
 /**
  * React Query hooks for M2/M3/M4
  *
- * 单文件聚合所有业务模块的 query/mutation，避免 12 个微 hook 文件。
- * 命名约定：useXxx 为 query，useXxxMutation 为写。
+ * 业务接口的 storeId 已经从 session 取（spec § 0 / D13），所以 hook 内部
+ * 不会再把 storeId 拼进 URL/Body。但 hook 入参仍保留 storeId，用途有二：
+ *   - 放进 queryKey：切店后 key 变化，自动 refetch；
+ *   - 作 `enabled` 闸门：没选门店时不发请求。
+ * 这样路由层完全无感，所有"按门店取"的语义还在前端，只是不再下传到后端。
  */
 import {
   useMutation,
@@ -19,7 +22,9 @@ import {
 } from './api-client.js';
 import type {
   PosterGenerateRequest,
+  PosterGenerateResponse,
   SubmitPriceChangeRequest,
+  SubmitPriceChangeResponse,
 } from '@myj/shared';
 
 // ============================================================================
@@ -40,7 +45,7 @@ export function useStoreSkus(
 ) {
   return useQuery({
     queryKey: ['master', 'skus', storeId, params?.search ?? '', params?.categoryPath ?? ''] as const,
-    queryFn: () => masterApi.listStoreSkus(storeId!, params),
+    queryFn: () => masterApi.listSkus(params),
     enabled: !!storeId,
     staleTime: 30_000,
   });
@@ -53,7 +58,7 @@ export function useStoreSkus(
 export function useShelfConfigs(storeId: string | null | undefined) {
   return useQuery({
     queryKey: ['shelves', 'config', storeId] as const,
-    queryFn: () => shelvesApi.listConfigs(storeId!),
+    queryFn: () => shelvesApi.listConfigs(),
     enabled: !!storeId,
     staleTime: 60_000,
   });
@@ -70,7 +75,7 @@ export function useScenes() {
 export function useSceneAdjustmentCounts(storeId: string | null | undefined) {
   return useQuery({
     queryKey: ['scenes', 'counts', storeId] as const,
-    queryFn: () => scenesApi.adjustmentCounts(storeId!),
+    queryFn: () => scenesApi.adjustmentCounts(),
     enabled: !!storeId,
     staleTime: 30_000,
   });
@@ -87,7 +92,7 @@ export function usePriceCurve(
 ) {
   return useQuery({
     queryKey: ['prices', 'curve', storeId, skuCodes.join(','), daysBack] as const,
-    queryFn: () => pricesApi.curve(storeId!, { skuCodes, daysBack }),
+    queryFn: () => pricesApi.curve({ skuCodes, daysBack }),
     enabled: !!storeId && skuCodes.length > 0,
     staleTime: 60_000,
   });
@@ -95,8 +100,12 @@ export function usePriceCurve(
 
 export function useSubmitPriceChange() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: SubmitPriceChangeRequest) => pricesApi.adjust(body),
+  return useMutation<
+    SubmitPriceChangeResponse,
+    Error,
+    SubmitPriceChangeRequest & { storeId?: string }
+  >({
+    mutationFn: ({ storeId: _ignored, ...body }) => pricesApi.adjust(body),
     onSuccess: async (_, vars) => {
       await qc.invalidateQueries({ queryKey: ['master', 'skus', vars.storeId] });
       await qc.invalidateQueries({ queryKey: ['prices', 'curve', vars.storeId] });
@@ -104,13 +113,45 @@ export function useSubmitPriceChange() {
   });
 }
 
+/**
+ * 价盘 · AI 批量诊断
+ *
+ * 调统一后端 /prices/diagnose（密钥保护、配额、审计都在后端）。
+ * 入参是想诊断的 SKU 列表（每个含价格 / 销量 / 毛利率），返回每个 SKU 的建议。
+ * 没用 useQuery 是因为这个调用是用户显式触发（点"刷新 AI 建议"按钮），不是
+ * 数据维度的 query。返回 mutation，调用方用 `mutateAsync` 拿结果即可。
+ */
+export function useDiagnoseSkus() {
+  return useMutation({
+    mutationFn: (
+      skus: Array<{
+        skuCode: string;
+        currentPrice: number;
+        wholesalePrice?: number;
+        salesQty30d?: number;
+        grossMargin30d?: number;
+      }>,
+    ) => pricesApi.diagnose(skus),
+  });
+}
+
 // ============================================================================
 // 模块 7 海报
 // ============================================================================
 
-export function usePosters(params?: { scope?: 'mine' | 'all'; storeId?: string; limit?: number }) {
+export function usePosters(params?: {
+  scope?: 'mine' | 'current' | 'all';
+  storeId?: string;
+  limit?: number;
+}) {
   return useQuery({
-    queryKey: ['posters', 'list', params?.scope ?? 'mine', params?.storeId ?? '', params?.limit ?? 50] as const,
+    queryKey: [
+      'posters',
+      'list',
+      params?.scope ?? 'mine',
+      params?.storeId ?? '',
+      params?.limit ?? 50,
+    ] as const,
     queryFn: () => postersApi.list(params),
     staleTime: 30_000,
   });
@@ -118,8 +159,12 @@ export function usePosters(params?: { scope?: 'mine' | 'all'; storeId?: string; 
 
 export function useGeneratePoster() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: PosterGenerateRequest) => postersApi.generate(body),
+  return useMutation<
+    PosterGenerateResponse,
+    Error,
+    PosterGenerateRequest & { storeId?: string }
+  >({
+    mutationFn: ({ storeId: _ignored, ...body }) => postersApi.generate(body),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['posters', 'list'] });
     },

@@ -26,8 +26,9 @@ integratedApp/
 ├── docs/                        # 所有规划与参考文档
 │   ├── milestones.md            # M0-M5 里程碑 + 当前进度
 │   ├── planning/
-│   │   ├── unified-api-spec.md         # 接口规划（80 个接口的权威定义）
-│   │   └── unified-database-spec.md    # 数据库规划（35 张表 + 12 个决策点）
+│   │   ├── unified-api-spec.md             # 接口规划（80 个接口的权威定义）
+│   │   ├── unified-database-spec.md        # 数据库规划（35 张表 + 13 个决策点，业务视角）
+│   │   └── database-schema-reference.md    # Schema 详细参考（每张表 + 每个字段 + 索引 + FK）
 │   └── reference/
 │       ├── feishu-auth-integration.md      # 飞书登录通用方案
 │       └── unified-sso-auth-architechture.md  # 统一 SSO 架构参考
@@ -116,7 +117,8 @@ npm run -w apps/web dev
 | 项目要做什么、当前进度 | 这份 README + [docs/milestones.md](docs/milestones.md) |
 | 所有接口的设计 | [docs/planning/unified-api-spec.md](docs/planning/unified-api-spec.md) |
 | **接口交互式文档（Swagger UI）** | 启动后端后访问 <http://localhost:8787/api/v1/docs> |
-| 所有数据库表的设计 + 12 个决策点 | [docs/planning/unified-database-spec.md](docs/planning/unified-database-spec.md) |
+| 所有数据库表的设计 + 13 个决策点（业务视角） | [docs/planning/unified-database-spec.md](docs/planning/unified-database-spec.md) |
+| **每张表 / 每个字段 / 索引 / 外键的真实定义**（工程视角） | **[docs/planning/database-schema-reference.md](docs/planning/database-schema-reference.md)** |
 | 怎么贡献代码（规则参考） | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | 后端怎么写、跑、调试 | [apps/api/README.md](apps/api/README.md) |
 | 前端怎么写、跑、调试 | [apps/web/README.md](apps/web/README.md) |
