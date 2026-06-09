@@ -43,8 +43,10 @@ export function createApp(): Express {
   );
 
   // 3) 解析 body / cookie
-  app.use(express.json({ limit: '2mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+  // 海报模块要把压缩后的实拍照（data URL，最大 ~2MB base64）发到 /posters/generate，
+  // 2MB 限额留余量不够；放到 8MB 仍远小于内存压力点。
+  app.use(express.json({ limit: '8mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '8mb' }));
   app.use(cookieParser());
 
   // 4) 业务路由
