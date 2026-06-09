@@ -10,9 +10,9 @@
  *   - 前端 SurveyQA = { id(number, == questionNo), question, answer(string), ... }
  *   保存/读取时按 questionNo ↔ questionId 做映射（需要先 list questions）。
  *
- * shelfCode 翻译：
- *   "pos-3"      → "pos-3-0"  （场景级 survey 落在第 0 组货架上，便于后端 FK 解析）
- *   "pos-3-2"    → 保持不变
+ * shelfCode：直接用 "pos-{N}"。saveShelfGroups（scenes.ts）会同时创建一行场景
+ * 级合成 config（shelfCode="pos-{N}", attributes.__scene_anchor__=true），让
+ * 后端 resolveShelfId 能查到。不再翻译 "pos-{N}-0" hack。
  */
 import { apiFetch } from '@/components/shelves/lib/api-client';
 import type { InsightQuestion } from '@/components/shelves/lib/difyInsightApi';
@@ -42,10 +42,9 @@ interface BackendAnswer {
   answeredAt: string;
 }
 
-/** "pos-{N}" → "pos-{N}-0"（场景级 → 第一个货架组）；其它原样返回 */
-function toGroupShelfCode(shelfId: string): string {
-  return /^pos-\d+$/.test(shelfId) ? `${shelfId}-0` : shelfId;
-}
+// shelfId 直接当 shelfCode 用；场景级 "pos-{N}" 由 saveShelfGroups 时创建合成
+// config 行兜底（attributes.__scene_anchor__=true）。
+const toShelfCode = (s: string) => s;
 
 function parseFrontQuestion(b: BackendQuestion): InsightQuestion {
   const opts = b.options;
@@ -78,7 +77,7 @@ export async function getShelfSurveyQuestions(
 ): Promise<InsightQuestion[] | null> {
   if (!storeId || !shelfId) return null;
   try {
-    const code = toGroupShelfCode(shelfId);
+    const code = toShelfCode(shelfId);
     const res = await apiFetch(`/surveys/${encodeURIComponent(code)}/questions`);
     if (!res.ok) return [];
     const data = (await res.json()) as { questions?: BackendQuestion[] };
@@ -95,7 +94,7 @@ export async function saveShelfSurveyQuestions(
   questions: InsightQuestion[],
 ): Promise<void> {
   if (!storeId || !shelfId || questions.length === 0) return;
-  const code = toGroupShelfCode(shelfId);
+  const code = toShelfCode(shelfId);
   await apiFetch(`/surveys/${encodeURIComponent(code)}/questions`, {
     method: 'PUT',
     body: JSON.stringify({
@@ -118,7 +117,7 @@ export async function getShelfSurveyAnswers(
 ): Promise<SurveyQA[] | null> {
   if (!storeId || !shelfId) return null;
   try {
-    const code = toGroupShelfCode(shelfId);
+    const code = toShelfCode(shelfId);
     const [qRes, aRes] = await Promise.all([
       apiFetch(`/surveys/${encodeURIComponent(code)}/questions`),
       apiFetch(`/surveys/${encodeURIComponent(code)}/answers`),
@@ -159,7 +158,7 @@ export async function saveShelfSurveyAnswers(
   answers: SurveyQA[],
 ): Promise<void> {
   if (!storeId || !shelfId || answers.length === 0) return;
-  const code = toGroupShelfCode(shelfId);
+  const code = toShelfCode(shelfId);
   // 先 list questions 拿 questionNo ↔ questionId 映射
   const qRes = await apiFetch(`/surveys/${encodeURIComponent(code)}/questions`);
   if (!qRes.ok) throw new Error(`无法读取问题列表 ${qRes.status}`);

@@ -289,13 +289,28 @@ interface BackendShelfConfig {
   attributes: Record<string, unknown>;
 }
 
+/**
+ * 场景级合成 shelfCode "pos-{N}"：每个场景独立一行 config，没有真实物理货架属性
+ * （widthCm/layerCount 为 0），只作为"场景 survey 答案 / 场景级勘误 / 场景级
+ * runtime"等数据的 FK 锚点。displayOrder = -1 让前端 getShelfGroups 排序时
+ * 自动过滤到队首，配合 isSyntheticSceneRow() 排除。
+ */
+const SCENE_SYNTHETIC_ATTR = { __scene_anchor__: true } as const;
+
+function isSyntheticSceneRow(c: BackendShelfConfig): boolean {
+  return (
+    !!(c.attributes as Record<string, unknown> | null)?.__scene_anchor__ ||
+    /^pos-\d+$/.test(c.shelfCode)
+  );
+}
+
 export async function getShelfGroups(_storeId: string, sceneId: number): Promise<ShelfGroup[]> {
   try {
     const res = await apiFetch('/shelves/config');
     if (!res.ok) return [];
     const data = (await res.json()) as { configs?: BackendShelfConfig[] };
     return (data.configs ?? [])
-      .filter((c) => c.positionCode === sceneId)
+      .filter((c) => c.positionCode === sceneId && !isSyntheticSceneRow(c))
       .sort((a, b) => a.displayOrder - b.displayOrder)
       .map((c) => ({
         shelf_type: (c.attributes?.shelf_type as string) || '标准货架',
@@ -316,20 +331,37 @@ export async function saveShelfGroups(params: {
   groups: ShelfGroup[];
 }): Promise<void> {
   const { sceneId, positionName, categories, groups } = params;
-  // 1. 取当前 store 全部 config，挑出本场景的 shelfCode 列表
+  // 1. 取当前 store 全部 config，挑出本场景的 shelfCode 列表（含合成行）
   const list = await apiFetch('/shelves/config');
   const data = list.ok ? ((await list.json()) as { configs?: BackendShelfConfig[] }) : { configs: [] };
   const existingCodes = (data.configs ?? [])
     .filter((c) => c.positionCode === sceneId)
     .map((c) => c.shelfCode);
-  // 2. 删除本场景旧行
+  // 2. 删除本场景旧行（含合成行；下面会重建）
   if (existingCodes.length) {
     await apiFetch('/shelves/config', {
       method: 'DELETE',
       body: JSON.stringify({ shelfCodes: existingCodes }),
     });
   }
-  // 3. 顺序插入新行
+  // 3. 先建场景级合成行 shelfCode='pos-{N}'，让 surveys/errata 的 shelfId
+  //    "pos-{N}" 能 resolveShelfId 通过；displayOrder=-1 排到前面让上面的
+  //    isSyntheticSceneRow 过滤掉。
+  await apiFetch('/shelves/config', {
+    method: 'POST',
+    body: JSON.stringify({
+      shelfCode: sceneShelfId(sceneId),
+      positionCode: sceneId,
+      groupName: positionName,
+      widthCm: null,
+      layerCount: null,
+      supportedCategories: categories,
+      displayOrder: -1,
+      notes: `${positionName} · 场景级锚点（survey/errata 用，非实体货架）`,
+      attributes: { ...SCENE_SYNTHETIC_ATTR, shelf_type: '__scene_anchor__' },
+    }),
+  });
+  // 4. 顺序插入真实货架组行
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
     const supportedCategories = g.category ? [g.category] : categories;
