@@ -274,6 +274,40 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     // Trigger a refresh as a safety net in case realtime is briefly delayed.
     refresh();
 
+    // 直接踢起 worker pool 跑这批入队的 jobIds，不要等下一轮 3s 轮询。
+    // 之前依赖 jobs state 更新 → 自动 resume effect 重跑 → 启动 worker，
+    // 实测从 enqueue 到 worker 真正发 process 请求中间有 20-30s 空窗（轮询节奏
+    // + setJobs 还没看到新 row 等多重因素叠加），用户体验是"提交后转半天没反应"。
+    // workersByBatch 的 idempotent 保护已经做了，重复 add 不会起两个 worker。
+    if (res.batchId && Array.isArray(res.jobIds) && res.jobIds.length > 0) {
+      // 同时把新 job 占位插到本地 state，badge / drawer 立刻显示"生成中"，
+      // 而不是要等到下一轮 active 轮询才看到行 → 用户不再以为没响应。
+      // 下一轮真 API 返的行会按 statusRank 合并（processing 优先级最低，
+      // server 给出 succeeded/failed 时会覆盖）。
+      const now = new Date().toISOString();
+      const placeholderJobs: Job[] = res.jobIds.map((id, idx) => ({
+        id,
+        batch_id: res.batchId,
+        status: "processing",
+        result_image_url: null,
+        error: null,
+        position: idx,
+        params: {
+          copy: items[idx]?.copy,
+          sku: items[idx]?.sku ?? null,
+        },
+        created_at: now,
+      }));
+      setJobs(prev => dedupeJobs([...prev, ...placeholderJobs]));
+
+      if (!workersByBatch.current.has(res.batchId)) {
+        workersByBatch.current.add(res.batchId);
+        runWorkerPool(res.jobIds).finally(() => {
+          workersByBatch.current.delete(res.batchId);
+        });
+      }
+    }
+
     // Toast: only when appending into an existing live session.
     if (!created) {
       const nowMs = Date.now();

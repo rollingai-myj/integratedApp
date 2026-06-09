@@ -109,11 +109,20 @@ postersRouter.get(
 
 // ---- PO-D4 移除整批 -----------------------------------------------------
 
+// 前端 dismissBatch 偶尔会拿到本地 localStorage 里残留的 phantom batchId
+// （非 UUID 形态），传过来会让 batch_id = $1 (uuid) 在 pg 抛 22P02 → 500。
+// 校验失败时直接当 0 行 cancel 返回，避免噪声。
+const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 postersRouter.delete(
   '/posters/queue/batch/:batchId',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const result = await cancelBatch(req.params.batchId!, req.user!.id);
+    const batchId = req.params.batchId!;
+    if (!uuidRe.test(batchId)) {
+      res.json({ canceled: 0 });
+      return;
+    }
+    const result = await cancelBatch(batchId, req.user!.id);
     res.json(result);
   }),
 );
