@@ -17,7 +17,7 @@ import {
   useShelfConfigs,
   useScenes,
   useSceneAdjustmentCounts,
-  useSkus,
+  useStoreSkus,
 } from '@/lib/hooks';
 import type { SceneDefinition, ShelfConfig, StoreSkuRow } from '@myj/shared';
 
@@ -29,8 +29,8 @@ type TabKey = 'scenes' | 'configs' | 'skus';
 
 function ShelvesPage() {
   const meQuery = useMe();
+  const storeId = meQuery.data?.currentStore?.id ?? null;
   const storeCode = meQuery.data?.currentStore?.code ?? '';
-  const hasStore = !!meQuery.data?.currentStore?.id;
 
   const [tab, setTab] = useState<TabKey>('scenes');
 
@@ -71,9 +71,9 @@ function ShelvesPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {tab === 'scenes' && <ScenesTab />}
-          {tab === 'configs' && <ConfigsTab hasStore={hasStore} />}
-          {tab === 'skus' && <SkusTab hasStore={hasStore} />}
+          {tab === 'scenes' && <ScenesTab storeId={storeId} />}
+          {tab === 'configs' && <ConfigsTab storeId={storeId} />}
+          {tab === 'skus' && <SkusTab storeId={storeId} />}
         </div>
       </div>
     </IOSDevice>
@@ -82,9 +82,9 @@ function ShelvesPage() {
 
 // ---- 场景 Tab -----------------------------------------------------------
 
-function ScenesTab() {
+function ScenesTab({ storeId }: { storeId: string | null }) {
   const scenesQ = useScenes();
-  const countsQ = useSceneAdjustmentCounts();
+  const countsQ = useSceneAdjustmentCounts(storeId);
 
   if (scenesQ.isLoading) {
     return <div className="py-12 text-center text-sm text-ink-muted">载入场景…</div>;
@@ -171,10 +171,10 @@ function SceneCard({
 
 // ---- 货架配置 Tab -------------------------------------------------------
 
-function ConfigsTab({ hasStore }: { hasStore: boolean }) {
-  const q = useShelfConfigs();
+function ConfigsTab({ storeId }: { storeId: string | null }) {
+  const q = useShelfConfigs(storeId);
 
-  if (!hasStore) {
+  if (!storeId) {
     return <div className="py-12 text-center text-sm text-ink-muted">未选择门店</div>;
   }
   if (q.isLoading) {
@@ -242,11 +242,11 @@ function ConfigCard({ cfg }: { cfg: ShelfConfig }) {
 
 // ---- SKU Tab -----------------------------------------------------------
 
-function SkusTab({ hasStore }: { hasStore: boolean }) {
+function SkusTab({ storeId }: { storeId: string | null }) {
   const [search, setSearch] = useState('');
-  const q = useSkus({ search: search.trim() || undefined });
+  const q = useStoreSkus(storeId, { search: search.trim() || undefined });
 
-  if (!hasStore) {
+  if (!storeId) {
     return <div className="py-12 text-center text-sm text-ink-muted">未选择门店</div>;
   }
   const skus = q.data?.skus ?? [];
