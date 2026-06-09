@@ -2,10 +2,23 @@
 // completion-results drawer it opens. Aggregates the entire current Session
 // (which may span multiple underlying batches) into one view.
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { TOKENS } from "./tokens";
 import { Icon } from "./icons";
 import { useJobs, type SessionView, type Job } from "./JobsContext";
 import { saveSession, isSessionSaved } from "./sessionHistory";
+
+/**
+ * SessionDrawer / preview / RequeueSheet 都用 position:fixed 顶满视口。
+ * 但整合后 PosterApp 被 IOSDevice 套了 `zoom: viewportW/390` 容器，CSS zoom 容器
+ * 下的 fixed 子元素并不真正 fixed 到视口，inset:0 / height:92vh 等会按 zoom 倍率
+ * 放大（实测 1280×800 视口下抽屉 inner 顶到 -1616px，整张抽屉飞出屏幕，
+ * 用户只看到一片黑）。所以全部 portal 到 document.body，跳出 zoom 容器。
+ */
+function BodyPortal({ children }: { children: React.ReactNode }) {
+  if (typeof document === 'undefined') return null;
+  return createPortal(<>{children}</>, document.body);
+}
 import { STYLES } from "./styles";
 import type { PosterStyleId } from "./ai";
 import { saveImages } from "./lib/download";
@@ -166,6 +179,7 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
   };
 
   return (
+    <BodyPortal>
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, zIndex: 9999,
       background: "rgba(0,0,0,0.55)",
@@ -344,6 +358,7 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
         <LongPressGallery urls={longPressUrls} onClose={() => setLongPressUrls(null)} />
       )}
     </div>
+    </BodyPortal>
   );
 }
 
