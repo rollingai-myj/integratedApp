@@ -1,10 +1,11 @@
 /**
  * React Query hooks for M2/M3/M4
  *
- * 业务接口的 storeId 全部从 session 取（spec § 0 / D13），所以这里的 hook
- * 都不接受 storeId 参数。只有"非业务"的 query（如门店列表）才会显式带 store 维度。
- *
- * 切店成功后会失效所有业务 query —— 见 useSwitchStore 的 onSuccess。
+ * 业务接口的 storeId 已经从 session 取（spec § 0 / D13），所以 hook 内部
+ * 不会再把 storeId 拼进 URL/Body。但 hook 入参仍保留 storeId，用途有二：
+ *   - 放进 queryKey：切店后 key 变化，自动 refetch；
+ *   - 作 `enabled` 闸门：没选门店时不发请求。
+ * 这样路由层完全无感，所有"按门店取"的语义还在前端，只是不再下传到后端。
  */
 import {
   useMutation,
@@ -21,7 +22,9 @@ import {
 } from './api-client.js';
 import type {
   PosterGenerateRequest,
+  PosterGenerateResponse,
   SubmitPriceChangeRequest,
+  SubmitPriceChangeResponse,
 } from '@myj/shared';
 
 // ============================================================================
@@ -36,10 +39,14 @@ export function useStores() {
   });
 }
 
-export function useSkus(params?: { search?: string; categoryPath?: string }) {
+export function useStoreSkus(
+  storeId: string | null | undefined,
+  params?: { search?: string; categoryPath?: string },
+) {
   return useQuery({
-    queryKey: ['skus', params?.search ?? '', params?.categoryPath ?? ''] as const,
+    queryKey: ['master', 'skus', storeId, params?.search ?? '', params?.categoryPath ?? ''] as const,
     queryFn: () => masterApi.listSkus(params),
+    enabled: !!storeId,
     staleTime: 30_000,
   });
 }
@@ -48,10 +55,11 @@ export function useSkus(params?: { search?: string; categoryPath?: string }) {
 // 模块 5 货架 / 场景
 // ============================================================================
 
-export function useShelfConfigs() {
+export function useShelfConfigs(storeId: string | null | undefined) {
   return useQuery({
-    queryKey: ['shelves', 'config'] as const,
+    queryKey: ['shelves', 'config', storeId] as const,
     queryFn: () => shelvesApi.listConfigs(),
+    enabled: !!storeId,
     staleTime: 60_000,
   });
 }
@@ -64,10 +72,11 @@ export function useScenes() {
   });
 }
 
-export function useSceneAdjustmentCounts() {
+export function useSceneAdjustmentCounts(storeId: string | null | undefined) {
   return useQuery({
-    queryKey: ['scenes', 'counts'] as const,
+    queryKey: ['scenes', 'counts', storeId] as const,
     queryFn: () => scenesApi.adjustmentCounts(),
+    enabled: !!storeId,
     staleTime: 30_000,
   });
 }
@@ -76,22 +85,30 @@ export function useSceneAdjustmentCounts() {
 // 模块 6 价盘
 // ============================================================================
 
-export function usePriceCurve(skuCodes: string[], daysBack = 90) {
+export function usePriceCurve(
+  storeId: string | null | undefined,
+  skuCodes: string[],
+  daysBack = 90,
+) {
   return useQuery({
-    queryKey: ['prices', 'curve', skuCodes.join(','), daysBack] as const,
+    queryKey: ['prices', 'curve', storeId, skuCodes.join(','), daysBack] as const,
     queryFn: () => pricesApi.curve({ skuCodes, daysBack }),
-    enabled: skuCodes.length > 0,
+    enabled: !!storeId && skuCodes.length > 0,
     staleTime: 60_000,
   });
 }
 
 export function useSubmitPriceChange() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: SubmitPriceChangeRequest) => pricesApi.adjust(body),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['skus'] });
-      await qc.invalidateQueries({ queryKey: ['prices', 'curve'] });
+  return useMutation<
+    SubmitPriceChangeResponse,
+    Error,
+    SubmitPriceChangeRequest & { storeId?: string }
+  >({
+    mutationFn: ({ storeId: _ignored, ...body }) => pricesApi.adjust(body),
+    onSuccess: async (_, vars) => {
+      await qc.invalidateQueries({ queryKey: ['master', 'skus', vars.storeId] });
+      await qc.invalidateQueries({ queryKey: ['prices', 'curve', vars.storeId] });
     },
   });
 }
@@ -120,8 +137,12 @@ export function usePosters(params?: {
 
 export function useGeneratePoster() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: PosterGenerateRequest) => postersApi.generate(body),
+  return useMutation<
+    PosterGenerateResponse,
+    Error,
+    PosterGenerateRequest & { storeId?: string }
+  >({
+    mutationFn: ({ storeId: _ignored, ...body }) => postersApi.generate(body),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['posters', 'list'] });
     },
