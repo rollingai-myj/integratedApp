@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SelectStoreRouteImport } from './routes/select-store'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ShelvesIndexRouteImport } from './routes/shelves.index'
@@ -17,6 +18,11 @@ import { Route as PostersIndexRouteImport } from './routes/posters.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as PricesColdRouteImport } from './routes/prices.cold'
 
+const SelectStoreRoute = SelectStoreRouteImport.update({
+  id: '/select-store',
+  path: '/select-store',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -56,6 +62,7 @@ const PricesColdRoute = PricesColdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
   '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
@@ -65,6 +72,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
   '/admin': typeof AdminIndexRoute
   '/posters': typeof PostersIndexRoute
@@ -75,6 +83,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
   '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
@@ -86,6 +95,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/select-store'
     | '/prices/cold'
     | '/admin/'
     | '/posters/'
@@ -95,6 +105,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/select-store'
     | '/prices/cold'
     | '/admin'
     | '/posters'
@@ -104,6 +115,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/login'
+    | '/select-store'
     | '/prices/cold'
     | '/admin/'
     | '/posters/'
@@ -114,6 +126,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  SelectStoreRoute: typeof SelectStoreRoute
   PricesColdRoute: typeof PricesColdRoute
   AdminIndexRoute: typeof AdminIndexRoute
   PostersIndexRoute: typeof PostersIndexRoute
@@ -123,6 +136,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/select-store': {
+      id: '/select-store'
+      path: '/select-store'
+      fullPath: '/select-store'
+      preLoaderRoute: typeof SelectStoreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -178,6 +198,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  SelectStoreRoute: SelectStoreRoute,
   PricesColdRoute: PricesColdRoute,
   AdminIndexRoute: AdminIndexRoute,
   PostersIndexRoute: PostersIndexRoute,

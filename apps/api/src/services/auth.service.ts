@@ -362,8 +362,10 @@ function pickCurrentStore(
     const match = stores.find((s) => s.id === sessionStoreId);
     if (match) return match;
   }
-  const primary = stores.find((s) => s.isPrimary);
-  return primary ?? stores[0] ?? null;
+  // 只回退到 primary：保证普通账号（user_stores 里有 is_primary 记录）登录后默认进自家门店。
+  // 不再 fallback 到 stores[0]：超管所有门店都是 isPrimary=false，登录后 currentStore 保持 null，
+  // 前端据此跳到 /select-store 选店页。
+  return stores.find((s) => s.isPrimary) ?? null;
 }
 
 function computeModules(roles: string[]): ModuleKey[] {

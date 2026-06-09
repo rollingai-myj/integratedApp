@@ -56,8 +56,16 @@ function HomePage() {
   const logout = useLogout();
 
   useEffect(() => {
-    if (meQuery.isSuccess && !isAuthenticated(meQuery.data)) {
+    if (!meQuery.isSuccess) return;
+    const me = meQuery.data;
+    if (!isAuthenticated(me)) {
       void navigate({ to: '/login' });
+      return;
+    }
+    // 超管登录后没有默认门店（auth.service 不再 fallback 到 stores[0]）→ 强制走选店页
+    const isSuperAdmin = me?.user?.roles.includes('super_admin') ?? false;
+    if (isSuperAdmin && !me?.currentStore && (me?.stores.length ?? 0) > 0) {
+      void navigate({ to: '/select-store' });
     }
   }, [meQuery.isSuccess, meQuery.data, navigate]);
 
