@@ -41,6 +41,11 @@ import {
   listCorrections,
   submitCorrection,
 } from '../services/corrections.service.js';
+import {
+  getSceneRuntime,
+  upsertSceneRuntime,
+  deleteSceneRuntime,
+} from '../services/scene-runtime.service.js';
 
 export const shelvesRouter = Router();
 
@@ -246,6 +251,65 @@ shelvesRouter.post(
       req.user!.id,
     );
     res.status(201).json(record);
+  }),
+);
+
+// ---- 场景级 runtime（V027 新增；区别于下方"货架级 runtime"） ---------------
+
+shelvesRouter.get(
+  '/scenes/:sceneId/runtime',
+  requireAuth,
+  requireStore,
+  asyncHandler(async (req, res) => {
+    const positionCode = Number(req.params.sceneId);
+    if (!Number.isFinite(positionCode)) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'sceneId 必须是数字');
+    }
+    const runtime = await getSceneRuntime(req.user!.currentStoreId!, positionCode);
+    res.json({ runtime });
+  }),
+);
+
+const upsertSceneRuntimeSchema = z.object({
+  photos: z.array(z.unknown()).optional(),
+  detectionData: z.record(z.unknown()).optional(),
+  virtualShelfStatus: z.enum(['idle', 'processing', 'completed', 'failed']).optional(),
+  virtualShelfRawOutputs: z.unknown().optional(),
+  virtualShelfContext: z.unknown().optional(),
+  lastSnapshot: z.unknown().optional(),
+});
+
+shelvesRouter.put(
+  '/scenes/:sceneId/runtime',
+  requireAuth,
+  requireStore,
+  asyncHandler(async (req, res) => {
+    const positionCode = Number(req.params.sceneId);
+    if (!Number.isFinite(positionCode)) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'sceneId 必须是数字');
+    }
+    const body = upsertSceneRuntimeSchema.parse(req.body);
+    const runtime = await upsertSceneRuntime(
+      req.user!.currentStoreId!,
+      positionCode,
+      body,
+      req.user!.id,
+    );
+    res.json({ runtime });
+  }),
+);
+
+shelvesRouter.delete(
+  '/scenes/:sceneId/runtime',
+  requireAuth,
+  requireStore,
+  asyncHandler(async (req, res) => {
+    const positionCode = Number(req.params.sceneId);
+    if (!Number.isFinite(positionCode)) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'sceneId 必须是数字');
+    }
+    const result = await deleteSceneRuntime(req.user!.currentStoreId!, positionCode);
+    res.json(result);
   }),
 );
 
