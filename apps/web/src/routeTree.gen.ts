@@ -15,6 +15,7 @@ import { Route as ShelvesIndexRouteImport } from './routes/shelves.index'
 import { Route as PricesIndexRouteImport } from './routes/prices.index'
 import { Route as PostersIndexRouteImport } from './routes/posters.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as PricesColdRouteImport } from './routes/prices.cold'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -46,10 +47,16 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/admin/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PricesColdRoute = PricesColdRouteImport.update({
+  id: '/prices/cold',
+  path: '/prices/cold',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/prices/cold': typeof PricesColdRoute
   '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
@@ -58,6 +65,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/prices/cold': typeof PricesColdRoute
   '/admin': typeof AdminIndexRoute
   '/posters': typeof PostersIndexRoute
   '/prices': typeof PricesIndexRoute
@@ -67,6 +75,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/prices/cold': typeof PricesColdRoute
   '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
@@ -74,13 +83,28 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/admin/' | '/posters/' | '/prices/' | '/shelves/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/prices/cold'
+    | '/admin/'
+    | '/posters/'
+    | '/prices/'
+    | '/shelves/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/admin' | '/posters' | '/prices' | '/shelves'
+  to:
+    | '/'
+    | '/login'
+    | '/prices/cold'
+    | '/admin'
+    | '/posters'
+    | '/prices'
+    | '/shelves'
   id:
     | '__root__'
     | '/'
     | '/login'
+    | '/prices/cold'
     | '/admin/'
     | '/posters/'
     | '/prices/'
@@ -90,6 +114,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
+  PricesColdRoute: typeof PricesColdRoute
   AdminIndexRoute: typeof AdminIndexRoute
   PostersIndexRoute: typeof PostersIndexRoute
   PricesIndexRoute: typeof PricesIndexRoute
@@ -140,12 +165,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/prices/cold': {
+      id: '/prices/cold'
+      path: '/prices/cold'
+      fullPath: '/prices/cold'
+      preLoaderRoute: typeof PricesColdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
+  PricesColdRoute: PricesColdRoute,
   AdminIndexRoute: AdminIndexRoute,
   PostersIndexRoute: PostersIndexRoute,
   PricesIndexRoute: PricesIndexRoute,

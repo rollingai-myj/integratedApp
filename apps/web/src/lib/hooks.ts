@@ -113,6 +113,28 @@ export function useSubmitPriceChange() {
   });
 }
 
+/**
+ * 价盘 · AI 批量诊断
+ *
+ * 调统一后端 /prices/diagnose（密钥保护、配额、审计都在后端）。
+ * 入参是想诊断的 SKU 列表（每个含价格 / 销量 / 毛利率），返回每个 SKU 的建议。
+ * 没用 useQuery 是因为这个调用是用户显式触发（点"刷新 AI 建议"按钮），不是
+ * 数据维度的 query。返回 mutation，调用方用 `mutateAsync` 拿结果即可。
+ */
+export function useDiagnoseSkus() {
+  return useMutation({
+    mutationFn: (
+      skus: Array<{
+        skuCode: string;
+        currentPrice: number;
+        wholesalePrice?: number;
+        salesQty30d?: number;
+        grossMargin30d?: number;
+      }>,
+    ) => pricesApi.diagnose(skus),
+  });
+}
+
 // ============================================================================
 // 模块 7 海报
 // ============================================================================
