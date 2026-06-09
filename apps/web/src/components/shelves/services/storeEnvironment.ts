@@ -1,15 +1,20 @@
 /**
- * 周边环境洞察（shim）
+ * 周边环境洞察（V025 之后真正接 backend）
  *
- * 整合 app 的 /master/environment/:storeId 字段（city / mainDemographic / consumptionLevel / ...）
- * 与原 repo 的（category / crowd_source_analysis / top_competitors[] / questions[] / ...）
- * 是两个完全不同的领域模型。这一轮 1:1 移植不动后端 schema —— 把整个原结构存
- * localStorage，按 storeCode 索引；跨设备不共享，但同一浏览器内 PhotoPage 的
- * `runSceneSelection` 能拿到 env 输入。
+ * Backend：
+ *   GET  /api/v1/master/environment/:storeUuid   返回 { insight }
+ *   PUT  /api/v1/master/environment/:storeUuid   partial upsert，未传字段不覆盖
  *
- * 后续要做超管后台共享 env 时，再开 backend schema 字段扩展。
+ * Schema：V025 在 store_environment_insights 加了 6 列 —— category /
+ * crowd_source_analysis / competitor_analysis / top_competitors[] /
+ * questions[] / report_markdown，原 repo 字段全部 1:1 对应（不再借 JSONB 兜）。
+ *
+ * 入参 storeId 是原 repo 的 store 编号（"粤37893" / "1534"），不是 UUID；
+ * shim 内通过 current-store 把 code 翻译成 UUID。
  */
 import type { InsightQuestion } from '@/components/shelves/lib/difyInsightApi';
+import { apiFetch } from '@/components/shelves/lib/api-client';
+import { getCurrentStore } from '@/components/shelves/lib/current-store';
 
 export interface StoreEnvironmentInsight {
   store_id: string;
@@ -23,50 +28,57 @@ export interface StoreEnvironmentInsight {
   updated_at: string;
 }
 
-const KEY = (storeId: string) => `store_env_${storeId}`;
+interface BackendInsight {
+  storeId: string;
+  city: string | null;
+  mainDemographic: string | null;
+  consumptionLevel: string | null;
+  competitorCount: number | null;
+  populationDensity: string | null;
+  category: string | null;
+  crowdSourceAnalysis: string | null;
+  competitorAnalysis: string | null;
+  topCompetitors: string[];
+  questions: InsightQuestion[];
+  reportMarkdown: string | null;
+  insightData: Record<string, unknown>;
+  generatedAt: string;
+  source: string | null;
+}
 
-function readRaw(storeId: string): Partial<StoreEnvironmentInsight> | null {
+function backendToFront(b: BackendInsight): StoreEnvironmentInsight {
+  const poi = (b.insightData?.poi_count as number | undefined) ?? b.competitorCount ?? 0;
+  return {
+    store_id: b.storeId,
+    poi_count: poi,
+    category: b.category,
+    crowd_source_analysis: b.crowdSourceAnalysis,
+    top_competitors: b.topCompetitors ?? [],
+    competitor_analysis: b.competitorAnalysis,
+    questions: b.questions ?? [],
+    report_markdown: b.reportMarkdown ?? '',
+    updated_at: b.generatedAt,
+  };
+}
+
+export async function getEnvironmentInsight(
+  _storeCode: string,
+): Promise<StoreEnvironmentInsight | null> {
+  const store = await getCurrentStore();
+  if (!store) return null;
   try {
-    if (typeof localStorage === 'undefined') return null;
-    const raw = localStorage.getItem(KEY(storeId));
-    return raw ? (JSON.parse(raw) as Partial<StoreEnvironmentInsight>) : null;
-  } catch {
+    const res = await apiFetch(`/master/environment/${store.id}`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { insight?: BackendInsight | null };
+    if (!data.insight) return null;
+    return backendToFront(data.insight);
+  } catch (err) {
+    console.warn('[shelves/storeEnvironment.get] failed', err);
     return null;
   }
 }
 
-function writeRaw(storeId: string, patch: Partial<StoreEnvironmentInsight>): void {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    const cur = readRaw(storeId) ?? {};
-    const merged = { ...cur, ...patch, store_id: storeId, updated_at: new Date().toISOString() };
-    localStorage.setItem(KEY(storeId), JSON.stringify(merged));
-  } catch (err) {
-    console.warn('[shelves/storeEnvironment.write] failed', err);
-  }
-}
-
-function normalize(p: Partial<StoreEnvironmentInsight> | null, storeId: string): StoreEnvironmentInsight | null {
-  if (!p) return null;
-  return {
-    store_id: p.store_id ?? storeId,
-    poi_count: p.poi_count ?? 0,
-    category: p.category ?? null,
-    crowd_source_analysis: p.crowd_source_analysis ?? null,
-    top_competitors: Array.isArray(p.top_competitors) ? p.top_competitors : [],
-    competitor_analysis: p.competitor_analysis ?? null,
-    questions: Array.isArray(p.questions) ? p.questions : [],
-    report_markdown: p.report_markdown ?? '',
-    updated_at: p.updated_at ?? '',
-  };
-}
-
-export async function getEnvironmentInsight(storeId: string): Promise<StoreEnvironmentInsight | null> {
-  if (!storeId) return null;
-  return normalize(readRaw(storeId), storeId);
-}
-
-export async function saveEnvironmentInsight(input: {
+interface SaveInput {
   storeId: string;
   poiCount?: number;
   category?: string;
@@ -74,24 +86,39 @@ export async function saveEnvironmentInsight(input: {
   topCompetitors?: string[];
   competitorAnalysis?: string;
   questions?: InsightQuestion[];
-}): Promise<void> {
-  writeRaw(input.storeId, {
-    poi_count: input.poiCount,
+}
+
+async function upsert(body: Record<string, unknown>) {
+  const store = await getCurrentStore();
+  if (!store) throw new Error('未选择门店');
+  const res = await apiFetch(`/master/environment/${store.id}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`保存失败 ${res.status}`);
+}
+
+export async function saveEnvironmentInsight(input: SaveInput): Promise<void> {
+  await upsert({
     category: input.category ?? null,
-    crowd_source_analysis: input.crowdSourceAnalysis ?? null,
-    top_competitors: input.topCompetitors ?? [],
-    competitor_analysis: input.competitorAnalysis ?? null,
+    crowdSourceAnalysis: input.crowdSourceAnalysis ?? null,
+    topCompetitors: input.topCompetitors ?? [],
+    competitorAnalysis: input.competitorAnalysis ?? null,
     questions: input.questions ?? [],
+    // poi_count 放在 insightData 里（backend 没有专列）
+    ...(input.poiCount !== undefined
+      ? { insightData: { poi_count: input.poiCount } }
+      : {}),
   });
 }
 
-export async function updateEnvironmentCategory(storeId: string, category: string): Promise<void> {
-  writeRaw(storeId, { category });
+export async function updateEnvironmentCategory(_storeCode: string, category: string): Promise<void> {
+  await upsert({ category });
 }
 
 export async function updateEnvironmentQuestions(
-  storeId: string,
+  _storeCode: string,
   questions: InsightQuestion[],
 ): Promise<void> {
-  writeRaw(storeId, { questions });
+  await upsert({ questions });
 }

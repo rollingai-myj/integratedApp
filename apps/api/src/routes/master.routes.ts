@@ -84,12 +84,29 @@ masterRouter.get(
   }),
 );
 
+const insightQuestionSchema = z.object({
+  id: z.number(),
+  direction: z.string(),
+  context: z.string(),
+  question: z.string(),
+  options: z.array(z.string()),
+});
+
 const upsertInsightSchema = z.object({
+  // 基础字段
   city: z.string().nullable().optional(),
   mainDemographic: z.string().nullable().optional(),
   consumptionLevel: z.string().nullable().optional(),
   competitorCount: z.number().int().nullable().optional(),
   populationDensity: z.string().nullable().optional(),
+  // V025 加：原 skuSelection repo 扩展字段
+  category: z.string().nullable().optional(),
+  crowdSourceAnalysis: z.string().nullable().optional(),
+  competitorAnalysis: z.string().nullable().optional(),
+  topCompetitors: z.array(z.string()).optional(),
+  questions: z.array(insightQuestionSchema).optional(),
+  reportMarkdown: z.string().nullable().optional(),
+  // 兜底
   insightData: z.record(z.unknown()).optional(),
   source: z.string().nullable().optional(),
 });
