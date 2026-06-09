@@ -198,7 +198,7 @@ function PosterAppInner() {
   };
 
   return (
-    <div style={{
+    <div className="poster-phone" style={{
       position: 'relative', width: '100%', height: '100%',
       background: '#000', overflow: 'hidden',
       fontFamily: '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif',
