@@ -3,13 +3,14 @@
  *
  * 设计：
  *   - 用 OPENROUTER_API_KEY 调 https://openrouter.ai/api/v1/chat/completions
- *   - 模型从 app_settings.image_model 读取（默认 google/gemini-3.1-flash-image-preview）
+ *   - 模型从 app_settings.image_model 读取（默认 google/gemini-3.1-flash-image-preview，
+ *     即 nano-banana 文生图 / 图编辑模型）
  *   - prompt 由 buildPosterPrompt 按 mode + 模板拼装
- *   - 失败 → 502 UPSTREAM_ERROR
- *   - 未配置 key → 502 友好提示
- *
- * 真实接入时 Gemini image 模型返回图像 URL 或 base64；本实现按 OpenRouter 的
- * gemini-flash-image-preview 约定解析 message.content 里的 image_url。
+ *   - photo_compose / official_bg_only / multi_product 三种 mode 通过 messages
+ *     的 content array 把参考图当 image_url 传给 Gemini（vision input），不是
+ *     字符串拼到 prompt 里 —— 后者根本不会被模型看到
+ *   - 输出按 OpenRouter 的 nano-banana 约定从 message.images[] 取 image_url
+ *   - 失败 → 502 UPSTREAM_ERROR；未配置 key → 502 友好提示
  */
 import { config } from '../config/env.js';
 import { AppError, ErrorCodes } from '../lib/errors.js';
@@ -61,22 +62,51 @@ export function buildPosterPrompt(input: PosterGenerateInput): string {
   if (input.customStyleDescription) {
     parts.push(`额外风格要求：${input.customStyleDescription}。`);
   }
-  if (input.mode === 'multi_product' && input.officialImageUrls?.length) {
-    parts.push(`混排商品参考图：${input.officialImageUrls.join('、')}`);
-  } else if (input.mode === 'official_bg_only' && input.productImageUrl) {
-    parts.push(`商品官方图：${input.productImageUrl}`);
-  } else if (input.mode === 'photo_compose' && input.sourcePhotoUrl) {
-    parts.push(`门店实拍参考图：${input.sourcePhotoUrl}`);
+  if (input.mode === 'photo_compose') {
+    parts.push('已附门店实拍参考图，请将其作为背景或主体并叠加文案。');
+  } else if (input.mode === 'official_bg_only') {
+    parts.push('已附商品官方图，请保留商品本体并设计背景与文案。');
+  } else if (input.mode === 'multi_product') {
+    parts.push('已附多张商品图，请将其混排成系列海报。');
   }
   parts.push('输出竖版 3:4 海报，中文文案，不要水印。');
   return parts.join('\n');
 }
 
+const DEFAULT_IMAGE_MODEL = 'google/gemini-3.1-flash-image-preview';
+
 async function getCurrentImageModel(): Promise<string> {
   const res = await query<{ value: string }>(
     `SELECT value FROM app_settings WHERE key = 'image_model' LIMIT 1`,
   );
-  return res.rows[0]?.value ?? 'google/gemini-3.1-flash-image-preview';
+  return res.rows[0]?.value ?? DEFAULT_IMAGE_MODEL;
+}
+
+type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+function buildMessageContent(
+  input: PosterGenerateInput,
+  prompt: string,
+): string | ContentPart[] {
+  const images: string[] = [];
+  if (input.mode === 'multi_product' && input.officialImageUrls?.length) {
+    images.push(...input.officialImageUrls);
+  }
+  if (input.mode === 'official_bg_only' && input.productImageUrl) {
+    images.push(input.productImageUrl);
+  }
+  if (input.mode === 'photo_compose' && input.sourcePhotoUrl) {
+    images.push(input.sourcePhotoUrl);
+  }
+  if (images.length === 0) return prompt;
+
+  const parts: ContentPart[] = [{ type: 'text', text: prompt }];
+  for (const url of images) {
+    parts.push({ type: 'image_url', image_url: { url } });
+  }
+  return parts;
 }
 
 export class OpenRouterService {
@@ -91,6 +121,7 @@ export class OpenRouterService {
 
     const model = await getCurrentImageModel();
     const prompt = buildPosterPrompt(input);
+    const content = buildMessageContent(input, prompt);
 
     const start = Date.now();
     let res: Response;
@@ -105,7 +136,9 @@ export class OpenRouterService {
         },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: prompt }],
+          messages: [{ role: 'user', content }],
+          // nano-banana 必须显式让响应包含 image modality；否则只返回文本说明
+          modalities: ['image', 'text'],
         }),
         signal: AbortSignal.timeout(180_000),
       });
@@ -131,31 +164,21 @@ export class OpenRouterService {
     const data = (await res.json()) as {
       choices?: Array<{
         message?: {
-          content?: string | Array<{ type: string; image_url?: { url: string } }>;
+          content?:
+            | string
+            | Array<{ type: string; image_url?: { url: string } }>;
+          images?: Array<{ image_url?: { url: string } }>;
         };
       }>;
     };
 
-    // 解析图像 URL：兼容字符串 content（含 URL）或 array content（标准 vision schema）
-    let posterUrl = '';
-    const content = data.choices?.[0]?.message?.content;
-    if (typeof content === 'string') {
-      const m = content.match(/https?:\/\/\S+\.(?:png|jpg|jpeg|webp)/i);
-      if (m) posterUrl = m[0];
-    } else if (Array.isArray(content)) {
-      for (const item of content) {
-        if (item.type === 'image_url' && item.image_url?.url) {
-          posterUrl = item.image_url.url;
-          break;
-        }
-      }
-    }
-
+    const posterUrl = extractImageUrl(data);
     if (!posterUrl) {
+      logger.warn({ data: JSON.stringify(data).slice(0, 800) }, 'openrouter no image');
       throw new AppError(
         502,
         ErrorCodes.UPSTREAM_ERROR,
-        'OpenRouter 响应中未找到海报图片 URL',
+        'OpenRouter 响应中未找到海报图片',
       );
     }
 
@@ -166,6 +189,41 @@ export class OpenRouterService {
       generationMs: Date.now() - start,
     };
   }
+}
+
+interface OpenRouterChoice {
+  message?: {
+    content?:
+      | string
+      | Array<{ type: string; image_url?: { url: string } }>;
+    images?: Array<{ image_url?: { url: string } }>;
+  };
+}
+
+function extractImageUrl(data: { choices?: OpenRouterChoice[] }): string {
+  const msg = data.choices?.[0]?.message;
+  if (!msg) return '';
+
+  // nano-banana 主路径：message.images[0].image_url.url
+  if (msg.images && msg.images.length > 0) {
+    const url = msg.images[0]?.image_url?.url;
+    if (url) return url;
+  }
+
+  // 兜底：content 数组里夹 image_url（旧 schema）
+  if (Array.isArray(msg.content)) {
+    for (const item of msg.content) {
+      if (item.type === 'image_url' && item.image_url?.url) return item.image_url.url;
+    }
+  }
+
+  // 兜底：content 字符串里含图片 URL（极少见）
+  if (typeof msg.content === 'string') {
+    const m = msg.content.match(/https?:\/\/\S+\.(?:png|jpg|jpeg|webp)/i);
+    if (m) return m[0];
+  }
+
+  return '';
 }
 
 export const openRouterService = new OpenRouterService();

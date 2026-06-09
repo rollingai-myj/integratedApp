@@ -91,10 +91,9 @@ function PosterAppInner() {
         const { roles } = await getMyRole();
         admin = roles.includes('super_admin');
         if (!cancelled) setIsSuperAdmin(admin);
-        if (!cancelled && admin) {
-          window.location.href = '/admin';
-          return;
-        }
+        // 注意：原 standalone repo 在这里会 window.location.href='/admin' 让超管去后台；
+        // 整合后超管也能直接用海报功能（且 currentStore 已在 /select-store 选好），
+        // 不再 redirect。"进入后台"角标改成回首页（功能选择页）。
       } catch (e) { console.warn('[getMyRole]', e); }
 
       // Non-admin: ensure device has a store binding before continuing.
@@ -212,7 +211,7 @@ function PosterAppInner() {
           position: 'absolute', top: 8, right: 8, zIndex: 100,
           background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 10px',
           borderRadius: 12, fontSize: 11, cursor: 'pointer',
-        }} onClick={() => { window.location.href = '/admin'; }}>进入后台</div>
+        }} onClick={() => { window.location.href = '/'; }}>返回首页</div>
       )}
       {storeId && (
         <div style={{
