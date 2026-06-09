@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { IOSDevice } from '@/components/IOSDevice';
 import { BrandHeader } from '@/components/prices/BrandHeader';
 import { SkuImage } from '@/components/prices/SkuImage';
 import { PriceTagLoader } from '@/components/prices/PriceTagLoader';
@@ -269,28 +270,33 @@ function ColdPage() {
   // 启动 loader
   if (loading || skusQuery.isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="text-center">
-          <PriceTagLoader />
-          <div className="mt-5 text-xs text-muted-foreground">正在加载冷藏品数据…</div>
+      <IOSDevice>
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <div className="text-center">
+            <PriceTagLoader />
+            <div className="mt-5 text-xs text-muted-foreground">正在加载冷藏品数据…</div>
+          </div>
         </div>
-      </div>
+      </IOSDevice>
     );
   }
 
   // 未选门店
   if (!storeId) {
     return (
-      <div className="min-h-screen bg-background">
-        <BrandHeader showBack />
-        <div className="px-6 py-16 text-center text-sm text-muted-foreground">
-          请先选择门店再进入价盘
+      <IOSDevice>
+        <div className="min-h-screen bg-background">
+          <BrandHeader showBack />
+          <div className="px-6 py-16 text-center text-sm text-muted-foreground">
+            请先选择门店再进入价盘
+          </div>
         </div>
-      </div>
+      </IOSDevice>
     );
   }
 
   return (
+    <IOSDevice>
     <div className="min-h-screen pb-24">
       <Toaster position="top-center" offset={72} richColors />
       <BrandHeader showBack />
@@ -419,6 +425,7 @@ function ColdPage() {
         }}
       />
     </div>
+    </IOSDevice>
   );
 }
 

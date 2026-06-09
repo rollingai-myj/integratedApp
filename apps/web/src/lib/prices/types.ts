@@ -77,8 +77,17 @@ export function rowToSku(row: StoreSkuRow): SKU {
  *
  * 后端返回的是按天的 snapshot，原版组件吃的是"一个稳定售价段"。
  * 这里做客户端合并：相邻日同价合并成一段，跨段切换记录 start/end。
+ *
+ * 月化毛利计算优先级：
+ *   1. 该 snapshot 有 grossMargin30d 且 > 0 → 月化毛利 = 销量 × 售价 × 毛利率
+ *   2. 否则用批发价回填：先看 snapshot.wholesalePrice，再 fallback 到入参（dim_product.wholesale_price）
+ *      → 单件毛利 = 售价 - 批发价；月化毛利 = 销量 × 单件毛利
+ *   3. 批发价也没有时 → 月化毛利 = 月销售额（salesAmount30d）作粗略代用
  */
-export function pointsToPeriods(points: PriceCurvePoint[]): CurvePeriod[] {
+export function pointsToPeriods(
+  points: PriceCurvePoint[],
+  fallbackWholesale = 0,
+): CurvePeriod[] {
   if (!points || points.length === 0) return [];
   // 按日升序
   const sorted = [...points].sort((a, b) =>
@@ -90,9 +99,22 @@ export function pointsToPeriods(points: PriceCurvePoint[]): CurvePeriod[] {
     const price = Number(p.retailPrice ?? 0);
     if (!Number.isFinite(price) || price <= 0) continue;
     const sales = Number(p.salesQty30d ?? 0);
-    const margin = Number(p.grossMargin30d ?? 0);
-    // 月化毛利 ≈ 30天销量 × (售价 × 毛利率)（毛利率为 0~1 的小数）
-    const profit = sales * price * margin;
+    const salesAmount = Number(p.salesAmount30d ?? 0);
+    const margin = p.grossMargin30d != null ? Number(p.grossMargin30d) : null;
+    const wholesale = p.wholesalePrice != null
+      ? Number(p.wholesalePrice)
+      : (fallbackWholesale > 0 ? fallbackWholesale : 0);
+
+    let profit: number;
+    if (margin != null && margin > 0) {
+      profit = sales * price * margin;
+    } else if (wholesale > 0 && wholesale < price) {
+      profit = sales * (price - wholesale);
+    } else if (salesAmount > 0) {
+      profit = salesAmount;
+    } else {
+      profit = sales * price;   // 兜底：月销售额
+    }
 
     const last = segments[segments.length - 1];
     if (last && Math.abs(last.price - price) < 0.01) {
@@ -127,7 +149,7 @@ export function curveSkuToData(
   curve: PriceCurveSku | undefined,
   fallbackWholesale: number,
 ): CurveData {
-  const periods = curve?.points ? pointsToPeriods(curve.points) : [];
+  const periods = curve?.points ? pointsToPeriods(curve.points, fallbackWholesale) : [];
   const lastPoint = curve?.points?.[curve.points.length - 1];
   const wholesale = Number(lastPoint?.wholesalePrice ?? fallbackWholesale);
   return {
