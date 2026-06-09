@@ -118,27 +118,23 @@ export interface StrategyResult {
   skus: StrategySkuItem[];
 }
 
-/**
- * 门店ID → 城市映射（广东省）
- */
-const STORE_CITY_MAP: Record<string, string> = {
-  // 东莞
-  "粤37893": "东莞", "粤39476": "东莞", "粤39128": "东莞", "粤32839": "东莞",
-  "粤28999": "东莞", "粤28399": "东莞", "粤39608": "东莞",
-  // 深圳
-  "粤32826": "深圳", "粤38788": "深圳", "粤32156": "深圳", "粤35176": "深圳",
-  "1534": "深圳",
-  // 肇庆
-  "粤35853": "肇庆", "粤29790": "肇庆",
-  // 韶关
-  "粤39620": "韶关",
-  // 清远
-  "粤34083": "清远",
-};
-
 function getCurrentDateStr(): string {
   const d = new Date();
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * 之前从硬编码 STORE_CITY_MAP 取数；V029 之后改读 /auth/me 的 currentStore.city。
+ */
+async function getStoreCity(): Promise<string> {
+  try {
+    const res = await fetch("/api/v1/auth/me", { credentials: "include" });
+    if (!res.ok) return "";
+    const data = (await res.json()) as { currentStore?: { city?: string | null } };
+    return data.currentStore?.city ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -156,17 +152,7 @@ export async function analyzeSelection(
   competitorProducts?: unknown,
   poiData?: unknown,
 ): Promise<StrategyResult[]> {
-  const storeId = (() => {
-    try {
-      const raw = sessionStorage.getItem("auth_user");
-      if (!raw) return "";
-      const { token } = JSON.parse(raw);
-      const parts = token.split(".");
-      if (parts.length !== 3) return "";
-      const p = JSON.parse(atob(parts[1]));
-      return p.isAdmin ? (localStorage.getItem("selectedStore") || "") : (p.storeId || "");
-    } catch { return ""; }
-  })();
+  const city = await getStoreCity();
   const inputs: Record<string, unknown> = {
     sku_data: skuData,
     major_category: majorCategory,
@@ -174,7 +160,7 @@ export async function analyzeSelection(
     sub_category: subCategory,
     current_date: getCurrentDateStr(),
     province: "广东",
-    city: storeId ? (STORE_CITY_MAP[storeId] ?? "") : "",
+    city,
   };
   if (typeof isProjectStore === "string") {
     inputs.is_project_store = isProjectStore;

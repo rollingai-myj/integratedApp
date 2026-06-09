@@ -46,6 +46,8 @@ interface StoreRow {
   store_code: string;
   store_name: string;
   is_primary: boolean;
+  city: string | null;
+  is_project_store: boolean;
 }
 
 const MODULES_BY_ROLE: Record<string, ModuleKey[]> = {
@@ -324,7 +326,7 @@ async function loadVisibleStores(
   if (isSuperAdmin) {
     // D1：超管不需要在 user_stores 里有条目，直接看全部
     const res = await query<StoreRow>(
-      `SELECT id, store_code, store_name, FALSE AS is_primary
+      `SELECT id, store_code, store_name, FALSE AS is_primary, city, is_project_store
        FROM stores
        WHERE deleted_at IS NULL AND status = 'active'
        ORDER BY store_code`,
@@ -333,7 +335,7 @@ async function loadVisibleStores(
   }
 
   const res = await query<StoreRow>(
-    `SELECT s.id, s.store_code, s.store_name, us.is_primary
+    `SELECT s.id, s.store_code, s.store_name, us.is_primary, s.city, s.is_project_store
      FROM user_stores us
      JOIN stores s ON s.id = us.store_id
      WHERE us.user_id = $1
@@ -351,6 +353,8 @@ function toStoreRef(r: StoreRow): StoreRef {
     code: r.store_code,
     name: r.store_name,
     isPrimary: r.is_primary,
+    city: r.city,
+    isProjectStore: r.is_project_store,
   };
 }
 
