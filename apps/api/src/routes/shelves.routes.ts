@@ -455,17 +455,24 @@ shelvesRouter.get(
   requireStore,
   asyncHandler(async (req, res) => {
     const onlyPending = req.query.pending === '1' || req.query.pending === 'true';
+    const scopeRaw = typeof req.query.scope === 'string' ? req.query.scope : undefined;
+    const scope = scopeRaw === 'detection' || scopeRaw === 'decision' ? scopeRaw : undefined;
+    const skuCode = typeof req.query.skuCode === 'string' ? req.query.skuCode : undefined;
     const corrections = await listCorrections(req.user!.currentStoreId!, {
       onlyPending,
+      scope,
+      skuCode,
     });
     res.json({ corrections });
   }),
 );
 
+// V026 后 correctionKind 扩展到 4 个值；scope 必传，决定 kind 合法集合。
 const submitCorrectionSchema = z.object({
   shelfCode: z.string().optional(),
   skuCode: z.string().min(1),
-  correctionKind: z.enum(['missed', 'false_positive']),
+  correctionScope: z.enum(['detection', 'decision']).optional(),
+  correctionKind: z.enum(['missed', 'false_positive', 'remove', 'add']),
   reasonCode: z.string().optional(),
   reasonText: z.string().optional(),
   evidenceImageUrl: z.string().optional(),
