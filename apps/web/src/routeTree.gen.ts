@@ -16,7 +16,15 @@ import { Route as ShelvesIndexRouteImport } from './routes/shelves.index'
 import { Route as PricesIndexRouteImport } from './routes/prices.index'
 import { Route as PostersIndexRouteImport } from './routes/posters.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as ShelvesPositionRouteImport } from './routes/shelves.position'
 import { Route as PricesColdRouteImport } from './routes/prices.cold'
+import { Route as ShelvesPositionCodeIndexRouteImport } from './routes/shelves.position.$code.index'
+import { Route as ShelvesPositionCodeVirtualRouteImport } from './routes/shelves.position.$code.virtual'
+import { Route as ShelvesPositionCodeSurveyRouteImport } from './routes/shelves.position.$code.survey'
+import { Route as ShelvesPositionCodeRecordRouteImport } from './routes/shelves.position.$code.record'
+import { Route as ShelvesPositionCodePhotoRouteImport } from './routes/shelves.position.$code.photo'
+import { Route as ShelvesPositionCodeLastRouteImport } from './routes/shelves.position.$code.last'
+import { Route as ShelvesPositionCodeInfoRouteImport } from './routes/shelves.position.$code.info'
 
 const SelectStoreRoute = SelectStoreRouteImport.update({
   id: '/select-store',
@@ -53,10 +61,55 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/admin/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ShelvesPositionRoute = ShelvesPositionRouteImport.update({
+  id: '/shelves/position',
+  path: '/shelves/position',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PricesColdRoute = PricesColdRouteImport.update({
   id: '/prices/cold',
   path: '/prices/cold',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ShelvesPositionCodeIndexRoute =
+  ShelvesPositionCodeIndexRouteImport.update({
+    id: '/$code/',
+    path: '/$code/',
+    getParentRoute: () => ShelvesPositionRoute,
+  } as any)
+const ShelvesPositionCodeVirtualRoute =
+  ShelvesPositionCodeVirtualRouteImport.update({
+    id: '/$code/virtual',
+    path: '/$code/virtual',
+    getParentRoute: () => ShelvesPositionRoute,
+  } as any)
+const ShelvesPositionCodeSurveyRoute =
+  ShelvesPositionCodeSurveyRouteImport.update({
+    id: '/$code/survey',
+    path: '/$code/survey',
+    getParentRoute: () => ShelvesPositionRoute,
+  } as any)
+const ShelvesPositionCodeRecordRoute =
+  ShelvesPositionCodeRecordRouteImport.update({
+    id: '/$code/record',
+    path: '/$code/record',
+    getParentRoute: () => ShelvesPositionRoute,
+  } as any)
+const ShelvesPositionCodePhotoRoute =
+  ShelvesPositionCodePhotoRouteImport.update({
+    id: '/$code/photo',
+    path: '/$code/photo',
+    getParentRoute: () => ShelvesPositionRoute,
+  } as any)
+const ShelvesPositionCodeLastRoute = ShelvesPositionCodeLastRouteImport.update({
+  id: '/$code/last',
+  path: '/$code/last',
+  getParentRoute: () => ShelvesPositionRoute,
+} as any)
+const ShelvesPositionCodeInfoRoute = ShelvesPositionCodeInfoRouteImport.update({
+  id: '/$code/info',
+  path: '/$code/info',
+  getParentRoute: () => ShelvesPositionRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -64,20 +117,36 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
+  '/shelves/position': typeof ShelvesPositionRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
+  '/shelves/position/$code/info': typeof ShelvesPositionCodeInfoRoute
+  '/shelves/position/$code/last': typeof ShelvesPositionCodeLastRoute
+  '/shelves/position/$code/photo': typeof ShelvesPositionCodePhotoRoute
+  '/shelves/position/$code/record': typeof ShelvesPositionCodeRecordRoute
+  '/shelves/position/$code/survey': typeof ShelvesPositionCodeSurveyRoute
+  '/shelves/position/$code/virtual': typeof ShelvesPositionCodeVirtualRoute
+  '/shelves/position/$code/': typeof ShelvesPositionCodeIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
+  '/shelves/position': typeof ShelvesPositionRouteWithChildren
   '/admin': typeof AdminIndexRoute
   '/posters': typeof PostersIndexRoute
   '/prices': typeof PricesIndexRoute
   '/shelves': typeof ShelvesIndexRoute
+  '/shelves/position/$code/info': typeof ShelvesPositionCodeInfoRoute
+  '/shelves/position/$code/last': typeof ShelvesPositionCodeLastRoute
+  '/shelves/position/$code/photo': typeof ShelvesPositionCodePhotoRoute
+  '/shelves/position/$code/record': typeof ShelvesPositionCodeRecordRoute
+  '/shelves/position/$code/survey': typeof ShelvesPositionCodeSurveyRoute
+  '/shelves/position/$code/virtual': typeof ShelvesPositionCodeVirtualRoute
+  '/shelves/position/$code': typeof ShelvesPositionCodeIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -85,10 +154,18 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
+  '/shelves/position': typeof ShelvesPositionRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
+  '/shelves/position/$code/info': typeof ShelvesPositionCodeInfoRoute
+  '/shelves/position/$code/last': typeof ShelvesPositionCodeLastRoute
+  '/shelves/position/$code/photo': typeof ShelvesPositionCodePhotoRoute
+  '/shelves/position/$code/record': typeof ShelvesPositionCodeRecordRoute
+  '/shelves/position/$code/survey': typeof ShelvesPositionCodeSurveyRoute
+  '/shelves/position/$code/virtual': typeof ShelvesPositionCodeVirtualRoute
+  '/shelves/position/$code/': typeof ShelvesPositionCodeIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -97,30 +174,54 @@ export interface FileRouteTypes {
     | '/login'
     | '/select-store'
     | '/prices/cold'
+    | '/shelves/position'
     | '/admin/'
     | '/posters/'
     | '/prices/'
     | '/shelves/'
+    | '/shelves/position/$code/info'
+    | '/shelves/position/$code/last'
+    | '/shelves/position/$code/photo'
+    | '/shelves/position/$code/record'
+    | '/shelves/position/$code/survey'
+    | '/shelves/position/$code/virtual'
+    | '/shelves/position/$code/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
     | '/select-store'
     | '/prices/cold'
+    | '/shelves/position'
     | '/admin'
     | '/posters'
     | '/prices'
     | '/shelves'
+    | '/shelves/position/$code/info'
+    | '/shelves/position/$code/last'
+    | '/shelves/position/$code/photo'
+    | '/shelves/position/$code/record'
+    | '/shelves/position/$code/survey'
+    | '/shelves/position/$code/virtual'
+    | '/shelves/position/$code'
   id:
     | '__root__'
     | '/'
     | '/login'
     | '/select-store'
     | '/prices/cold'
+    | '/shelves/position'
     | '/admin/'
     | '/posters/'
     | '/prices/'
     | '/shelves/'
+    | '/shelves/position/$code/info'
+    | '/shelves/position/$code/last'
+    | '/shelves/position/$code/photo'
+    | '/shelves/position/$code/record'
+    | '/shelves/position/$code/survey'
+    | '/shelves/position/$code/virtual'
+    | '/shelves/position/$code/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -128,6 +229,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SelectStoreRoute: typeof SelectStoreRoute
   PricesColdRoute: typeof PricesColdRoute
+  ShelvesPositionRoute: typeof ShelvesPositionRouteWithChildren
   AdminIndexRoute: typeof AdminIndexRoute
   PostersIndexRoute: typeof PostersIndexRoute
   PricesIndexRoute: typeof PricesIndexRoute
@@ -185,6 +287,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/shelves/position': {
+      id: '/shelves/position'
+      path: '/shelves/position'
+      fullPath: '/shelves/position'
+      preLoaderRoute: typeof ShelvesPositionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/prices/cold': {
       id: '/prices/cold'
       path: '/prices/cold'
@@ -192,14 +301,88 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PricesColdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/shelves/position/$code/': {
+      id: '/shelves/position/$code/'
+      path: '/$code'
+      fullPath: '/shelves/position/$code/'
+      preLoaderRoute: typeof ShelvesPositionCodeIndexRouteImport
+      parentRoute: typeof ShelvesPositionRoute
+    }
+    '/shelves/position/$code/virtual': {
+      id: '/shelves/position/$code/virtual'
+      path: '/$code/virtual'
+      fullPath: '/shelves/position/$code/virtual'
+      preLoaderRoute: typeof ShelvesPositionCodeVirtualRouteImport
+      parentRoute: typeof ShelvesPositionRoute
+    }
+    '/shelves/position/$code/survey': {
+      id: '/shelves/position/$code/survey'
+      path: '/$code/survey'
+      fullPath: '/shelves/position/$code/survey'
+      preLoaderRoute: typeof ShelvesPositionCodeSurveyRouteImport
+      parentRoute: typeof ShelvesPositionRoute
+    }
+    '/shelves/position/$code/record': {
+      id: '/shelves/position/$code/record'
+      path: '/$code/record'
+      fullPath: '/shelves/position/$code/record'
+      preLoaderRoute: typeof ShelvesPositionCodeRecordRouteImport
+      parentRoute: typeof ShelvesPositionRoute
+    }
+    '/shelves/position/$code/photo': {
+      id: '/shelves/position/$code/photo'
+      path: '/$code/photo'
+      fullPath: '/shelves/position/$code/photo'
+      preLoaderRoute: typeof ShelvesPositionCodePhotoRouteImport
+      parentRoute: typeof ShelvesPositionRoute
+    }
+    '/shelves/position/$code/last': {
+      id: '/shelves/position/$code/last'
+      path: '/$code/last'
+      fullPath: '/shelves/position/$code/last'
+      preLoaderRoute: typeof ShelvesPositionCodeLastRouteImport
+      parentRoute: typeof ShelvesPositionRoute
+    }
+    '/shelves/position/$code/info': {
+      id: '/shelves/position/$code/info'
+      path: '/$code/info'
+      fullPath: '/shelves/position/$code/info'
+      preLoaderRoute: typeof ShelvesPositionCodeInfoRouteImport
+      parentRoute: typeof ShelvesPositionRoute
+    }
   }
 }
+
+interface ShelvesPositionRouteChildren {
+  ShelvesPositionCodeInfoRoute: typeof ShelvesPositionCodeInfoRoute
+  ShelvesPositionCodeLastRoute: typeof ShelvesPositionCodeLastRoute
+  ShelvesPositionCodePhotoRoute: typeof ShelvesPositionCodePhotoRoute
+  ShelvesPositionCodeRecordRoute: typeof ShelvesPositionCodeRecordRoute
+  ShelvesPositionCodeSurveyRoute: typeof ShelvesPositionCodeSurveyRoute
+  ShelvesPositionCodeVirtualRoute: typeof ShelvesPositionCodeVirtualRoute
+  ShelvesPositionCodeIndexRoute: typeof ShelvesPositionCodeIndexRoute
+}
+
+const ShelvesPositionRouteChildren: ShelvesPositionRouteChildren = {
+  ShelvesPositionCodeInfoRoute: ShelvesPositionCodeInfoRoute,
+  ShelvesPositionCodeLastRoute: ShelvesPositionCodeLastRoute,
+  ShelvesPositionCodePhotoRoute: ShelvesPositionCodePhotoRoute,
+  ShelvesPositionCodeRecordRoute: ShelvesPositionCodeRecordRoute,
+  ShelvesPositionCodeSurveyRoute: ShelvesPositionCodeSurveyRoute,
+  ShelvesPositionCodeVirtualRoute: ShelvesPositionCodeVirtualRoute,
+  ShelvesPositionCodeIndexRoute: ShelvesPositionCodeIndexRoute,
+}
+
+const ShelvesPositionRouteWithChildren = ShelvesPositionRoute._addFileChildren(
+  ShelvesPositionRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
   SelectStoreRoute: SelectStoreRoute,
   PricesColdRoute: PricesColdRoute,
+  ShelvesPositionRoute: ShelvesPositionRouteWithChildren,
   AdminIndexRoute: AdminIndexRoute,
   PostersIndexRoute: PostersIndexRoute,
   PricesIndexRoute: PricesIndexRoute,
