@@ -56,13 +56,13 @@ export async function writeAuditEvent(input: WriteAuditEventInput): Promise<{ id
         summary, payload,
         is_ai_call, ai_workflow, ai_model, ai_input_tokens, ai_output_tokens,
         ai_latency_ms, ai_status, ai_error,
-        ip_address, user_agent, request_id)
+        ip, user_agent, request_id)
      VALUES ($1::audit_event_kind, $2, $3::app_role, $4,
              $5, $6, $7, $8,
              $9, $10::jsonb,
              $11, $12, $13, $14, $15,
              $16, $17, $18,
-             $19, $20, $21)
+             $19::inet, $20, $21)
      RETURNING id`,
     [
       input.eventKind,
