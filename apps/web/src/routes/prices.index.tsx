@@ -11,6 +11,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { IOSDevice } from '@/components/IOSDevice';
 import { BrandHeader } from '@/components/prices/BrandHeader';
 import { useMe } from '@/lib/auth';
 import { useStoreSkus } from '@/lib/hooks';
@@ -47,6 +48,7 @@ function PricesHomePage() {
   const skuCount = skusQuery.data?.skus?.length ?? 0;
 
   return (
+    <IOSDevice>
     <div className="min-h-screen bg-background">
       <BrandHeader />
       <main className="px-4 py-5">
@@ -100,5 +102,6 @@ function PricesHomePage() {
         </TooltipProvider>
       </main>
     </div>
+    </IOSDevice>
   );
 }
