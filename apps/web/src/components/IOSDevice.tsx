@@ -1,8 +1,30 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react';
 
 interface Props {
   children: ReactNode;
 }
+
+/**
+ * 通过 React Context 把 zoom 暴露给 portal 内的弹窗用。
+ *
+ * Radix Dialog 默认 portal 到 document.body，DOM 上跳出了 IOSDevice 的 `zoom` 容器，
+ * 不会被等比缩放，所以字号在桌面端看起来特别小。弹窗组件读 context 拿到当前 zoom，
+ * 直接给自己加 inline `zoom` 样式即可保持与页面同比。
+ *
+ * 不在 IOSDevice 树内时返回 null → 弹窗 fallback 到默认 zoom=1 行为不变。
+ */
+interface IOSDeviceCtx {
+  zoom: number;
+  designWidth: number;
+}
+const Ctx = createContext<IOSDeviceCtx | null>(null);
+export const useIOSDeviceZoom = (): IOSDeviceCtx | null => useContext(Ctx);
 
 /**
  * 视口容器：把 390×844（iPhone 14 视口）设计稿整层 zoom 等比放大到撑满视口宽度。
@@ -36,16 +58,18 @@ export function IOSDevice({ children }: Props) {
   }, []);
 
   return (
-    <div className="w-full bg-background overflow-x-hidden">
-      <div
-        style={{
-          width: `${DESIGN_WIDTH}px`,
-          height: `${100 / zoom}vh`,
-          zoom,
-        }}
-      >
-        <div className="relative h-full overflow-y-auto">{children}</div>
+    <Ctx.Provider value={{ zoom, designWidth: DESIGN_WIDTH }}>
+      <div className="w-full bg-background overflow-x-hidden">
+        <div
+          style={{
+            width: `${DESIGN_WIDTH}px`,
+            height: `${100 / zoom}vh`,
+            zoom,
+          }}
+        >
+          <div className="relative h-full overflow-y-auto">{children}</div>
+        </div>
       </div>
-    </div>
+    </Ctx.Provider>
   );
 }
