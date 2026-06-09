@@ -19,6 +19,8 @@ import { isRemoveAction } from '@/components/shelves/lib/strategyAction';
 import { difyProxyUrl } from '@/components/shelves/lib/difyProxyUrl';
 import { readWorkflowFinished } from '@/components/shelves/lib/difyWorkflowStream';
 import { getDifyUser } from '@/components/shelves/lib/difyUser';
+import { apiFetch } from '@/components/shelves/lib/api-client';
+import { filterPromoBySkus } from '@/components/shelves/services/difyVirtualShelfApi';
 import { saveSceneRuntime } from '@/components/shelves/services/sceneRuntime';
 import { recordVirtualHistory, type PlanPosition, type ShelfGroup } from '@/components/shelves/services/scenes';
 
@@ -118,6 +120,36 @@ export async function startVirtualShelfJob(p: VirtualShelfJobParams): Promise<vo
   }
 }
 
+/**
+ * 拉当前 store 当前品类的全部 promo_text，reshape 成原 repo 期望的
+ * `{ groupCode: { skuCode: promoText } }` 形态，给 filterPromoBySkus 过滤。
+ * 失败返回 '{}'（Dify 容错），但失败原因写 console.warn 以便排查。
+ */
+async function fetchPromoBlob(category: string | undefined, skuJson: string): Promise<string> {
+  try {
+    const url = category
+      ? `/master/promotions-text?categoryPath=${encodeURIComponent(category)}`
+      : '/master/promotions-text';
+    const res = await apiFetch(url);
+    if (!res.ok) {
+      console.warn('[virtualShelfJob.fetchPromoBlob] non-ok', res.status);
+      return '{}';
+    }
+    const data = (await res.json()) as {
+      promotions?: Array<{ groupCode: string; skuCode: string; promoText: string }>;
+    };
+    const grouped: Record<string, Record<string, string>> = {};
+    for (const p of data.promotions ?? []) {
+      if (!grouped[p.groupCode]) grouped[p.groupCode] = {};
+      grouped[p.groupCode]![p.skuCode] = p.promoText;
+    }
+    return filterPromoBySkus(skuJson, JSON.stringify(grouped));
+  } catch (err) {
+    console.warn('[virtualShelfJob.fetchPromoBlob] threw', err);
+    return '{}';
+  }
+}
+
 async function runOneCategory(
   p: VirtualShelfJobParams,
   positionCode: number,
@@ -127,6 +159,7 @@ async function runOneCategory(
   newListedCodes: Set<string>,
 ): Promise<void> {
   const skuJson = buildSkuJson(p.skus, p.strategies, category);
+  const promo = await fetchPromoBlob(category, skuJson);
 
   const inputs = {
     position_code: positionCode,
@@ -134,7 +167,7 @@ async function runOneCategory(
     shelf_width: JSON.stringify(shelfWidths),
     shelf_layers: JSON.stringify(shelfLayers),
     sku_json: skuJson,
-    promo: '{}',  // 整合 app 暂未提供 promo-full 端点；空对象 Dify 容错
+    promo,
     store_id: p.storeId,
   };
 
