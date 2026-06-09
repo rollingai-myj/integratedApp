@@ -18,6 +18,7 @@ import { Route as PostersIndexRouteImport } from './routes/posters.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as ShelvesPositionRouteImport } from './routes/shelves.position'
 import { Route as PricesColdRouteImport } from './routes/prices.cold'
+import { Route as ShelvesPositionIndexRouteImport } from './routes/shelves.position.index'
 import { Route as ShelvesPositionCodeIndexRouteImport } from './routes/shelves.position.$code.index'
 import { Route as ShelvesPositionCodeVirtualRouteImport } from './routes/shelves.position.$code.virtual'
 import { Route as ShelvesPositionCodeSurveyRouteImport } from './routes/shelves.position.$code.survey'
@@ -71,6 +72,11 @@ const PricesColdRoute = PricesColdRouteImport.update({
   path: '/prices/cold',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ShelvesPositionIndexRoute = ShelvesPositionIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ShelvesPositionRoute,
+} as any)
 const ShelvesPositionCodeIndexRoute =
   ShelvesPositionCodeIndexRouteImport.update({
     id: '/$code/',
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
+  '/shelves/position/': typeof ShelvesPositionIndexRoute
   '/shelves/position/$code/info': typeof ShelvesPositionCodeInfoRoute
   '/shelves/position/$code/last': typeof ShelvesPositionCodeLastRoute
   '/shelves/position/$code/photo': typeof ShelvesPositionCodePhotoRoute
@@ -135,11 +142,11 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
-  '/shelves/position': typeof ShelvesPositionRouteWithChildren
   '/admin': typeof AdminIndexRoute
   '/posters': typeof PostersIndexRoute
   '/prices': typeof PricesIndexRoute
   '/shelves': typeof ShelvesIndexRoute
+  '/shelves/position': typeof ShelvesPositionIndexRoute
   '/shelves/position/$code/info': typeof ShelvesPositionCodeInfoRoute
   '/shelves/position/$code/last': typeof ShelvesPositionCodeLastRoute
   '/shelves/position/$code/photo': typeof ShelvesPositionCodePhotoRoute
@@ -159,6 +166,7 @@ export interface FileRoutesById {
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
+  '/shelves/position/': typeof ShelvesPositionIndexRoute
   '/shelves/position/$code/info': typeof ShelvesPositionCodeInfoRoute
   '/shelves/position/$code/last': typeof ShelvesPositionCodeLastRoute
   '/shelves/position/$code/photo': typeof ShelvesPositionCodePhotoRoute
@@ -179,6 +187,7 @@ export interface FileRouteTypes {
     | '/posters/'
     | '/prices/'
     | '/shelves/'
+    | '/shelves/position/'
     | '/shelves/position/$code/info'
     | '/shelves/position/$code/last'
     | '/shelves/position/$code/photo'
@@ -192,11 +201,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/select-store'
     | '/prices/cold'
-    | '/shelves/position'
     | '/admin'
     | '/posters'
     | '/prices'
     | '/shelves'
+    | '/shelves/position'
     | '/shelves/position/$code/info'
     | '/shelves/position/$code/last'
     | '/shelves/position/$code/photo'
@@ -215,6 +224,7 @@ export interface FileRouteTypes {
     | '/posters/'
     | '/prices/'
     | '/shelves/'
+    | '/shelves/position/'
     | '/shelves/position/$code/info'
     | '/shelves/position/$code/last'
     | '/shelves/position/$code/photo'
@@ -301,6 +311,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PricesColdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/shelves/position/': {
+      id: '/shelves/position/'
+      path: '/'
+      fullPath: '/shelves/position/'
+      preLoaderRoute: typeof ShelvesPositionIndexRouteImport
+      parentRoute: typeof ShelvesPositionRoute
+    }
     '/shelves/position/$code/': {
       id: '/shelves/position/$code/'
       path: '/$code'
@@ -354,6 +371,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface ShelvesPositionRouteChildren {
+  ShelvesPositionIndexRoute: typeof ShelvesPositionIndexRoute
   ShelvesPositionCodeInfoRoute: typeof ShelvesPositionCodeInfoRoute
   ShelvesPositionCodeLastRoute: typeof ShelvesPositionCodeLastRoute
   ShelvesPositionCodePhotoRoute: typeof ShelvesPositionCodePhotoRoute
@@ -364,6 +382,7 @@ interface ShelvesPositionRouteChildren {
 }
 
 const ShelvesPositionRouteChildren: ShelvesPositionRouteChildren = {
+  ShelvesPositionIndexRoute: ShelvesPositionIndexRoute,
   ShelvesPositionCodeInfoRoute: ShelvesPositionCodeInfoRoute,
   ShelvesPositionCodeLastRoute: ShelvesPositionCodeLastRoute,
   ShelvesPositionCodePhotoRoute: ShelvesPositionCodePhotoRoute,

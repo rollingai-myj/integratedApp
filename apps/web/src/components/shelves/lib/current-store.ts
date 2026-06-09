@@ -6,7 +6,8 @@
  * 业务层不应直接 cookie 解 JWT —— 走这层。失败返回 null，调用方做 fallback。
  */
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
+// 始终用相对路径，依赖 vite proxy 转发到后端；同源避免 CORS。
+const BASE_URL = '';
 
 export interface CurrentStoreInfo {
   id: string;       // UUID

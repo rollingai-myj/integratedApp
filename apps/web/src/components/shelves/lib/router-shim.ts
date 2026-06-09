@@ -39,6 +39,10 @@ export function useNavigate(): ReactRouterNavigate {
     if (to !== '/' && to.startsWith('/') && !to.startsWith('/shelves')) {
       to = `/shelves${to}`;
     }
+    // 原 repo 用 /position/$code/index 做 hub；TanStack 把 shelves.position.$code.index.tsx
+    // 解析为 /shelves/position/$code/（trailing slash），所以 /shelves/position/0/index
+    // 会 404 —— 这里去掉 /index 后缀。
+    to = to.replace(/\/index$/, '/');
     // TanStack 的强类型 to 在运行期就是字符串，这里用 any 跳过 typed-routes 校验
     nav({ to: to as never, replace: opts?.replace });
   }) as ReactRouterNavigate;

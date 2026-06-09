@@ -10,7 +10,8 @@
  * Dify 直接用 `transfer_method:'remote_url'` 拉 OSS 公网 URL，故 path 白名单不含
  * `files/upload`。如未来要恢复，后端 ai.routes.ts 的 DIFY_PATH_WHITELIST 加上即可。
  */
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
+// 始终用相对路径，依赖 vite proxy 转发到后端；同源避免 CORS。
+const BASE_URL = '';
 
 export type DifyApp =
   | 'selection'

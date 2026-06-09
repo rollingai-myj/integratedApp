@@ -1,16 +1,13 @@
 /**
- * /shelves/position —— 场景列表（货架位 + 调改次数）
- * 原 repo: src/pages/v2/PositionPage.tsx
+ * /shelves/position 父布局
+ *
+ * TanStack 文件路由约定：当 shelves.position.$code.*.tsx 存在时，它们会自动挂到
+ * 同名层级的父路由下。所以本文件必须存在并渲染 <Outlet/>，否则 /shelves/position/0/*
+ * 路径会跳到父路由空壳页 —— 看不到子组件。
+ * 真正的列表页放在 shelves.position.index.tsx。
  */
-import { createFileRoute } from '@tanstack/react-router';
-import { ShelvesAppShell } from '@/components/shelves/AppShell';
-import PositionPage from '@/components/shelves/pages/PositionPage';
+import { createFileRoute, Outlet } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/shelves/position')({
-  component: () => (
-    <ShelvesAppShell>
-      <PositionPage />
-    </ShelvesAppShell>
-  ),
-  head: () => ({ meta: [{ title: '选场景 · 选品助手' }] }),
+  component: Outlet,
 });

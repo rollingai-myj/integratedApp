@@ -88,7 +88,7 @@ function backendToSkuRow(b: BackendStoreSku): SkuRow {
 /** 拉当前 store 的全部 SKU 写入缓存。失败返回 0；上层失败时仍可渲染（空 SKU 列表） */
 export async function loadStoreSkus(storeCode: string): Promise<number> {
   if (!storeCode) return 0;
-  const BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
+  const BASE = '';  // 走 vite proxy 同源
   try {
     const res = await fetch(`${BASE}/api/v1/skus`, { credentials: 'include' });
     if (!res.ok) return 0;

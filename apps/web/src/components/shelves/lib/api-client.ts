@@ -10,7 +10,9 @@
  * 上层 catch 处理；404 视为正常空数据，保持与原 repo 一致。
  */
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '';
+// 整合 app 用 vite proxy 把 /api 转到 :8787，所以这里始终用相对路径；
+// 不读 VITE_API_BASE_URL（设了反而会跨域）。
+const BASE_URL = '';
 const V1_PREFIX = '/api/v1';
 
 /**
