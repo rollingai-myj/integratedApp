@@ -12,6 +12,7 @@ import { useEffect } from 'react';
 import { PosterApp } from '@/components/posters/App';
 import { setHostContext } from '@/components/posters/host-bridge';
 import { authClient } from '@/components/posters/auth-client';
+import { IOSDevice } from '@/components/IOSDevice';
 import { useMe } from '@/lib/auth';
 
 export const Route = createFileRoute('/posters/')({
@@ -58,12 +59,21 @@ function PostersHostPage() {
 
   if (meQuery.isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-ink-muted">
-        载入中…
-      </div>
+      <IOSDevice>
+        <div className="h-full flex items-center justify-center text-sm text-ink-muted">
+          载入中…
+        </div>
+      </IOSDevice>
     );
   }
   if (!me?.user) return null;
 
-  return <PosterApp />;
+  // PosterApp 原 standalone repo 假设父容器铺满视口（自带 width/height: 100%），
+  // 嵌到统一应用后必须给它一个有明确尺寸的壳，否则 100% × 100% 解析成 0 → 空白。
+  // 沿用其它模块的 IOSDevice 容器（390 设计稿 + zoom 等比放大），视觉与首页一致。
+  return (
+    <IOSDevice>
+      <PosterApp />
+    </IOSDevice>
+  );
 }
