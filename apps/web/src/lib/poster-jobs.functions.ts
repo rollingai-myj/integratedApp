@@ -186,12 +186,15 @@ export async function listMyActiveJobs(): Promise<{ jobs: JobRow[] }> {
   return { jobs };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function dismissBatch(
   input: ServerFnInput<{ batchId: string }>,
 ): Promise<{ ok: true }> {
-  if (!input.data.batchId) return { ok: true };
+  const id = input.data.batchId;
+  if (!id || !UUID_RE.test(id)) return { ok: true };
   await jsonFetch(
-    `/posters/queue/batch/${encodeURIComponent(input.data.batchId)}`,
+    `/posters/queue/batch/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
   );
   return { ok: true };
