@@ -124,6 +124,8 @@ const PhotoPage = () => {
   const [vsStatus, setVsStatus] = useState<"idle" | "processing" | "completed" | "failed">("idle");
   const [vsRaw, setVsRaw] = useState<unknown>(null);
   const [vsCtx, setVsCtx] = useState<unknown>(null);
+  // 识别服务降级提示：detect-service 不可达时显示，让用户知道红框可能没标
+  const [detectError, setDetectError] = useState<string | null>(null);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -162,12 +164,19 @@ const PhotoPage = () => {
     // Detect（完成后停止扫描动画）
     Promise.all(
       photos.map(async (p) => {
-        if (!p.blob) return p;
-        try { return { ...p, matches: await detectImage(p.blob) }; } catch { return p; }
+        if (!p.blob) return { photo: p, error: null as null | string };
+        const result = await detectImage(p.blob);
+        return {
+          photo: { ...p, matches: result.matches },
+          error: result.error ? result.error.message : null,
+        };
       })
-    ).then((withMatches) => {
+    ).then((results) => {
+      const withMatches = results.map((r) => r.photo);
+      const firstErr = results.find((r) => r.error)?.error;
       setPhotos(withMatches);
       setScanning(false);
+      if (firstErr) setDetectError(firstErr);
       patchDraft({ photos: withMatches.map((p) => ({ url: p.url, matches: p.matches })) });
       saveSceneRuntime(selectedStore, shelfId, {
         photos: withMatches.map(({ localPreview: _lp, blob: _b, ...rest }) => rest),
@@ -364,6 +373,13 @@ const PhotoPage = () => {
                   <p className="text-xs text-center text-muted-foreground animate-pulse">
                     {resumeFlash ? "正在加载上次扫描结果…" : "正在扫描货架，正在识别问题单品…"}
                   </p>
+                )}
+                {/* 识别服务降级提示：不显式标出，店长会以为图片真的"通过"了 */}
+                {detectError && !scanning && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    商品识别服务暂不可用，无法标注问题单品；不影响后续诊断与调改方案，您可继续完成本次调改。
+                    <span className="block mt-0.5 text-[10px] text-amber-700/70">原因：{detectError}</span>
+                  </div>
                 )}
               </div>
             )}

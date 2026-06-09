@@ -402,27 +402,55 @@ interface BackendDetectResp {
 }
 
 /**
- * 调商品识别服务，返回原 repo 形态 `matches[]`。
- * 后端 detect-service 若不可用（未部署 GPU/PE/Qdrant 那一套），后端会抛 502；
- * 这里 catch 后返回空数组 —— 上游红框无标注，但诊断/选品/虚拟货架链路不阻塞。
+ * 调商品识别服务的结果。`error` 非空 = 识别服务不可用（GPU/PE/Qdrant 未部署
+ * 或网络断开）；UI 应展示"识别服务暂不可用，可继续完成手动调改"提示，而非
+ * 静默不画红框让用户以为图片正常通过。
  */
-export async function detectImage(blob: Blob): Promise<DetectMatch[]> {
+export interface DetectImageResult {
+  matches: DetectMatch[];
+  /** 502 / 网络故障 / JSON 解析失败时填写；null = 成功（即使匹配 0 项） */
+  error: { code: 'UPSTREAM_DOWN' | 'NETWORK' | 'PARSE'; message: string } | null;
+}
+
+export async function detectImage(blob: Blob): Promise<DetectImageResult> {
+  let res: Response;
   try {
     const imageBase64 = await blobToBase64(blob);
-    const res = await apiFetch('/detect', {
+    res = await apiFetch('/detect', {
       method: 'POST',
       body: JSON.stringify({ imageBase64, filename: 'shelf.jpg' }),
     });
-    if (!res.ok) return [];
+  } catch (err) {
+    return {
+      matches: [],
+      error: { code: 'NETWORK', message: (err as Error).message || '网络异常' },
+    };
+  }
+  if (!res.ok) {
+    // 502 上游不可达；422 解析失败等
+    let msg = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body?.error?.message) msg = body.error.message;
+    } catch { /* keep msg */ }
+    return {
+      matches: [],
+      error: { code: 'UPSTREAM_DOWN', message: msg },
+    };
+  }
+  try {
     const data = (await res.json()) as BackendDetectResp;
-    return (data.boxes ?? []).map((b, i) => ({
+    const matches = (data.boxes ?? []).map((b, i) => ({
       id: String(i),
-      bbox: [b.x, b.y, b.x + b.w, b.y + b.h],
+      bbox: [b.x, b.y, b.x + b.w, b.y + b.h] as [number, number, number, number],
       matched_sku_id: b.skuCode || null,
       matched_combined: b.confidence,
     }));
+    return { matches, error: null };
   } catch (err) {
-    console.warn('[shelves/scenes.detectImage] failed', err);
-    return [];
+    return {
+      matches: [],
+      error: { code: 'PARSE', message: (err as Error).message || '响应解析失败' },
+    };
   }
 }
