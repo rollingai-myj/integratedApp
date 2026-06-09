@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useIOSDeviceZoom } from '@/components/IOSDevice';
 import { SkuImage } from '../SkuImage';
 import { fmtMoney, rowToSku } from '@/lib/prices/types';
 import type { StoreSkuRow } from '@myj/shared';
@@ -35,9 +36,19 @@ interface Props {
 }
 
 export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Props) {
+  // 弹窗 portal 在 IOSDevice 之外，需手动同步 zoom 才能保持比例。
+  const zoom = useIOSDeviceZoom()?.zoom ?? 1;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] max-w-[94vw] overflow-y-auto rounded-[22px] sm:max-w-md">
+      <DialogContent
+        className="overflow-y-auto rounded-[22px] sm:max-w-md"
+        style={{
+          zoom,
+          // zoom 会把元素整体放大 zoom 倍，vh/vw 是基于视口的，所以这里反向除一次保持视觉 88vh / 94vw
+          maxHeight: `${88 / zoom}vh`,
+          maxWidth: `${94 / zoom}vw`,
+        }}
+      >
         <DialogHeader>
           <div className="label-eyebrow" style={{ color: 'var(--brand)' }}>
             HISTORY
