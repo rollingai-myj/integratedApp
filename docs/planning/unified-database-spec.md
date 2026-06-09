@@ -2,7 +2,7 @@
 
 更新日期：2026-06-08
 读者：业务负责人、新加入开发的同事、外部审核人员
-配套文档：[统一接口规划文档](./unified-api-spec.md) · [里程碑追踪](../milestones.md) · [老库数据迁移说明](../legacy-data-migration.md)
+配套文档：[统一接口规划文档](./unified-api-spec.md) · [📘 Schema 详细参考（每张表 + 每个字段）](./database-schema-reference.md) · [里程碑追踪](../milestones.md) · [老库数据迁移说明](../legacy-data-migration.md)
 
 ---
 
@@ -22,6 +22,8 @@
 ## 文档说明
 
 这份文档**不讲技术细节**，只讲业务结构 —— 系统里有哪些"东西"、它们怎么连在一起、有取舍的地方当时怎么选的。
+
+> 👉 **想看真实的字段名、类型、索引、外键？** 看姊妹文档 [`database-schema-reference.md`](./database-schema-reference.md) —— 每张表、每个字段、每条索引都有，工程师按这个写代码；业务侧讨论时看本文档即可。
 
 整份文档分成四个部分：
 
