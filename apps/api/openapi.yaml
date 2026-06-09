@@ -1,0 +1,1657 @@
+openapi: 3.1.0
+info:
+  title: 美宜佳门店助手 · 统一 API
+  version: 0.1.0-m0
+  description: |
+    美宜佳门店助手统一后端 API。覆盖 12 个业务模块、80+ 端点。
+
+    **权威设计文档**：[`docs/planning/unified-api-spec.md`](/docs/planning/unified-api-spec.md)
+    **数据库 schema**：[`docs/planning/database-schema-reference.md`](/docs/planning/database-schema-reference.md)
+
+    ## 全局约定（必读）
+
+    - 所有接口都在 `/api/v1` 前缀下
+    - **业务接口** 一律从 session 取 `storeId`（**不接受路径 / 参数里传**），spec § 0
+    - **资源 CRUD 例外接口**（如 `PUT /master/stores/:id`）才显式带 `:id`
+    - 认证靠 HttpOnly cookie `sso_token`，未登录受保护接口 → `401 UNAUTHORIZED`
+    - session 没选门店时调业务接口 → `409 NO_STORE_SELECTED`（前端应跳门户首页让用户选店）
+
+    ## 错误码
+
+    | code | HTTP | 含义 |
+    |---|---|---|
+    | `UNAUTHORIZED` | 401 | 未登录 / token 失效 |
+    | `FORBIDDEN` | 403 | 已登录但角色不够 |
+    | `NOT_FOUND` | 404 | 资源不存在 |
+    | `BAD_REQUEST` | 400 | 参数校验失败 |
+    | `CONFLICT` | 409 | 业务冲突（如重复提交） |
+    | `NO_STORE_SELECTED` | 409 | session 没有 currentStoreId |
+    | `UPSTREAM_ERROR` | 502 | 调外部服务失败（飞书 / Dify / OpenRouter） |
+    | `INTERNAL` | 500 | 兜底 |
+  contact:
+    name: rollingai-myj
+    url: https://github.com/rollingai-myj/integratedApp
+
+servers:
+  - url: http://localhost:8787/api/v1
+    description: 本地开发
+  - url: /api/v1
+    description: 当前部署
+
+tags:
+  - name: 认证 (Auth)
+    description: 飞书 OAuth + 账号密码兜底（决策 D2）
+  - name: 门户 (Portal)
+    description: 模块清单 + 门店列表 + 切店（**唯一改 session storeId 的入口**）
+  - name: 主数据 (Master)
+    description: 门店、商品、分类、竞品价等全局主数据
+  - name: 货盘 (Shelves)
+    description: 货架配置 + 场景调改 + 拍照检测 + 调研问卷
+  - name: 价盘 (Prices)
+    description: SKU 售价曲线 + 调价（D3 两层写）+ AI 诊断
+  - name: 海报 (Posters)
+    description: 单张同步生成 + 批量队列 + 历史
+  - name: 促销 (Promotions)
+    description: 促销批次（超管 Excel 上传）+ 当前生效 + 推荐
+  - name: 后台 (Admin)
+    description: 超管账号 / 审计 / 实时统计 / AI 模型切换
+  - name: 存储 (Storage)
+    description: OSS / R2 文件上传 + 图片代理
+  - name: AI 网关 (AI Gateway)
+    description: Dify 工作流统一入口 + detect-service 转发
+  - name: 会话 (Sessions)
+    description: 使用会话心跳（PO-G 系列）+ 审计写入
+  - name: 健康检查 (Health)
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sso_token
+      description: HttpOnly cookie，登录成功后由后端自动种入
+
+  responses:
+    Unauthorized:
+      description: 未登录 / token 失效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiErrorBody' }
+          example:
+            error: { code: UNAUTHORIZED, message: 请先登录 }
+            requestId: req_abc123
+    Forbidden:
+      description: 已登录但角色不够
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiErrorBody' }
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiErrorBody' }
+    BadRequest:
+      description: 参数校验失败
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiErrorBody' }
+    NoStoreSelected:
+      description: session 里没选门店，前端应跳门户首页
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiErrorBody' }
+          example:
+            error:
+              code: NO_STORE_SELECTED
+              message: 请先选择门店再操作（POST /portal/active-store）
+
+  schemas:
+    # ── 通用 ─────────────────────────────────────────────────────────────
+    ApiErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: BAD_REQUEST }
+            message: { type: string, example: skuCode 必填 }
+            details: { type: object, additionalProperties: true }
+        requestId: { type: string, example: req_abc123 }
+
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status: { type: string, enum: [ok], example: ok }
+        version: { type: string, example: 0.1.0-m0 }
+
+    # ── 认证 ─────────────────────────────────────────────────────────────
+    CurrentUser:
+      type: object
+      required: [id, name, roles]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: 张店长 }
+        email: { type: string, nullable: true, example: zhang@dutchmail.com }
+        avatarUrl: { type: string, nullable: true }
+        roles:
+          type: array
+          items: { type: string, enum: [super_admin, store_owner, analyst, account_manager] }
+
+    StoreRef:
+      type: object
+      required: [id, code, name]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, example: 粤37893 }
+        name: { type: string, example: 光明南店 }
+        isPrimary: { type: boolean, example: true }
+
+    AuthNotice:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, enum: [NO_STORE_MATCHED] }
+        message: { type: string }
+        unmatchedCandidates:
+          type: array
+          items: { type: string }
+
+    MeResponse:
+      type: object
+      required: [user, currentStore, stores, feishuLinked, modules]
+      properties:
+        user:
+          oneOf:
+            - { $ref: '#/components/schemas/CurrentUser' }
+            - { type: 'null' }
+        currentStore:
+          oneOf:
+            - { $ref: '#/components/schemas/StoreRef' }
+            - { type: 'null' }
+        stores:
+          type: array
+          items: { $ref: '#/components/schemas/StoreRef' }
+        feishuLinked: { type: boolean }
+        modules:
+          type: array
+          items: { type: string, enum: [shelves, prices, posters, admin] }
+        notice:
+          oneOf:
+            - { $ref: '#/components/schemas/AuthNotice' }
+            - { type: 'null' }
+
+    LoginRequest:
+      type: object
+      required: [account, password]
+      properties:
+        account: { type: string, example: admin }
+        password: { type: string, example: changeme, format: password }
+
+    LoginResponse:
+      type: object
+      required: [user, expiresAt]
+      properties:
+        user: { $ref: '#/components/schemas/CurrentUser' }
+        expiresAt: { type: string, format: date-time }
+        notice:
+          oneOf:
+            - { $ref: '#/components/schemas/AuthNotice' }
+            - { type: 'null' }
+
+    FeishuAuthorizeResponse:
+      type: object
+      required: [authorizeUrl, state]
+      properties:
+        authorizeUrl: { type: string, format: uri }
+        state: { type: string }
+
+    FeishuExchangeRequest:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+        state: { type: string }
+        client: { type: string, enum: [feishu_h5, feishu_pc, browser] }
+
+    FeishuJsapiConfigResponse:
+      type: object
+      required: [appId, timestamp, nonceStr, signature]
+      properties:
+        appId: { type: string }
+        timestamp: { type: integer }
+        nonceStr: { type: string }
+        signature: { type: string }
+
+    # ── 门户 ─────────────────────────────────────────────────────────────
+    PortalModulesResponse:
+      type: object
+      required: [modules]
+      properties:
+        modules:
+          type: array
+          items:
+            type: object
+            required: [key, label, enabled]
+            properties:
+              key: { type: string, enum: [shelves, prices, posters, admin] }
+              label: { type: string }
+              enabled: { type: boolean }
+              disabledReason: { type: string, nullable: true }
+
+    PortalStoresResponse:
+      type: object
+      required: [stores]
+      properties:
+        stores:
+          type: array
+          items: { $ref: '#/components/schemas/StoreRef' }
+
+    SwitchStoreRequest:
+      type: object
+      required: [storeId]
+      properties:
+        storeId: { type: string, format: uuid }
+
+    SwitchStoreResponse:
+      type: object
+      required: [currentStore]
+      properties:
+        currentStore: { $ref: '#/components/schemas/StoreRef' }
+
+    # ── 主数据 ───────────────────────────────────────────────────────────
+    StoreDetail:
+      type: object
+      required: [id, code, name, ownership, status]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        ownership: { type: string, enum: [direct, franchise] }
+        province: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        district: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        latitude: { type: number, nullable: true }
+        longitude: { type: number, nullable: true }
+        openedAt: { type: string, format: date, nullable: true }
+        status: { type: string, enum: [active, disabled] }
+
+    ProductRow:
+      type: object
+      required: [id, skuCode, productName, isNewProduct, isPrivateLabel, status]
+      properties:
+        id: { type: string, format: uuid }
+        skuCode: { type: string, example: 6901234567890 }
+        productName: { type: string, example: 可口可乐 330ml 罐装 }
+        brand: { type: string, nullable: true }
+        spec: { type: string, nullable: true }
+        unit: { type: string, nullable: true, example: 罐 }
+        shelfLifeDays: { type: integer, nullable: true }
+        lengthMm: { type: number, nullable: true }
+        widthMm: { type: number, nullable: true }
+        heightMm: { type: number, nullable: true }
+        categoryId: { type: string, format: uuid, nullable: true }
+        categoryPath: { type: string, nullable: true, example: 饮料/碳酸饮料/可乐 }
+        isNewProduct: { type: boolean }
+        isPrivateLabel: { type: boolean }
+        wholesalePrice: { type: number, nullable: true }
+        suggestedRetailPrice: { type: number, nullable: true }
+        introducedAt: { type: string, format: date, nullable: true }
+        officialImageUrl: { type: string, nullable: true }
+        status: { type: string, enum: [active, delisted] }
+
+    StoreSkuRow:
+      allOf:
+        - { $ref: '#/components/schemas/ProductRow' }
+        - type: object
+          properties:
+            retailPrice: { type: number, nullable: true }
+            originalPrice: { type: number, nullable: true }
+            hasPriceChange: { type: boolean }
+            salesQty30d: { type: integer, nullable: true }
+            salesAmount30d: { type: number, nullable: true }
+            salesQty90d: { type: integer, nullable: true }
+            salesAmount90d: { type: number, nullable: true }
+            grossMargin30d: { type: number, nullable: true, description: '0~1 之间的小数' }
+            stockQty: { type: integer, nullable: true }
+            lastDeliveryAt: { type: string, format: date-time, nullable: true }
+            snapshotDate: { type: string, format: date, nullable: true }
+
+    ListStoresResponse:
+      type: object
+      required: [stores, total]
+      properties:
+        stores: { type: array, items: { $ref: '#/components/schemas/StoreDetail' } }
+        total: { type: integer }
+
+    ListStoreSkusResponse:
+      type: object
+      required: [skus, total]
+      properties:
+        skus: { type: array, items: { $ref: '#/components/schemas/StoreSkuRow' } }
+        total: { type: integer }
+
+    # ── 价盘 ─────────────────────────────────────────────────────────────
+    PriceCurvePoint:
+      type: object
+      required: [snapshotDate, source]
+      properties:
+        snapshotDate: { type: string, format: date }
+        retailPrice: { type: number, nullable: true }
+        originalPrice: { type: number, nullable: true }
+        wholesalePrice: { type: number, nullable: true }
+        salesQty30d: { type: integer, nullable: true }
+        salesAmount30d: { type: number, nullable: true }
+        grossMargin30d: { type: number, nullable: true }
+        source: { type: string, enum: [erp_sync, price_change, manual] }
+        priceChangeId: { type: string, format: uuid, nullable: true }
+
+    PriceCurveSku:
+      type: object
+      required: [skuCode, points]
+      properties:
+        skuCode: { type: string }
+        productName: { type: string, nullable: true }
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/PriceCurvePoint' }
+
+    PriceCurveResponse:
+      type: object
+      required: [curves]
+      properties:
+        curves:
+          type: array
+          items: { $ref: '#/components/schemas/PriceCurveSku' }
+
+    SubmitPriceChangeRequest:
+      type: object
+      required: [skuCode, newPrice]
+      properties:
+        skuCode: { type: string, example: 6901234567890 }
+        newPrice: { type: number, example: 3.50 }
+        oldPrice: { type: number, nullable: true }
+        source: { type: string, enum: [manual, ai_suggest, rule_engine], default: manual }
+        note: { type: string, example: 跟竞品对齐 }
+
+    PriceChangeRecord:
+      type: object
+      required: [id, storeId, productId, skuCode, newPrice, source, effectiveDate, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        storeId: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        skuCode: { type: string }
+        oldPrice: { type: number, nullable: true }
+        newPrice: { type: number }
+        source: { type: string, enum: [manual, ai_suggest, rule_engine] }
+        effectiveDate: { type: string, format: date }
+        createdAt: { type: string, format: date-time }
+
+    SubmitPriceChangeResponse:
+      type: object
+      required: [record]
+      properties:
+        record: { $ref: '#/components/schemas/PriceChangeRecord' }
+
+    DiagnoseSkuInput:
+      type: object
+      required: [skuCode, currentPrice]
+      properties:
+        skuCode: { type: string }
+        currentPrice: { type: number }
+        wholesalePrice: { type: number }
+        salesQty30d: { type: integer }
+        grossMargin30d: { type: number }
+        competitorPrices:
+          type: array
+          items:
+            type: object
+            properties:
+              channel: { type: string }
+              price: { type: number }
+
+    DiagnoseSkuResult:
+      type: object
+      required: [skuCode, suggestion, reasoning, confidence, source]
+      properties:
+        skuCode: { type: string }
+        suggestion: { type: string, enum: [up, down, hold, unknown] }
+        suggestedPrice: { type: number, nullable: true }
+        reasoning: { type: string }
+        confidence: { type: number, description: '0~1 之间' }
+        source: { type: string, example: dify }
+
+    DiagnoseBatchRequest:
+      type: object
+      required: [skus]
+      properties:
+        skus:
+          type: array
+          items: { $ref: '#/components/schemas/DiagnoseSkuInput' }
+
+    DiagnoseBatchResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/DiagnoseSkuResult' }
+
+    # ── 海报 ─────────────────────────────────────────────────────────────
+    PosterGenerateRequest:
+      type: object
+      required: [template, mode, copyText]
+      properties:
+        template: { type: string, enum: [vibrant, premium, minimal, custom] }
+        mode: { type: string, enum: [photo_compose, official_bg_only, multi_product] }
+        copyText: { type: string, example: 第二件半价 }
+        sourcePhotoUrl: { type: string, nullable: true }
+        productImageUrl: { type: string, nullable: true }
+        customStyleDescription: { type: string, nullable: true }
+        skuCode: { type: string, nullable: true }
+        categoryName: { type: string, nullable: true }
+
+    PosterRecord:
+      type: object
+      required: [id, userId, template, mode, copyText, posterImageUrl, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        jobId: { type: string, format: uuid, nullable: true }
+        userId: { type: string, format: uuid }
+        storeId: { type: string, format: uuid, nullable: true }
+        template: { type: string }
+        mode: { type: string }
+        copyText: { type: string }
+        skuCode: { type: string, nullable: true }
+        categoryName: { type: string, nullable: true }
+        posterImageUrl: { type: string }
+        thumbnailUrl: { type: string, nullable: true }
+        aiModel: { type: string, nullable: true }
+        generationMs: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    PosterGenerateResponse:
+      type: object
+      required: [poster]
+      properties:
+        poster: { $ref: '#/components/schemas/PosterRecord' }
+
+    PosterListResponse:
+      type: object
+      required: [posters]
+      properties:
+        posters:
+          type: array
+          items: { $ref: '#/components/schemas/PosterRecord' }
+
+    # ── 促销 ─────────────────────────────────────────────────────────────
+    PromotionUpload:
+      type: object
+      required: [id, fileName, isActive, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        fileName: { type: string }
+        uploadedBy: { type: string, format: uuid, nullable: true }
+        rowTotal: { type: integer }
+        productCount: { type: integer }
+        groupCount: { type: integer }
+        isActive: { type: boolean }
+        activatedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    ProductPromotion:
+      type: object
+      required: [id, skuCode, productName]
+      properties:
+        id: { type: string, format: uuid }
+        skuCode: { type: string }
+        productName: { type: string }
+        categoryName: { type: string, nullable: true }
+        originalPrice: { type: number, nullable: true }
+        bestLabel: { type: string, nullable: true }
+        bestTotalPrice: { type: number, nullable: true }
+        bestSavingPercent: { type: number, nullable: true }
+        validFrom: { type: string, format: date, nullable: true }
+        validTo: { type: string, format: date, nullable: true }
+        mixGroupCode: { type: string, nullable: true }
+        displayText: { type: string, nullable: true }
+        officialImageUrl: { type: string, nullable: true }
+
+    ActivePromotionsResponse:
+      type: object
+      required: [upload, products]
+      properties:
+        upload:
+          oneOf:
+            - { $ref: '#/components/schemas/PromotionUpload' }
+            - { type: 'null' }
+        products:
+          type: array
+          items: { $ref: '#/components/schemas/ProductPromotion' }
+
+  parameters:
+    LimitParam:
+      name: limit
+      in: query
+      schema: { type: integer, default: 50 }
+      description: 返回条数上限
+
+security:
+  - cookieAuth: []
+
+# =============================================================================
+# 业务路径
+# =============================================================================
+
+paths:
+  # ── 健康 ───────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [健康检查 (Health)]
+      summary: 健康检查
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+
+  # ── 模块 1：认证 ───────────────────────────────────────────────────────
+  /auth/me:
+    get:
+      tags: [认证 (Auth)]
+      summary: 当前登录用户
+      description: 任何人都能调（包括未登录，此时 user 为 null）。前端用它做路由守卫。
+      security: []
+      responses:
+        '200':
+          description: 用户信息（含 currentStore、可见门店、可见模块、notice）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MeResponse' }
+
+  /auth/login:
+    post:
+      tags: [认证 (Auth)]
+      summary: 账号密码登录（决策 D2 过渡期兜底）
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: 登录成功，cookie 已种入
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
+    post:
+      tags: [认证 (Auth)]
+      summary: 退出登录（清 cookie）
+      responses:
+        '204': { description: No Content }
+
+  /auth/feishu/authorize:
+    get:
+      tags: [认证 (Auth)]
+      summary: 飞书登录跳转 URL（顺便种 state cookie）
+      security: []
+      parameters:
+        - { name: redirect_uri, in: query, schema: { type: string, format: uri }, description: 飞书授权完跳回的地址 }
+      responses:
+        '200':
+          description: 飞书授权 URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeishuAuthorizeResponse' }
+
+  /auth/feishu/exchange:
+    post:
+      tags: [认证 (Auth)]
+      summary: 飞书 code → session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FeishuExchangeRequest' }
+      responses:
+        '200':
+          description: 兑换成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+
+  /auth/feishu/jsapi-config:
+    get:
+      tags: [认证 (Auth)]
+      summary: 飞书 H5 SDK 免登签名
+      parameters:
+        - { name: url, in: query, required: true, schema: { type: string, format: uri }, description: 当前页面 URL（参与签名） }
+      responses:
+        '200':
+          description: 签名
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeishuJsapiConfigResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ── 模块 2：门户 ───────────────────────────────────────────────────────
+  /portal/modules:
+    get:
+      tags: [门户 (Portal)]
+      summary: 当前用户可点亮的模块（含 disabledReason）
+      responses:
+        '200':
+          description: 模块清单
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalModulesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /portal/stores:
+    get:
+      tags: [门户 (Portal)]
+      summary: 当前用户可见门店列表
+      description: 店主 = 绑定的门店；超管 = 全部门店
+      responses:
+        '200':
+          description: 门店列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalStoresResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /portal/active-store:
+    post:
+      tags: [门户 (Portal)]
+      summary: 切换当前激活门店
+      description: |
+        **唯一改 session.currentStoreId 的接口**。校验 storeId 在用户可见门店内（超管全过）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SwitchStoreRequest' }
+      responses:
+        '200':
+          description: 切店成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SwitchStoreResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── 模块 3：门店主数据（资源 CRUD 例外区） ──────────────────────────────
+  /master/stores:
+    get:
+      tags: [主数据 (Master)]
+      summary: 列出可见门店（带 id 查单家，只读不切 session）
+      parameters:
+        - { name: id, in: query, schema: { type: string, format: uuid }, description: 查单家时用 }
+      responses:
+        '200':
+          description: 门店列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListStoresResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /master/stores/{id}:
+    put:
+      tags: [主数据 (Master)]
+      summary: 新增 / 更新门店（超管）
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StoreDetail' }
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /master/environment/{storeId}:
+    get:
+      tags: [主数据 (Master)]
+      summary: 门店周边洞察
+      parameters:
+        - { name: storeId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [主数据 (Master)]
+      summary: 写入门店周边洞察（超管 / 店主）
+      parameters:
+        - { name: storeId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: OK }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── 模块 4：商品 / 销售主数据 ──────────────────────────────────────────
+  /master/categories:
+    get:
+      tags: [主数据 (Master)]
+      summary: 全局商品分类树
+      responses:
+        '200': { description: OK }
+
+  /master/products:
+    get:
+      tags: [主数据 (Master)]
+      summary: 全局商品主数据（不区分门店）
+      parameters:
+        - { name: search, in: query, schema: { type: string } }
+        - { name: categoryId, in: query, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200': { description: OK }
+
+  /skus:
+    get:
+      tags: [主数据 (Master), 价盘 (Prices)]
+      summary: 当前 session 门店的在售 SKU
+      description: 业务接口 — **storeId 从 session 取，不接受参数**
+      parameters:
+        - { name: search, in: query, schema: { type: string } }
+        - { name: categoryPath, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: SKU 列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListStoreSkusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+
+  /skus:import:
+    post:
+      tags: [主数据 (Master)]
+      summary: 批量导入当前门店 SKU（超管）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rows]
+              properties:
+                rows:
+                  type: array
+                  items: { type: object }
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+
+  /master/competitors:
+    get:
+      tags: [主数据 (Master)]
+      summary: 竞品价格（按品类或 SKU 查）
+      parameters:
+        - { name: categoryPath, in: query, schema: { type: string } }
+        - { name: skuCodes, in: query, schema: { type: string }, description: 逗号分隔 }
+      responses:
+        '200': { description: OK }
+
+  /master/baseline-skus:
+    get:
+      tags: [主数据 (Master)]
+      summary: 基准 SKU 名单（core / innovation）
+      parameters:
+        - { name: segment, in: query, schema: { type: string, enum: [core, innovation] } }
+      responses:
+        '200': { description: OK }
+
+  /master/promotion-skus:
+    get:
+      tags: [主数据 (Master)]
+      summary: 有促销文案的 SKU 列表
+      responses:
+        '200': { description: OK }
+
+  /master/promotions-text:
+    get:
+      tags: [主数据 (Master)]
+      summary: 促销文案详情
+      parameters:
+        - { name: categoryPath, in: query, schema: { type: string } }
+        - { name: skuCodes, in: query, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+
+  # ── 模块 5：货盘选品 ──────────────────────────────────────────────────
+  /shelves/config:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 本店货架配置列表
+      responses:
+        '200': { description: OK }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+    post:
+      tags: [货盘 (Shelves)]
+      summary: 新增一架（店主 / 超管）
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: OK }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+    delete:
+      tags: [货盘 (Shelves)]
+      summary: 批量删
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shelfCodes]
+              properties:
+                shelfCodes: { type: array, items: { type: string } }
+      responses:
+        '200': { description: OK }
+
+  /shelves/config/{shelfId}:
+    put:
+      tags: [货盘 (Shelves)]
+      summary: 更新一架
+      parameters:
+        - { name: shelfId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: OK }
+
+  /shelves/config:replace-all:
+    put:
+      tags: [货盘 (Shelves)]
+      summary: 整店覆盖（店主 / 超管）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configs]
+              properties:
+                configs: { type: array, items: { type: object } }
+      responses:
+        '200': { description: OK }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+
+  /scenes:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 全局场景定义（货架位 × 品类）
+      responses:
+        '200': { description: OK }
+
+  /scenes/adjustments-count:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 本店各场景的调改次数
+      responses:
+        '200': { description: OK }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+
+  /scenes/{sceneId}/apply:
+    post:
+      tags: [货盘 (Shelves)]
+      summary: 一键应用调改（D4：写 scene_adjustment + N 行 ops_store_assortment_change）
+      parameters:
+        - { name: sceneId, in: path, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: OK }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+
+  /scenes/{sceneId}/history:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 本店本场景历史调改
+      parameters:
+        - { name: sceneId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200': { description: OK }
+
+  /scenes/{sceneId}/virtual-shelf-history:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 本店本场景虚拟货架历史
+      parameters:
+        - { name: sceneId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200': { description: OK }
+
+  /scenes/{sceneId}/virtual-shelf:
+    post:
+      tags: [货盘 (Shelves)]
+      summary: 落一条虚拟货架生成结果
+      parameters:
+        - { name: sceneId, in: path, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: OK }
+
+  /shelves/state:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 本店所有货架当前状态
+      responses:
+        '200': { description: OK }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+    delete:
+      tags: [货盘 (Shelves)]
+      summary: 重置选中货架运行时
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shelfCodes]
+              properties:
+                shelfCodes: { type: array, items: { type: string } }
+      responses:
+        '200': { description: OK }
+
+  /shelves/state/{shelfId}:
+    put:
+      tags: [货盘 (Shelves)]
+      summary: 更新单架运行时
+      parameters:
+        - { name: shelfId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: OK }
+
+  /shelves/photos/{shelfId}:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 单架照片历史
+      parameters:
+        - { name: shelfId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [货盘 (Shelves)]
+      summary: 新增一条照片历史
+      parameters:
+        - { name: shelfId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [imageUrls]
+              properties:
+                imageUrls: { type: array, items: { type: string, format: uri } }
+      responses:
+        '200': { description: OK }
+
+  /shelves/photos/{shelfId}/current:
+    put:
+      tags: [货盘 (Shelves)]
+      summary: 更新当前照片（不入历史）
+      parameters:
+        - { name: shelfId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [imageUrls]
+              properties:
+                imageUrls: { type: array, items: { type: string, format: uri } }
+      responses:
+        '200': { description: OK }
+
+  /surveys/{shelfId}/questions:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 调研问卷题目
+      parameters:
+        - { name: shelfId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+    put:
+      tags: [货盘 (Shelves)]
+      summary: 保存题目（AI 生成后存）
+      parameters:
+        - { name: shelfId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: OK }
+
+  /surveys/{shelfId}/answers:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 调研问卷答案
+      parameters:
+        - { name: shelfId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+    put:
+      tags: [货盘 (Shelves)]
+      summary: 提交答案
+      parameters:
+        - { name: shelfId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        '200': { description: OK }
+
+  /shelves/errata:
+    get:
+      tags: [货盘 (Shelves)]
+      summary: 本店勘误记录
+      parameters:
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [货盘 (Shelves)]
+      summary: 提交勘误
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shelfCode, skuCode, errorType, description]
+              properties:
+                shelfCode: { type: string }
+                skuCode: { type: string }
+                errorType: { type: string }
+                description: { type: string }
+      responses:
+        '200': { description: OK }
+
+  # ── 模块 6：价盘 ──────────────────────────────────────────────────────
+  /prices/curve:
+    get:
+      tags: [价盘 (Prices)]
+      summary: 本店指定 SKU 的价格 / 销量曲线
+      parameters:
+        - { name: skuCodes, in: query, schema: { type: string }, description: 逗号分隔，留空 = 全店所有 SKU }
+        - { name: daysBack, in: query, schema: { type: integer, default: 90 } }
+      responses:
+        '200':
+          description: 价格曲线
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PriceCurveResponse' }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+
+  /prices/changes:
+    get:
+      tags: [价盘 (Prices)]
+      summary: 本店调价历史
+      parameters:
+        - { name: skuCode, in: query, schema: { type: string } }
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200': { description: OK }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+
+  /prices/adjust:
+    post:
+      tags: [价盘 (Prices)]
+      summary: 调价（D3：流水表 + 销售快照表 两层写入）
+      description: |
+        body **不含 storeId**，从 session 取。
+        会同时往 `ops_store_price_change` 写一行、`fact_store_sku_weekly` 插一条 `source='price_change'` 的新快照。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitPriceChangeRequest' }
+      responses:
+        '200':
+          description: 已写入
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubmitPriceChangeResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+
+  /prices/diagnose:
+    post:
+      tags: [价盘 (Prices)]
+      summary: 批量 AI 诊断（调 Dify workflow）
+      description: |
+        密钥保存在后端（不暴露给浏览器）。审计写一份到 `audit_events`，
+        `event_kind='price_ai_diagnose'`，`is_ai_call=TRUE`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DiagnoseBatchRequest' }
+      responses:
+        '200':
+          description: 诊断结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiagnoseBatchResponse' }
+        '502':
+          description: 上游 Dify 调用失败
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiErrorBody' }
+
+  # ── 模块 7：海报 ──────────────────────────────────────────────────────
+  /posters/generate:
+    post:
+      tags: [海报 (Posters)]
+      summary: 单张同步生成海报
+      description: |
+        body **不含 storeId**，从 session 取。直接调 OpenRouter Vision 模型。
+        重试策略 3 次（1s / 3s / 8s 退避），429 / 5xx 算可重试。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PosterGenerateRequest' }
+      responses:
+        '200':
+          description: 海报已生成
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PosterGenerateResponse' }
+        '502':
+          description: OpenRouter 调用失败
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiErrorBody' }
+
+  /posters/queue/enqueue:
+    post:
+      tags: [海报 (Posters)]
+      summary: 批量入队
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jobs]
+              properties:
+                jobs:
+                  type: array
+                  items: { $ref: '#/components/schemas/PosterGenerateRequest' }
+      responses:
+        '200': { description: 已入队 }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }
+
+  /posters/queue/process:
+    post:
+      tags: [海报 (Posters)]
+      summary: 认领并跑一个任务
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                jobId: { type: string, format: uuid }
+      responses:
+        '200': { description: OK }
+
+  /posters/queue/active:
+    get:
+      tags: [海报 (Posters)]
+      summary: 我的活跃任务
+      responses:
+        '200': { description: OK }
+
+  /posters/queue/batch/{batchId}:
+    delete:
+      tags: [海报 (Posters)]
+      summary: 整批取消
+      parameters:
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+
+  /posters/queue/task/{taskId}/reset:
+    post:
+      tags: [海报 (Posters)]
+      summary: 重置卡死任务
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+
+  /posters/queue/task/{taskId}/retry:
+    post:
+      tags: [海报 (Posters)]
+      summary: 失败任务重新生成
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+
+  /posters:
+    get:
+      tags: [海报 (Posters)]
+      summary: 海报历史
+      description: |
+        - `scope=mine`（默认）跨店看自己生成的
+        - `scope=current` 仅当前店
+        - `scope=all` 仅超管，全部海报
+      parameters:
+        - name: scope
+          in: query
+          schema: { type: string, enum: [mine, current, all], default: mine }
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200':
+          description: 海报列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PosterListResponse' }
+
+  # ── 模块 8：促销 ──────────────────────────────────────────────────────
+  /promotions/batches:upload:
+    post:
+      tags: [促销 (Promotions)]
+      summary: 上传 Excel 促销批次（超管）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileName, rows]
+              properties:
+                fileName: { type: string }
+                sourceFileUrl: { type: string }
+                notes: { type: string }
+                activate: { type: boolean, default: false }
+                rows: { type: array, items: { type: object } }
+      responses:
+        '200': { description: 上传完成 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /promotions/batches:
+    get:
+      tags: [促销 (Promotions)]
+      summary: 列出全部批次（超管）
+      parameters:
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200': { description: OK }
+
+  /promotions/active:
+    get:
+      tags: [促销 (Promotions)]
+      summary: 当前生效批次的全部商品 + 混搭组
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActivePromotionsResponse' }
+
+  /promotions/recommend:
+    get:
+      tags: [促销 (Promotions)]
+      summary: 按用户近 30 天海报品类偏好重排
+      responses:
+        '200': { description: OK }
+
+  /promotions/batches/{batchId}:
+    delete:
+      tags: [促销 (Promotions)]
+      summary: 删批次（超管）
+      parameters:
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+
+  /promotions/batches/{batchId}/activate:
+    post:
+      tags: [促销 (Promotions)]
+      summary: 切换激活批次（原激活的自动失活）
+      parameters:
+        - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+
+  # ── 模块 9：后台管理 ──────────────────────────────────────────────────
+  /admin/accounts:
+    get:
+      tags: [后台 (Admin)]
+      summary: 账号列表（带筛选）
+      parameters:
+        - { name: role, in: query, schema: { type: string, enum: [super_admin, store_owner, analyst, account_manager] } }
+        - { name: storeId, in: query, schema: { type: string, format: uuid }, description: 过滤条件，**不影响 session** }
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [后台 (Admin)]
+      summary: 创建账号
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName, roles]
+              properties:
+                displayName: { type: string }
+                email: { type: string }
+                legacyAccount: { type: string }
+                password: { type: string, format: password }
+                roles: { type: array, items: { type: string } }
+                storeIds: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+
+  /admin/accounts/{userId}/reset-password:
+    post:
+      tags: [后台 (Admin)]
+      summary: 重置密码
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+
+  /admin/accounts/{userId}:
+    delete:
+      tags: [后台 (Admin)]
+      summary: 删账号
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+
+  /admin/accounts/{userId}/stores:
+    put:
+      tags: [后台 (Admin)]
+      summary: 重置该账号的门店绑定
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [storeIds]
+              properties:
+                storeIds: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK }
+
+  /admin/accounts/{userId}/roles:
+    put:
+      tags: [后台 (Admin)]
+      summary: 重置角色
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roles]
+              properties:
+                roles: { type: array, items: { type: string } }
+      responses:
+        '200': { description: OK }
+
+  /admin/login-events:
+    get:
+      tags: [后台 (Admin)]
+      summary: 登录事件
+      parameters:
+        - { name: userId, in: query, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+      responses:
+        '200': { description: OK }
+
+  /admin/audit-events:
+    get:
+      tags: [后台 (Admin)]
+      summary: 审计查询
+      parameters:
+        - { name: eventKind, in: query, schema: { type: string } }
+        - { name: userId, in: query, schema: { type: string, format: uuid } }
+        - { name: storeId, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200': { description: OK }
+
+  /admin/usage-stats:
+    get:
+      tags: [后台 (Admin)]
+      summary: 用户使用时长
+      parameters:
+        - { name: storeId, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200': { description: OK }
+
+  /admin/store-stats:
+    get:
+      tags: [后台 (Admin)]
+      summary: 全部门店综合统计
+      responses:
+        '200': { description: OK }
+
+  /admin/realtime-stats:
+    get:
+      tags: [后台 (Admin)]
+      summary: 实时大屏
+      responses:
+        '200': { description: OK }
+
+  /admin/settings/image-model:
+    get:
+      tags: [后台 (Admin)]
+      summary: 当前海报 AI 模型
+      responses:
+        '200': { description: OK }
+    put:
+      tags: [后台 (Admin)]
+      summary: 切换模型
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model]
+              properties:
+                model: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /admin/load-test/poster:
+    post:
+      tags: [后台 (Admin)]
+      summary: 批量并发压测海报生成
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                concurrent: { type: integer, default: 5 }
+                total: { type: integer, default: 20 }
+      responses:
+        '200': { description: OK }
+
+  # ── 模块 10：文件存储 ─────────────────────────────────────────────────
+  /storage/upload:
+    post:
+      tags: [存储 (Storage)]
+      summary: multipart 上传，返 {key, publicUrl}
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: 上传完成
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key: { type: string }
+                  publicUrl: { type: string, format: uri }
+
+  /storage/proxy:
+    get:
+      tags: [存储 (Storage)]
+      summary: 图片代理（绕开跨域）
+      parameters:
+        - { name: url, in: query, required: true, schema: { type: string, format: uri } }
+      responses:
+        '200': { description: 图片 bytes }
+
+  /storage/official/{skuCode}:
+    get:
+      tags: [存储 (Storage)]
+      summary: 商品官方图重定向（按 SKU 拼地址）
+      parameters:
+        - { name: skuCode, in: path, required: true, schema: { type: string } }
+      responses:
+        '302': { description: 重定向到 OSS }
+
+  /storage/local/{key}:
+    get:
+      tags: [存储 (Storage)]
+      summary: 仅 dev：从 /tmp/myj-uploads/ 取本地上传文件
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 文件 bytes }
+
+  # ── 模块 11：AI 网关 ──────────────────────────────────────────────────
+  /ai/dify/{workflow}:
+    post:
+      tags: [AI 网关 (AI Gateway)]
+      summary: 统一 Dify 工作流调用
+      description: |
+        `:workflow` 为 `price-diagnose` / `shelf-diagnose` / `selection` 等。
+        密钥在后端 .env，浏览器看不到。审计写 `audit_events.is_ai_call=TRUE`。
+      parameters:
+        - { name: workflow, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: 透传给 Dify }
+      responses:
+        '200': { description: Dify 工作流返回 }
+        '502':
+          description: 上游 Dify 失败
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiErrorBody' }
+
+  /detect/shelf:
+    post:
+      tags: [AI 网关 (AI Gateway)]
+      summary: 货架拍照检测（转发到独立 detect service）
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200': { description: 检测结果 }
+
+  # ── 模块 12：会话 ─────────────────────────────────────────────────────
+  /audit/events:
+    post:
+      tags: [会话 (Sessions)]
+      summary: 写一条审计（前后端共用）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventKind]
+              properties:
+                eventKind: { type: string }
+                targetType: { type: string }
+                targetId: { type: string }
+                summary: { type: string }
+                payload: { type: object }
+      responses:
+        '204': { description: 已写入 }
+
+  /usage/sessions:start:
+    post:
+      tags: [会话 (Sessions)]
+      summary: 开始使用会话
+      responses:
+        '200':
+          description: 返新建会话 ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessionId: { type: string, format: uuid }
+
+  /usage/sessions/{sessionId}/heartbeat:
+    post:
+      tags: [会话 (Sessions)]
+      summary: 心跳续命
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 已续命 }
+
+  /usage/poster-count-today:
+    get:
+      tags: [会话 (Sessions)]
+      summary: 本店本日海报数
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+        '409': { $ref: '#/components/responses/NoStoreSelected' }

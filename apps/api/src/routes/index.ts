@@ -20,6 +20,7 @@ import { storageRouter } from './storage.routes.js';
 import { aiRouter } from './ai.routes.js';
 import { sessionsRouter } from './sessions.routes.js';
 import { detectRouter } from './detect.routes.js';
+import { docsRouter } from './docs.routes.js';
 
 const VERSION = '0.1.0-m0';
 
@@ -31,6 +32,9 @@ export function registerRoutes(): Router {
     const body: HealthResponse = { status: 'ok', version: VERSION };
     res.json(body);
   });
+
+  // ---- 接口文档（Swagger UI）----
+  apiV1.use(docsRouter);  // /docs, /docs.json, /docs.yaml
 
   // ---- 11 个业务模块 ----
   apiV1.use(authRouter);        // 模块 1 + 模块 2 设备
