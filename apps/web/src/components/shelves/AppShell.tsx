@@ -12,6 +12,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { useMe } from '@/lib/auth';
+import { IOSDevice } from '@/components/IOSDevice';
 import { AppProvider } from '@/components/shelves/contexts/AppContext';
 import { AuthProvider, type AuthUser } from '@/components/shelves/contexts/AuthContext';
 import { loadStoreSkus } from '@/components/shelves/data/skuDataByStore';
@@ -69,7 +70,10 @@ export function ShelvesAppShell({ children, allowNoStore = false }: Props) {
         storeName={me.currentStore?.name ?? ''}
         storeAddress={''}
       >
-        {children}
+        {/* 整层 zoom: viewportW/390 把原 iPhone 设计稿等比放大撑满桌面浏览器；
+            不包 IOSDevice → 桌面上字号/间距视觉缩成原 1/3，比例错乱。
+            前车之鉴：posters/prices 都遇到过同样问题，见 memory/feedback-iosdevice-wrap */}
+        <IOSDevice>{children}</IOSDevice>
       </AppProvider>
     </AuthProvider>
   );
