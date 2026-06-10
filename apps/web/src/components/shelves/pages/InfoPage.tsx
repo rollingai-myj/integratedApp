@@ -90,7 +90,11 @@ const InfoPage = () => {
   };
 
   const saveGroups = async () => {
-    if (!position) return;
+    if (!position) {
+      // 进入页面太早、场景定义还没拉到时点击保存 → 不能闷掉，否则用户以为按钮坏了
+      toast({ title: "场景信息加载中，请稍候再保存", variant: "destructive" });
+      return;
+    }
     setSavingGroups(true);
     try {
       await saveShelfGroups({

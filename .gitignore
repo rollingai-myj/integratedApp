@@ -11,11 +11,11 @@ build/
 *.tsbuildinfo
 
 # ========== Env ==========
+# 把所有 .env / .env.* 都视为本地秘密，仅 .env.example 入库（白名单）
 .env
-.env.local
-.env.*.local
+.env.*
 apps/*/.env
-apps/*/.env.local
+apps/*/.env.*
 !.env.example
 !apps/*/.env.example
 
