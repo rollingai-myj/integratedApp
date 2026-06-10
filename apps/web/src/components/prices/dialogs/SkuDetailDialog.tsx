@@ -101,7 +101,7 @@ const PriceCurveChart = memo(function PriceCurveChart({
             axisLine={false}
             tickLine={false}
             label={{
-              value: '每月赚（月毛利）',
+              value: '每月赚（月均毛利）',
               position: 'bottom',
               offset: 10,
               fontSize: 10,
@@ -163,7 +163,7 @@ const PriceCurveChart = memo(function PriceCurveChart({
           <div className="font-semibold text-foreground">{selectedPeriod.periodLabel}</div>
           <div className="mt-1 text-muted-foreground">
             售价 <span className="font-medium text-foreground">{fmtMoney(selectedPeriod.price)}</span>
-            {' · '}月毛利 <span className="font-medium text-foreground">{fmtMoney(selectedPeriod.monthlyProfit)}</span>
+            {' · '}月均毛利 <span className="font-medium text-foreground">{fmtMoney(selectedPeriod.monthlyProfit)}</span>
           </div>
         </div>
       )}
@@ -481,7 +481,7 @@ export function SkuDetailDialog({
                     <span className="num font-medium text-foreground">
                       {fmtMoney(t.from)}→{fmtMoney(t.to)}
                     </span>
-                    {'，月毛利'}
+                    {'，月均毛利'}
                     <span
                       style={{ color: t.profitUp ? '#059669' : '#DC2626' }}
                       className="font-medium"
@@ -500,7 +500,7 @@ export function SkuDetailDialog({
               <Cell label="单件毛利" value={fmtMoney(unit)} />
               <Cell label="月销量" value={sku.ownStoreSales.toString()} />
               <Cell label="月销售额" value={fmtMoney(monthSales)} />
-              <Cell label="月毛利" value={fmtMoney(monthProfit)} brand />
+              <Cell label="月均毛利" value={fmtMoney(monthProfit)} brand />
             </div>
           )}
 

@@ -113,7 +113,7 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
                     </div>
                     <div className="mt-0.5 flex items-center text-[10px]">
                       <span style={{ color: entry.profitUp ? '#059669' : '#DC2626' }}>
-                        月毛利{entry.profitUp ? '增长' : '减少'}到 {fmtMoney(entry.profit)}
+                        月均毛利{entry.profitUp ? '增长' : '减少'}到 {fmtMoney(entry.profit)}
                       </span>
                     </div>
                   </div>

@@ -286,7 +286,7 @@ function ColdPage() {
     return (
       <IOSDevice>
         <div className="min-h-screen bg-background">
-          <BrandHeader showBack />
+          <BrandHeader backTo="/prices" />
           <div className="px-6 py-16 text-center text-sm text-muted-foreground">
             请先选择门店再进入价盘
           </div>
@@ -298,7 +298,7 @@ function ColdPage() {
   return (
     <IOSDevice>
     <div className="min-h-screen pb-24">
-      <BrandHeader showBack />
+      <BrandHeader backTo="/prices" />
 
       <div className="px-4 pb-1 pt-4">
         <div className="flex items-end justify-between">
@@ -330,7 +330,7 @@ function ColdPage() {
         <div className="grid grid-cols-3 gap-2">
           <Kpi label="SKU 总数" value={allRows.length.toString()} />
           <Kpi label="月销售额" value={fmtMoney(totalSales)} />
-          <Kpi label="月毛利" value={fmtMoney(totalProfit)} brand />
+          <Kpi label="月均毛利" value={fmtMoney(totalProfit)} brand />
         </div>
 
         {/* 搜索 + 排序 */}

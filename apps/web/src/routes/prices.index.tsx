@@ -1,8 +1,8 @@
 /**
- * 价盘 · 品类选择落地页（来自原 priceChange repo /）
+ * 价盘 · 场景选择落地页（来自原 priceChange repo /）
  *
  * 1:1 还原原 repo `src/routes/index.tsx`：11 个 emoji 卡片，仅"冷藏"启用。
- * 适配：右上角加了一个"返回门户"小入口，方便从统一应用回到 home。
+ * 适配：左上角 ← 箭头返回门户（与子页面"返回上一级"保持同款交互）。
  */
 import { createFileRoute, Link } from '@tanstack/react-router';
 import {
@@ -50,18 +50,9 @@ function PricesHomePage() {
   return (
     <IOSDevice>
     <div className="min-h-screen bg-background">
-      <BrandHeader />
+      <BrandHeader backTo="/" />
       <main className="px-4 py-5">
-        <div className="flex items-baseline justify-between">
-          <h1 className="text-lg font-semibold text-foreground">请选择品类</h1>
-          <Link
-            to="/"
-            className="text-[11px] text-muted-foreground underline underline-offset-2"
-          >
-            返回门户
-          </Link>
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">进入价格诊断与调整工作台</p>
+        <h1 className="text-lg font-semibold text-foreground">请选择场景</h1>
 
         <TooltipProvider delayDuration={150}>
           <div className="mt-5 grid grid-cols-2 gap-3">
