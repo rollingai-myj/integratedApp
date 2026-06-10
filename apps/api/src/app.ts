@@ -45,6 +45,7 @@ export function createApp(): Express {
   // 3) 解析 body / cookie
   //    海报源图（base64 data URL）+ 选品货架照片（base64）都会走 JSON body，
   //    一张 ~3-5MB 的 JPEG base64 后会接近 7MB，所以放宽到 12MB。
+  //    （海报最初提的 8MB 上限对单图勉强够用，但叠加多张商品图就超；统一 12MB。）
   app.use(express.json({ limit: '12mb' }));
   app.use(express.urlencoded({ extended: true, limit: '12mb' }));
   app.use(cookieParser());

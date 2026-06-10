@@ -17,7 +17,7 @@ export async function startSession(
   _input?: ServerFnInput<{ deviceId?: string; storeId?: string | null }>,
 ): Promise<{ id: string | null }> {
   try {
-    const res = await fetch(`${BASE}/usage/sessions:start`, {
+    const res = await fetch(`${BASE}/sessions/start`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -35,9 +35,11 @@ export async function heartbeat(
   input: ServerFnInput<{ sessionId: string }>,
 ): Promise<{ ok: boolean }> {
   try {
-    const res = await fetch(`${BASE}/usage/sessions/${encodeURIComponent(input.data.sessionId)}/heartbeat`, {
+    const res = await fetch(`${BASE}/sessions/heartbeat`, {
       method: 'POST',
       credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: input.data.sessionId }),
     });
     return { ok: res.ok };
   } catch {
@@ -49,7 +51,7 @@ export const DAILY_POSTER_LIMIT = 999999;
 
 export async function getTodayUsage(): Promise<{ count: number; limit: number }> {
   try {
-    const res = await fetch(`${BASE}/usage/poster-count-today`, { credentials: 'include' });
+    const res = await fetch(`${BASE}/usage/today`, { credentials: 'include' });
     if (!res.ok) return { count: 0, limit: DAILY_POSTER_LIMIT };
     const body = (await res.json()) as { count?: number };
     return { count: body.count ?? 0, limit: DAILY_POSTER_LIMIT };

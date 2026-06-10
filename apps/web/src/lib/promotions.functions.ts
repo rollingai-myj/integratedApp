@@ -14,6 +14,7 @@
 import type {
   ActivePromotionsResponse,
   ProductPromotion,
+  ProductPromotionDealOption,
 } from '@myj/shared';
 import { mapCategoryToGroup } from '@/lib/categoryGroups';
 
@@ -34,6 +35,8 @@ interface CategoryItem {
   best_valid_from?: string | null;
   best_valid_to?: string | null;
   best_valid_dates?: string[] | null;
+  /** poster-app 的 deriveBest 需要这个 fallback；shim 必须从 API 透传过去 */
+  all_options?: ProductPromotionDealOption[] | null;
   is_group?: boolean;
 }
 
@@ -42,22 +45,62 @@ export interface PersonalizedPromotionsResult {
   categories: Array<{ name: string; items: CategoryItem[] }>;
 }
 
+/**
+ * pg numeric 列在 node-postgres 默认序列化为 string。后端 mapPromotion 没做转换，
+ * 所以 wire 上 originalPrice / bestTotalPrice / bestEffectiveUnitPrice 等是字符串。
+ * poster-app 的 deriveBest 走数值比较（savingPercent 排序、价格比对），string 上去
+ * 会要么 NaN 要么按字典序排，过滤剩 0 项。这里全部 toNumber 一次。
+ */
+function toNum(v: unknown): number | null {
+  if (v == null) return null;
+  const n = typeof v === 'number' ? v : parseFloat(String(v));
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * pg DATE 列在 pg 驱动里反序列化成 JS Date，再被 JSON.stringify 转成
+ * '2026-05-31T16:00:00.000Z'（UTC 时间，对应北京 6/1）。poster-app 里
+ * 大量地方按 YYYY-MM-DD 比较或拼显示文案（fmtMD），所以这里截断到日。
+ * 用 Beijing 时区（+8）取日，避免 UTC 偏移一天。
+ */
+function toISODate(d: string | null | undefined): string | null {
+  if (!d) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const parsed = new Date(d);
+  if (isNaN(parsed.getTime())) return d;
+  // 加 8h 偏移到北京时区，再切 YYYY-MM-DD
+  return new Date(parsed.getTime() + 8 * 3600_000).toISOString().slice(0, 10);
+}
+
+function normalizeOption(o: ProductPromotionDealOption): ProductPromotionDealOption {
+  return {
+    ...o,
+    requiredQty: toNum(o.requiredQty) ?? 0,
+    totalPrice: toNum(o.totalPrice) ?? 0,
+    effectiveUnitPrice: toNum(o.effectiveUnitPrice) ?? 0,
+    savingPercent: toNum(o.savingPercent) ?? 0,
+    validFrom: toISODate(o.validFrom),
+    validTo: toISODate(o.validTo),
+  };
+}
+
 function rowToCategoryItem(p: ProductPromotion): CategoryItem {
   return {
     sku: p.skuCode,
     product_name: p.productName,
-    unit: undefined,
-    original_price: p.originalPrice ?? null,
+    unit: p.unit ?? null,
+    original_price: toNum(p.originalPrice),
     category: p.categoryName ?? null,
     best_label: p.bestLabel ?? null,
-    best_qty: null,
-    best_total: p.bestTotalPrice ?? null,
-    best_effective_price: null,
-    best_saving_percent: p.bestSavingPercent ?? null,
+    best_qty: p.bestRequiredQty ?? null,
+    best_total: toNum(p.bestTotalPrice),
+    best_effective_price: toNum(p.bestEffectiveUnitPrice),
+    best_saving_percent: toNum(p.bestSavingPercent),
     display_text: p.displayText ?? null,
-    best_valid_from: p.validFrom ?? null,
-    best_valid_to: p.validTo ?? null,
-    best_valid_dates: null,
+    best_valid_from: toISODate(p.validFrom),
+    best_valid_to: toISODate(p.validTo),
+    best_valid_dates: p.validDates ?? null,
+    all_options: p.allOptions ? p.allOptions.map(normalizeOption) : null,
   };
 }
 
