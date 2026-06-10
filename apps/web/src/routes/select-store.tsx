@@ -1,9 +1,13 @@
 /**
- * 超管选店页 (/select-store)
+ * 选店页 (/select-store)
  *
- * 超管登录后 currentStore 为 null（auth.service.ts 不再 fallback 到 stores[0]）。
- * HomePage 检测到这种情况会重定向到这里。普通账号 user_stores 里有 primary 记录，
- * pickCurrentStore 会自动选中，跳不到这里。
+ * 谁会进来：currentStore 为 null + stores>0 的已登录用户。具体场景：
+ *   - 超管首登（user_stores 为空，session.active_store_id 自然是 null）
+ *   - 飞书多店账号（feishu-identity.service syncStoreBindings 故意写 null）
+ *   - legacy 多店账号（auth.service loginWithPassword 故意写 null）
+ *   - 单店账号刷新进来也不会进这里：session.active_store_id 已落到唯一一家
+ *
+ * HomePage useEffect 检测到 !currentStore && stores>0 重定向到这里。
  *
  * 流程：搜索过滤（按门店编号或名称）→ 点击门店 → 调 switchStore → 跳 /
  */
@@ -25,7 +29,7 @@ export const Route = createFileRoute('/select-store')({
   head: () => ({
     meta: [
       { title: '选择门店 · 美宜佳门店助手' },
-      { name: 'description', content: '超管登录后选择目标门店再进入功能页' },
+      { name: 'description', content: '登录后选择目标门店再进入功能页' },
     ],
   }),
 });

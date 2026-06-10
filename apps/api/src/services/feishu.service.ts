@@ -81,14 +81,24 @@ const FEISHU_BASE = 'https://open.feishu.cn';
 /**
  * 网页授权需要的最小 scope 集合。
  *
- * - contact:contact.base:readonly：调 /contact/v3/users/{open_id} 取 name / mobile / department_path
- *   所必需。不传则授权页不勾该项，颁发的 user_access_token 调通讯录接口会报
+ * - contact:contact.base:readonly：调 /contact/v3/users/{open_id} 接口的"门票"。
+ *   不传则授权页不勾该项，user_access_token 调通讯录接口会报
  *   "Unauthorized... required one of these privileges"。
+ * - contact:user.department_path:readonly：拿 department_path 的"字段权限"。
+ *   即使接口能调通，缺这一项飞书会从响应里把 department_path 整段抹掉，
+ *   我们解析就拿不到部门链 → 门店匹配全空。见 docs/reference/feishu-user-info-api.md
+ *   第 7 条 + 第 18 条字段权限要求。
  *
  * scope 用空格分隔（飞书 authen 文档约定）。后续若新增能力（如读企业级
  * 通讯录、读云文档），在这里追加，并在飞书后台开权限。
+ *
+ * 注意：scope 改动后，老的 user_access_token 不会自动获得新权限。
+ * 用户必须重新走一次 OAuth 授权（授权页会要求重新勾选），新颁发的 token 才生效。
  */
-const FEISHU_OAUTH_SCOPES = ['contact:contact.base:readonly'].join(' ');
+const FEISHU_OAUTH_SCOPES = [
+  'contact:contact.base:readonly',
+  'contact:user.department_path:readonly',
+].join(' ');
 
 export class FeishuService {
   private tenantToken: CachedToken | null = null;

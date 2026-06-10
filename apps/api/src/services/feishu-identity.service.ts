@@ -17,6 +17,7 @@ import type {
   FeishuDeptPathItem,
   FeishuUserContact,
 } from './feishu.service.js';
+import { logger } from '../lib/logger.js';
 
 const SUPER_ADMIN_MARKER = 'Rolling Digital';
 
@@ -118,6 +119,20 @@ export async function upsertUserFromFeishu(
 ): Promise<UpsertFeishuUserResult> {
   const parsed = parseFeishuIdentity(feishuUser.department_path);
   const matchedStores = await resolveMatchedStores(parsed.leafCandidates);
+
+  // 运维诊断日志：暴露解出的候选 + 解析路径 + 匹配结果。出现"门店未匹配"时
+  // 三者对照即可定位是飞书没返路径、叶子名不像店号、还是 stores 表没登记。
+  // 不打飞书原始 user 对象（含 mobile/email PII）。
+  logger.info(
+    {
+      openId: feishuUser.open_id,
+      parsedCandidates: parsed.leafCandidates,
+      parsedIsSuperAdmin: parsed.isSuperAdmin,
+      parsedTrace: parsed.debugTrace,
+      matchedStoreCodes: matchedStores.map((s) => s.storeCode),
+    },
+    'feishu-identity: parse + match result',
+  );
 
   // 没匹配 + 不是超管 → 返回 notice（仍允许登录）
   const notice: FeishuLoginNotice | null =
@@ -309,10 +324,17 @@ async function syncRoles(
 /**
  * 同步用户-门店绑定（additive only）：
  *   - 给 matchedStores 里每条都 upsert 一条 user_stores
- *   - 第一条标 is_primary（如果还没人有 primary）
+ *   - 第一条标 is_primary（如果还没人有 primary）—— 仅为保留历史字段语义；
+ *     登录后是否自动进店改由 session.active_store_id 决定（见返回值规则）
  *   - 已有的 user_stores 不删（管理员可能手动加过别的店）
  *
- * 返回值：用于 session.active_store_id 的"默认门店" UUID
+ * 返回值（用于 session.active_store_id）：
+ *   - matched.length === 0 → null（无店匹配，前端走 notice 提示）
+ *   - matched.length === 1 → 该店 id（用户直接进入，不打扰）
+ *   - matched.length  >  1 → null（前端检测到 currentStore=null+stores>0 → 跳 /select-store）
+ *
+ * 设计权衡（2026-06-10）：飞书多店用户每次登录都跳选店页，避免默认进
+ * is_primary 后用户不知道还能切其它店；单店用户不打扰。
  */
 async function syncStoreBindings(
   client: PoolClient,
@@ -340,10 +362,6 @@ async function syncStoreBindings(
     if (isPrimary) primaryAssigned = true;
   }
 
-  // 取当前的 primary 给 session.active_store_id
-  const pri = await client.query<{ store_id: string }>(
-    `SELECT store_id FROM user_stores WHERE user_id = $1 AND is_primary = TRUE LIMIT 1`,
-    [userId],
-  );
-  return pri.rows[0]?.store_id ?? matched[0]?.id ?? null;
+  if (matched.length === 1) return matched[0]!.id;
+  return null;
 }

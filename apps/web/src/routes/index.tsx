@@ -62,9 +62,9 @@ function HomePage() {
       void navigate({ to: '/login' });
       return;
     }
-    // 超管登录后没有默认门店（auth.service 不再 fallback 到 stores[0]）→ 强制走选店页
-    const isSuperAdmin = me?.user?.roles.includes('super_admin') ?? false;
-    if (isSuperAdmin && !me?.currentStore && (me?.stores.length ?? 0) > 0) {
+    // 没有 currentStore + 有可选门店 → 强制走选店页
+    // 覆盖：超管首登、飞书/legacy 多店账号（auth.service 故意把 active_store_id 留 null）
+    if (!me?.currentStore && (me?.stores.length ?? 0) > 0) {
       void navigate({ to: '/select-store' });
     }
   }, [meQuery.isSuccess, meQuery.data, navigate]);
