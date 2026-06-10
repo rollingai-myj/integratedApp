@@ -55,6 +55,19 @@ export interface CurveData {
 export const getSkuImageUrl = (code: string): string =>
   `https://rollingai-meiyijia.oss-cn-shanghai.aliyuncs.com/product_pic/${code}.png`;
 
+/**
+ * 由 SKU 编码拼出条形码图片地址。
+ *
+ * OSS 上条形码按 8 位 SKU 编码归档；纯数字短于 8 位的需要前补 0。
+ * 货架模块同款规则在 shelves/lib/preloadSkuAssets.ts；这里独立维护
+ * 避免价盘对货架模块反向依赖（规则极简，复制成本远低于跨模块耦合）。
+ */
+export const getSkuBarcodeUrl = (code: string | undefined): string | null => {
+  if (!code) return null;
+  const padded = /^\d+$/.test(code) && code.length < 8 ? code.padStart(8, '0') : code;
+  return `https://rollingai-meiyijia.oss-cn-shanghai.aliyuncs.com/SKU_bar_code/${padded}.png`;
+};
+
 /** 数据库行 → 组件期望的 SKU 形状 */
 export function rowToSku(row: StoreSkuRow): SKU {
   return {

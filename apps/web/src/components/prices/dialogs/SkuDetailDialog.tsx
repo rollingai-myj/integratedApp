@@ -33,6 +33,7 @@ import {
   type CurveData,
   type CurvePeriod,
   fmtMoney,
+  getSkuBarcodeUrl,
   rowToSku,
   type SKU,
 } from '@/lib/prices/types';
@@ -462,12 +463,14 @@ export function SkuDetailDialog({
           <div className="solid-card flex items-center gap-2.5 p-2" style={{ borderRadius: '16px' }}>
             <SkuImage src={sku.imgUrl} alt={sku.name} code={sku.code} className="h-[48px] w-[48px] shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-semibold leading-snug">{sku.name}</div>
+              <div className="line-clamp-2 text-[12px] font-semibold leading-snug">{sku.name}</div>
               <div className="mt-0.5 text-[11px] text-muted-foreground">
                 {sku.spec} · {sku.brand}
               </div>
               <div className="num mt-0.5 text-[10px] text-muted-foreground">SKU {sku.code}</div>
             </div>
+            {/* 条形码：与选品/货架模块共用 OSS 图源；加载失败时隐藏避免破图 */}
+            <BarcodeImage code={sku.code} />
           </div>
 
           {timeline ? (
@@ -586,5 +589,24 @@ function Cell({ label, value, brand }: { label: string; value: string; brand?: b
         {value}
       </div>
     </div>
+  );
+}
+
+/**
+ * 商品头部卡片右侧的条形码缩略图。
+ * OSS 图源；加载失败时隐藏整个 <img>，避免 alt 文字渲染破坏布局。
+ */
+function BarcodeImage({ code }: { code: string }) {
+  const url = getSkuBarcodeUrl(code);
+  const [failed, setFailed] = useState(false);
+  if (!url || failed) return null;
+  return (
+    <img
+      src={url}
+      alt=""
+      aria-hidden
+      className="ml-auto h-9 w-auto shrink-0 self-center"
+      onError={() => setFailed(true)}
+    />
   );
 }
