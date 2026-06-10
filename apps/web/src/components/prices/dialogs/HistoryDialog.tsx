@@ -24,8 +24,9 @@ export interface HistoryEntry {
   dateLabel: string;
   from: number;
   to: number;
-  profit: number;
-  profitUp: boolean;
+  /** 新价已有销量快照时填月均毛利；尚无销量时省略 → 渲染时跳过那一行 */
+  profit?: number;
+  profitUp?: boolean;
 }
 
 interface Props {
@@ -111,11 +112,13 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
                         {up ? '↑' : '↓'} {fmtMoney(Math.abs(diff))}
                       </span>
                     </div>
-                    <div className="mt-0.5 flex items-center text-[10px]">
-                      <span style={{ color: entry.profitUp ? '#059669' : '#DC2626' }}>
-                        月均毛利{entry.profitUp ? '增长' : '减少'}到 {fmtMoney(entry.profit)}
-                      </span>
-                    </div>
+                    {entry.profit != null && entry.profitUp != null && (
+                      <div className="mt-0.5 flex items-center text-[10px]">
+                        <span style={{ color: entry.profitUp ? '#059669' : '#DC2626' }}>
+                          月均毛利{entry.profitUp ? '增长' : '减少'}到 {fmtMoney(entry.profit)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </li>
               );

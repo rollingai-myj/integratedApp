@@ -258,8 +258,9 @@ function ColdPage() {
           dateLabel,
           from: prev.price,
           to: curr.price,
-          profit: curr.monthlyGrossProfit,
-          profitUp: diffProfit >= 0,
+          // 新价没有销量快照时，月均毛利无法算 → 留空让 HistoryDialog 省略那一行
+          profit: curr.hasSalesData ? curr.monthlyGrossProfit : undefined,
+          profitUp: curr.hasSalesData ? diffProfit >= 0 : undefined,
         });
       }
     }

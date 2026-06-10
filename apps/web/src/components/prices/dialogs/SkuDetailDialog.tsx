@@ -60,6 +60,7 @@ interface ChartDataPoint {
   periodLabel: string;
   startDate: string | null;
   endDate: string | null;
+  hasSalesData: boolean;
 }
 
 // 价格曲线柱状图（来自原版，仅 import 路径调整）
@@ -241,6 +242,7 @@ export function SkuDetailDialog({
     if (!sku) return [];
     const periods = curve?.periods;
     if (!periods || periods.length === 0) {
+      // 兜底"当前价"伪段：当作有销量（fallback 是组件初次进入无 curve 时的占位）
       return [
         {
           price: sku.currentPrice,
@@ -249,10 +251,14 @@ export function SkuDetailDialog({
           periodLabel: '当前',
           startDate: null,
           endDate: null,
+          hasSalesData: true,
         },
       ];
     }
+    // 柱状图只显示销量快照里"已经有数据"的价格段 —— 调价当下的孤立 price_change
+    // 在 fact 表只有价格没有销量，柱子永远是 0，渲染出来反而误导
     return [...periods]
+      .filter((p) => p.hasSalesData)
       .sort((a, b) => b.price - a.price)
       .map((p) => ({
         price: p.price,
@@ -261,6 +267,7 @@ export function SkuDetailDialog({
         periodLabel: periodLabel(p),
         startDate: p.startDate,
         endDate: p.endDate,
+        hasSalesData: p.hasSalesData,
       }));
   }, [sku, curve]);
 
@@ -317,7 +324,9 @@ export function SkuDetailDialog({
 
   const unchanged = sku ? Math.abs(newPrice - sku.currentPrice) < 0.01 : true;
 
-  // 调价时间线 — 从 periods 推（相邻段对比月毛利涨跌）
+  // 调价时间线 — 从 periods 推（相邻段对比月均毛利涨跌）
+  // 新价当下还没销量快照时（hasSalesData=false），月均毛利无意义，
+  // profit/profitUp 置 undefined，渲染时只显示"日期 + 售价 X→Y"
   const periods = curve?.periods;
   const timeline = useMemo(() => {
     if (!sku || !periods || periods.length < 2) return null;
@@ -330,16 +339,16 @@ export function SkuDetailDialog({
           dateLabel: periodLabel(p),
           from: prev.price,
           to: p.price,
-          profit: p.monthlyGrossProfit,
-          profitUp: diffProfit >= 0,
+          profit: p.hasSalesData ? p.monthlyGrossProfit : undefined,
+          profitUp: p.hasSalesData ? diffProfit >= 0 : undefined,
         };
       })
       .filter(Boolean) as Array<{
       dateLabel: string;
       from: number;
       to: number;
-      profit: number;
-      profitUp: boolean;
+      profit?: number;
+      profitUp?: boolean;
     }>;
   }, [sku, periods]);
 
@@ -436,7 +445,8 @@ export function SkuDetailDialog({
     </div>
   ) : null;
 
-  const hasPeriods = periods && periods.length >= 2;
+  // 柱状图需要至少 2 个"有销量数据"的段才有可比性 —— 全是孤立调价点时不渲染
+  const hasChartData = chartData.length >= 2;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -484,14 +494,20 @@ export function SkuDetailDialog({
                     <span className="num font-medium text-foreground">
                       {fmtMoney(t.from)}→{fmtMoney(t.to)}
                     </span>
-                    {'，月均毛利'}
-                    <span
-                      style={{ color: t.profitUp ? '#059669' : '#DC2626' }}
-                      className="font-medium"
-                    >
-                      {t.profitUp ? '增长' : '减少'}
-                    </span>
-                    到<span className="num text-foreground">{fmtMoney(t.profit)}</span>
+                    {/* 新价没有销量快照时（profit/profitUp = undefined），
+                        不展示"月均毛利..."以免误导（毛利根本算不出来） */}
+                    {t.profit != null && t.profitUp != null && (
+                      <>
+                        {'，月均毛利'}
+                        <span
+                          style={{ color: t.profitUp ? '#059669' : '#DC2626' }}
+                          className="font-medium"
+                        >
+                          {t.profitUp ? '增长' : '减少'}
+                        </span>
+                        到<span className="num text-foreground">{fmtMoney(t.profit)}</span>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
@@ -531,7 +547,7 @@ export function SkuDetailDialog({
             </div>
           )}
 
-          {hasPeriods && (
+          {hasChartData && (
             <div className="solid-card px-2.5 pb-1 pt-2" style={{ borderRadius: '16px' }}>
               <PriceCurveChart
                 data={chartData}
