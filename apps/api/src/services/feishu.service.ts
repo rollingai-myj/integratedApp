@@ -98,6 +98,10 @@ const FEISHU_BASE = 'https://open.feishu.cn';
 const FEISHU_OAUTH_SCOPES = [
   'contact:contact.base:readonly',
   'contact:user.department_path:readonly',
+  // contact:user.base:readonly：拿 name / en_name / avatar 字段权限。
+  // 没有这一项时 feishuUser.name 为 undefined，resolveDisplayName 会一路
+  // fallback 到 `飞书用户_${open_id 末 8 位}`，门户左上角会显示一串 ID。
+  'contact:user.base:readonly',
 ].join(' ');
 
 export class FeishuService {

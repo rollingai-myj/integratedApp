@@ -148,6 +148,7 @@ export async function upsertUserFromFeishu(
     const userId = await findOrCreateUser(client, feishuUser);
     const isNewUser = await wasInsertedJustNow(client, userId);
 
+    await refreshUserProfile(client, userId, feishuUser);
     await upsertFeishuBinding(client, userId, feishuUser, userAccessToken, userTokenExpiresIn);
     await syncRoles(client, userId, parsed.isSuperAdmin, matchedStores.length > 0);
     const defaultStoreId = await syncStoreBindings(client, userId, matchedStores);
@@ -258,6 +259,40 @@ async function wasInsertedJustNow(
     [userId],
   );
   return res.rows[0]?.recent ?? false;
+}
+
+/**
+ * 把飞书最新的 name/email/avatar 同步回 users 表（COALESCE：只覆盖非空字段）。
+ *
+ * 为什么需要这一步：findOrCreateUser 仅在用户首次出现时写一次 display_name。
+ * 早期 OAuth scope 不全的用户首登落到 `飞书用户_${open_id 末 8 位}` 兜底名，
+ * 后续即使 scope 补齐、飞书 API 能返真名，也不会再刷 DB。这里每次登录刷一次，
+ * 自然修复历史脏数据。
+ *
+ * 兜底名（resolveDisplayName 末段）不该写回 DB，否则把真名覆盖成 ID。
+ * 所以只取飞书 name / en_name 本身，不走 resolveDisplayName。
+ */
+async function refreshUserProfile(
+  client: PoolClient,
+  userId: string,
+  feishuUser: FeishuUserContact,
+): Promise<void> {
+  const realName = feishuUser.name?.trim() || feishuUser.en_name?.trim() || null;
+  const avatarUrl =
+    feishuUser.avatar?.avatar_240 ?? feishuUser.avatar?.avatar_72 ?? null;
+  const email = feishuUser.email ?? feishuUser.enterprise_email ?? null;
+
+  if (!realName && !avatarUrl && !email) return;
+
+  await client.query(
+    `UPDATE users
+        SET display_name = COALESCE($2, display_name),
+            avatar_url   = COALESCE($3, avatar_url),
+            email        = COALESCE($4, email),
+            updated_at   = now()
+      WHERE id = $1`,
+    [userId, realName, avatarUrl, email],
+  );
 }
 
 async function upsertFeishuBinding(
