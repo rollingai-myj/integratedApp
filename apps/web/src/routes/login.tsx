@@ -37,6 +37,15 @@ export const Route = createFileRoute('/login')({
   component: LoginPage,
 });
 
+/**
+ * 登录卡片视图状态：默认 'choose' 只露两个登录方式按钮；用户点"账号密码登录"
+ * 后切到 'password' 才显示输入框（两步式：保持首屏清爽，主推飞书）。
+ */
+type LoginMode = 'choose' | 'password';
+
+/** 比全局 --hairline (alpha 0.08) 深 ~3x，仅在本页使用，不影响其它模块的细边框观感。 */
+const DEEPER_BORDER = 'oklch(0.18 0.012 40 / 0.22)';
+
 function LoginPage() {
   const navigate = useNavigate();
   const search = useSearch({ from: '/login' });
@@ -44,6 +53,7 @@ function LoginPage() {
   const login = useLogin();
   const feishuExchange = useFeishuExchange();
 
+  const [mode, setMode] = useState<LoginMode>('choose');
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [feishuStarting, setFeishuStarting] = useState(false);
@@ -173,7 +183,7 @@ function LoginPage() {
             <div className="py-10 text-center text-ink-muted text-sm">
               正在验证飞书登录…
             </div>
-          ) : (
+          ) : mode === 'choose' ? (
             <>
               <div className="text-[18px] font-semibold text-ink mb-5 tracking-wide">
                 登录方式
@@ -199,34 +209,15 @@ function LoginPage() {
                 <div className="flex-1 h-px bg-hairline" />
               </div>
 
-              {/* 账密兜底 */}
-              <form onSubmit={onSubmitPassword} className="space-y-3">
-                <input
-                  type="text"
-                  required
-                  placeholder="账号（如 admin 或门店编号）"
-                  value={account}
-                  onChange={(e) => setAccount(e.target.value)}
-                  className="w-full h-[46px] px-4 rounded-xl border border-hairline text-[14px] focus:outline-none focus:border-primary"
-                  autoComplete="username"
-                />
-                <input
-                  type="password"
-                  required
-                  placeholder="密码"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full h-[46px] px-4 rounded-xl border border-hairline text-[14px] focus:outline-none focus:border-primary"
-                  autoComplete="current-password"
-                />
-                <button
-                  type="submit"
-                  disabled={login.isPending}
-                  className="w-full h-[50px] rounded-2xl border border-hairline text-ink text-[15px] font-medium transition-transform active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {login.isPending ? '登录中…' : '账号密码登录'}
-                </button>
-              </form>
+              {/* 账密入口（点开才展开输入框，不在首屏占用空间） */}
+              <button
+                type="button"
+                onClick={() => { setErrMsg(null); setMode('password'); }}
+                className="w-full h-[50px] rounded-2xl border text-ink text-[15px] font-medium transition-transform active:scale-[0.97]"
+                style={{ borderColor: DEEPER_BORDER }}
+              >
+                账号密码登录
+              </button>
 
               {errMsg && (
                 <div className="mt-4 px-3 py-2 rounded-lg bg-red-50 text-red-700 text-[12px] leading-snug">
@@ -237,6 +228,62 @@ function LoginPage() {
               <div className="mt-5 text-[11.5px] text-ink-muted leading-relaxed tracking-wide">
                 飞书登录是主路径；账号密码是过渡期兜底（飞书全量上线后会下线）。
               </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-5">
+                <div className="text-[18px] font-semibold text-ink tracking-wide">
+                  账号密码登录
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setErrMsg(null); setMode('choose'); }}
+                  className="text-[12px] text-ink-muted hover:text-ink transition-colors"
+                >
+                  ← 返回
+                </button>
+              </div>
+
+              <form onSubmit={onSubmitPassword} className="space-y-3">
+                <input
+                  type="text"
+                  required
+                  placeholder="账号（如 admin 或门店编号）"
+                  value={account}
+                  onChange={(e) => setAccount(e.target.value)}
+                  className="w-full h-[46px] px-4 rounded-xl border text-[14px] focus:outline-none focus:border-primary"
+                  style={{ borderColor: DEEPER_BORDER }}
+                  autoComplete="username"
+                  autoFocus
+                />
+                <input
+                  type="password"
+                  required
+                  placeholder="密码"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full h-[46px] px-4 rounded-xl border text-[14px] focus:outline-none focus:border-primary"
+                  style={{ borderColor: DEEPER_BORDER }}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="submit"
+                  disabled={login.isPending}
+                  className="w-full h-[50px] rounded-2xl text-white text-[15px] font-semibold transition-transform active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    background: 'var(--primary)',
+                    letterSpacing: '0.15em',
+                  }}
+                >
+                  {login.isPending ? '登录中…' : '登录'}
+                </button>
+              </form>
+
+              {errMsg && (
+                <div className="mt-4 px-3 py-2 rounded-lg bg-red-50 text-red-700 text-[12px] leading-snug">
+                  {errMsg}
+                </div>
+              )}
             </>
           )}
         </div>
