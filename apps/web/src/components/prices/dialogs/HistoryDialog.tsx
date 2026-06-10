@@ -41,7 +41,7 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="overflow-y-auto rounded-[22px] sm:max-w-md"
+        className="flex flex-col overflow-hidden rounded-[22px] sm:max-w-md"
         style={{
           zoom,
           // zoom 会把元素整体放大 zoom 倍，vh/vw 是基于视口的，所以这里反向除一次保持视觉 88vh / 94vw
@@ -49,7 +49,7 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
           maxWidth: `${94 / zoom}vw`,
         }}
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <div className="label-eyebrow" style={{ color: 'var(--brand)' }}>
             HISTORY
           </div>
@@ -69,7 +69,7 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
             暂无调价记录
           </div>
         ) : (
-          <ul className="space-y-2">
+          <ul className="flex-1 min-h-0 space-y-2 overflow-y-auto">
             {entries.map((entry, i) => {
               const sku = rowToSku(entry.row);
               const diff = entry.to - entry.from;

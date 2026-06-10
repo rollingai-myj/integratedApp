@@ -440,7 +440,7 @@ export function SkuDetailDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="overflow-hidden rounded-[20px] sm:max-w-md"
+        className="flex flex-col overflow-hidden rounded-[20px] sm:max-w-md"
         style={{
           zoom,
           // zoom 把元素整体放大 zoom 倍，vh/vw 是基于视口的，所以反向除一次保持视觉 92vh / 94vw
@@ -448,14 +448,16 @@ export function SkuDetailDialog({
           maxWidth: `${94 / zoom}vw`,
         }}
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <div className="label-eyebrow" style={{ color: 'var(--brand)' }}>
             SKU DETAIL
           </div>
           <DialogTitle className="text-[20px] font-extrabold tracking-tight">商品详情</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-2">
+        {/* 调价警告 / 低于批发价提示 / AI 诊断 / 柱状图 都可能撑高内容,
+            flex-1 + overflow-y-auto + min-h-0 让 Footer 永远可见 */}
+        <div className="flex-1 min-h-0 space-y-2 overflow-y-auto">
           {/* 商品头部 */}
           <div className="solid-card flex items-center gap-2.5 p-2" style={{ borderRadius: '16px' }}>
             <SkuImage src={sku.imgUrl} alt={sku.name} code={sku.code} className="h-[48px] w-[48px] shrink-0" />
@@ -541,7 +543,7 @@ export function SkuDetailDialog({
           {editingContent}
         </div>
 
-        <DialogFooter className="flex-row gap-2 pt-0">
+        <DialogFooter className="shrink-0 flex-row gap-2 pt-0">
           <Button variant="outline" className="flex-1 rounded-full" onClick={() => onOpenChange(false)}>
             关闭
           </Button>
