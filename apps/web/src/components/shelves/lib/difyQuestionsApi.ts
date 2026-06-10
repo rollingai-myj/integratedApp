@@ -4,6 +4,7 @@ import { difyProxyUrl } from "./difyProxyUrl";
 import { getAuthHeaders } from "@/components/shelves/lib/api-client";
 import { readWorkflowFinished } from "./difyWorkflowStream";
 import { getDifyUser } from "./difyUser";
+import { serializeDifyInputs } from "./difyInputs";
 
 function tryParseJson(raw: string): any | null {
   if (!raw) return null;
@@ -65,11 +66,11 @@ export async function runQuestionsWorkflow(
     },
     signal: ctrl.signal,
     body: JSON.stringify({
-      inputs: {
+      inputs: serializeDifyInputs({
         competitor: { items: competitor },
         crowdSource: { items: crowdSource },
         position: category,
-      },
+      }),
       response_mode: "streaming",
       user: getDifyUser(),
     }),

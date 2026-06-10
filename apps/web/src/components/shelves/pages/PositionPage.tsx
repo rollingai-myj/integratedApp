@@ -2,12 +2,16 @@
  * /shelves/position —— 场景选择
  *
  * 视觉对齐价盘模块的"品类选择"页（apps/web/src/routes/prices.index.tsx）：
- *   - 顶部 BrandHeader 风格胶囊（Shelves · 选品助手 / 门店 编号）
- *   - "请选择场景" h1 + 副标题 + 右上"返回门户"
+ *   - 顶部 BrandHeader 风格胶囊：左侧 ← 箭头返回门户 + Shelves · 选品助手 / 门店 编号
+ *   - "请选择场景" h1 + 副标题
  *   - 2 列 emoji 卡片，每张卡按场景名匹配 emoji；底部显示"未调改/已调改 N 次"
  *
  * 行为延续原 repo：未调改场景跳 survey 完成"货架组+问卷"配置；已调改场景跳
  * SceneIndex 的"调改 hub"。
+ *
+ * 13 个场景（与价盘 prices.index.tsx CATEGORIES 保持名字/emoji/顺序一致）：
+ *   糖巧 / 面包架【常温奶】/ 面包架【烘焙】/ 小零食 / 大休闲 / 饼干膨化 /
+ *   方便速食 / 根油调味 / 酒 / 玩具 / 日化 / 家杂 / 冷藏
  */
 import { useNavigate } from '@/components/shelves/lib/router-shim';
 import { Link } from '@tanstack/react-router';
@@ -16,25 +20,7 @@ import { Loader2 } from 'lucide-react';
 import { useAppContext } from '@/components/shelves/contexts/AppContext';
 import { usePlanPositions } from '@/components/shelves/hooks/usePlanPositions';
 import { listRemakeCounts } from '@/components/shelves/services/scenes';
-
-/** 场景名 → emoji 映射；命中"包含"关系即可（兼容"面包架【常温奶】"等带括号变体） */
-const EMOJI_RULES: Array<[RegExp, string]> = [
-  [/糖|巧/, '🍬'],
-  [/面包/, '🍞'],
-  [/小零食/, '🍿'],
-  [/大休闲/, '🎯'],
-  [/饼干|膨化/, '🍪'],
-  [/方便|速食/, '🍜'],
-  [/粮|油|调味|根油/, '🍚'],
-  [/酒/, '🍷'],
-  [/玩具/, '🧸'],
-  [/日化|护理/, '🧴'],
-  [/冷藏|冷冻|冰/, '❄️'],
-];
-function emojiFor(name: string): string {
-  for (const [re, e] of EMOJI_RULES) if (re.test(name)) return e;
-  return '🏷️';
-}
+import { emojiForScene } from '@/lib/scenes';
 
 const PositionPage = () => {
   const navigate = useNavigate();
@@ -56,11 +42,17 @@ const PositionPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* 头部胶囊（仿 prices BrandHeader） */}
+    // min-h-full（而非 min-h-screen）：IOSDevice 内层 overflow-y-auto 容器高度 =
+    // (100/zoom)vh，若用 min-h-screen 只到 100vh，容器底部会留出 (100/zoom-100)vh
+    // 的空白可滚区。min-h-full 强制本页至少撑满 IOSDevice 内层 → 没有空白可滚。
+    <div className="min-h-full bg-background">
+      {/* 头部胶囊（与价盘 BrandHeader 同款：左侧 ← 箭头返回门户 + 品牌行） */}
       <header className="sticky top-0 z-30 w-full">
         <div className="glass-card mx-3 mt-3 flex h-14 items-center justify-between rounded-full px-2.5 pl-3 pr-2">
           <div className="flex min-w-0 items-center gap-2.5">
+            <Link to="/" className="icon-btn h-9 w-9 text-base" aria-label="返回门户">
+              ←
+            </Link>
             <div className="min-w-1 leading-tight">
               <div className="label-eyebrow" style={{ color: 'var(--brand)' }}>
                 Shelves · 选品助手
@@ -73,16 +65,8 @@ const PositionPage = () => {
         </div>
       </header>
 
-      <main className="px-4 py-5">
-        <div className="flex items-baseline justify-between">
-          <h1 className="text-lg font-semibold text-foreground">请选择场景</h1>
-          <Link
-            to="/"
-            className="text-[11px] text-muted-foreground underline underline-offset-2"
-          >
-            返回门户
-          </Link>
-        </div>
+      <main className="px-4 py-5 pb-8">
+        <h1 className="text-lg font-semibold text-foreground">请选择场景</h1>
         <p className="mt-1 text-xs text-muted-foreground">
           进入货架诊断与选品调改工作台
         </p>
@@ -101,7 +85,7 @@ const PositionPage = () => {
                   onClick={() => handleClick(idx)}
                   className="group rounded-xl border bg-card p-4 shadow-sm transition active:scale-[0.98] text-left"
                 >
-                  <div className="text-3xl">{emojiFor(p.position_name)}</div>
+                  <div className="text-3xl">{emojiForScene(p.position_name)}</div>
                   <div className="mt-3 text-base font-medium text-foreground">
                     {p.position_name}
                   </div>

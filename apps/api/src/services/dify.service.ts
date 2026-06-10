@@ -38,9 +38,33 @@ export interface DifyRunResponse {
   };
 }
 
+/**
+ * Dify text-input/paragraph 字段不允许 object/array，必须 JSON.stringify 成字符串；
+ * 但文件类输入（带 transfer_method 字段的 object）必须保持原样。
+ * 这里统一序列化，所有后端 invoke 调用点（detect / prices / ai 通用入口）一次性覆盖。
+ */
+function isDifyFileObject(v: unknown): boolean {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { transfer_method?: unknown }).transfer_method === 'string'
+  );
+}
+function serializeInputs(
+  inputs: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(inputs)) {
+    if (v == null || typeof v !== 'object') out[k] = v;
+    else if (isDifyFileObject(v)) out[k] = v;
+    else out[k] = JSON.stringify(v);
+  }
+  return out;
+}
+
 export class DifyService {
   /** 触发 Dify 工作流，返回原始 outputs 对象（由调用方按 workflow 解析） */
-  async invoke<TInput = Record<string, unknown>>(
+  async invoke<TInput extends Record<string, unknown> = Record<string, unknown>>(
     workflow: DifyWorkflow,
     inputs: TInput,
     args: { userId?: string; responseMode?: 'blocking' | 'streaming' } = {},
@@ -64,7 +88,7 @@ export class DifyService {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          inputs,
+          inputs: serializeInputs(inputs),
           response_mode: args.responseMode ?? 'blocking',
           user: args.userId ?? 'system',
         }),

@@ -52,14 +52,21 @@ export async function listStoresForUser(
   userId: string,
   isSuperAdmin: boolean,
 ): Promise<PortalStoresResponse> {
+  // latitude/longitude/address：选品的"周边商圈洞察"调高德 v5 around 必填，
+  // 前端 storeCoordinates 在进模块时 build 出 code → "lng,lat" 的 cache，
+  // 让 useShelfQuestions / useEnvironmentInsight 同步取。numeric → string 在
+  // JS 端拼，这里只给原值。
   let stores: StoreRef[];
   if (isSuperAdmin) {
     const res = await query<{
       id: string;
       store_code: string;
       store_name: string;
+      latitude: string | null;
+      longitude: string | null;
+      address: string | null;
     }>(
-      `SELECT id, store_code, store_name
+      `SELECT id, store_code, store_name, latitude, longitude, address
          FROM stores
         WHERE deleted_at IS NULL AND status = 'active'
         ORDER BY store_code`,
@@ -68,6 +75,9 @@ export async function listStoresForUser(
       id: r.id,
       code: r.store_code,
       name: r.store_name,
+      latitude: r.latitude == null ? null : Number(r.latitude),
+      longitude: r.longitude == null ? null : Number(r.longitude),
+      address: r.address,
     }));
   } else {
     const res = await query<{
@@ -75,8 +85,12 @@ export async function listStoresForUser(
       store_code: string;
       store_name: string;
       is_primary: boolean;
+      latitude: string | null;
+      longitude: string | null;
+      address: string | null;
     }>(
-      `SELECT s.id, s.store_code, s.store_name, us.is_primary
+      `SELECT s.id, s.store_code, s.store_name, us.is_primary,
+              s.latitude, s.longitude, s.address
          FROM user_stores us
          JOIN stores s ON s.id = us.store_id
         WHERE us.user_id = $1
@@ -90,6 +104,9 @@ export async function listStoresForUser(
       code: r.store_code,
       name: r.store_name,
       isPrimary: r.is_primary,
+      latitude: r.latitude == null ? null : Number(r.latitude),
+      longitude: r.longitude == null ? null : Number(r.longitude),
+      address: r.address,
     }));
   }
   return { stores, total: stores.length };

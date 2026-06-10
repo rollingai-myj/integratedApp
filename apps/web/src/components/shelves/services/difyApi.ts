@@ -3,6 +3,7 @@ import { difyProxyUrl, type DifyApp } from "@/components/shelves/lib/difyProxyUr
 import { getAuthHeaders } from "@/components/shelves/lib/api-client";
 import { readWorkflowFinished } from "@/components/shelves/lib/difyWorkflowStream";
 import { getDifyUser } from "@/components/shelves/lib/difyUser";
+import { serializeDifyInputs } from "@/components/shelves/lib/difyInputs";
 
 async function callWorkflow(
   app: DifyApp,
@@ -20,7 +21,8 @@ async function callWorkflow(
     },
     signal: controller.signal,
     body: JSON.stringify({
-      inputs,
+      // Dify text-input/paragraph 字段不允许 object/array；统一在出口序列化。
+      inputs: serializeDifyInputs(inputs),
       response_mode: "streaming",
       user: getDifyUser(),
     }),
@@ -188,9 +190,23 @@ export async function analyzeSelection(
   const coerce = (v: unknown): Record<string, unknown>[] | null => {
     if (v == null) return null;
     if (typeof v === "string") {
-      // 字符串：先按数组再按对象解析
-      try { const a = extractJsonArray(v); if (a.length) return a as Record<string, unknown>[]; } catch { /* */ }
-      try { const o = JSON.parse(v); if (looksLikeStrategy(o)) return [o]; if (Array.isArray(o)) return o; } catch { /* */ }
+      // Dify 工作流的 output 字段类型若是 string/paragraph，会把 strategy 对象
+      // JSON.stringify 后返回。
+      //
+      // 顺序敏感：必须先尝试整段 JSON.parse 辨别 strategy/array；如果直接走
+      // extractJsonArray 的"找 \[...\] 子串"正则，会错抓 strategy 对象 *内部*
+      // 的 skus 子数组当成 strategy 数组（每个 SKU 被当成"一个 strategy"，结
+      // 果策略级 skus 字段全空）—— 真实 case 见 commit 历史。
+      try {
+        const parsed = JSON.parse(v);
+        if (looksLikeStrategy(parsed)) return [parsed as Record<string, unknown>];
+        if (Array.isArray(parsed)) return parsed as Record<string, unknown>[];
+      } catch { /* 不是干净 JSON，尝试兜底 */ }
+      // 兜底：响应可能裹了 ```json 块或夹杂自然语言；extractJsonArray 用正则提取
+      try {
+        const a = extractJsonArray(v);
+        if (a.length) return a as Record<string, unknown>[];
+      } catch { /* give up */ }
       return null;
     }
     if (Array.isArray(v)) return v as Record<string, unknown>[];

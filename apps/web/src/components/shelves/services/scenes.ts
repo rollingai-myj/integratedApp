@@ -112,6 +112,36 @@ interface BackendCount {
   lastRemakeAt: string | null;
 }
 
+/**
+ * 标杆店 SKU 数据：后端实时算出，shape 与 sceneAnalysis.fmt() 一致，可直接喂给
+ * Dify selection / align 的 benchmark_sku_data 字段。
+ *
+ * 规则在后端 benchmark.service.ts 注释里。前端只负责拿。
+ */
+export interface BenchmarkSkuItem {
+  skuCode: string;
+  skuName: string;
+  spec: string;
+  majorCategory: string;
+  midCategory: string;
+  subCategory: string;
+  sales30d: string;
+  salesVolume30d: string;
+  psdChangetb: string;
+  shelfLifeDays: number | null;
+}
+
+export async function getSceneBenchmark(sceneIndex: number): Promise<BenchmarkSkuItem[]> {
+  try {
+    const res = await apiFetch(`/scenes/${sceneIndex}/benchmark`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: BenchmarkSkuItem[] };
+    return data.items ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function listRemakeCounts(_storeId: string): Promise<RemakeCount[]> {
   try {
     const res = await apiFetch('/scenes/adjustments-count');

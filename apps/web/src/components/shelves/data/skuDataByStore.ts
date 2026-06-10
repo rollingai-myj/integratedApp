@@ -24,11 +24,6 @@ export const getStoreSkuData = (storeId: string): SkuRow[] => {
   });
 };
 
-export const getBenchmarkSkuData = (_storeId: string): SkuRow[] =>
-  IMPORTED_CACHE['benchmark'] ?? [];
-
-export const getBenchmarkStoreId = (_storeId: string): string => 'benchmark';
-
 // ---- 从后端拉 SKU 并写入缓存 ---------------------------------------------
 
 interface BackendStoreSku {

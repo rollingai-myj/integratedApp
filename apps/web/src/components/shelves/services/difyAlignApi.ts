@@ -7,6 +7,7 @@ import { difyProxyUrl } from "@/components/shelves/lib/difyProxyUrl";
 import { getAuthHeaders } from "@/components/shelves/lib/api-client";
 import { getDifyUser } from "@/components/shelves/lib/difyUser";
 import { readWorkflowFinished } from "@/components/shelves/lib/difyWorkflowStream";
+import { serializeDifyInputs } from "@/components/shelves/lib/difyInputs";
 
 function getCurrentDateStr(): string {
   const d = new Date();
@@ -133,7 +134,9 @@ export async function alignShelf(
     },
     signal: controller.signal,
     body: JSON.stringify({
-      inputs: {
+      // photo 是文件 input（带 transfer_method）会被 serializeDifyInputs 保留为 object；
+      // 其它结构化字段（sku_data / benchmark_sku_data 等）自动 JSON.stringify 成 string。
+      inputs: serializeDifyInputs({
         photo: { transfer_method: "remote_url", url: photoUrl, type: "image" },
         sku_data: payload.sku_data,
         benchmark_sku_data: payload.benchmark_sku_data ?? { items: [] },
@@ -148,7 +151,7 @@ export async function alignShelf(
         ...(payload.question_answers ? { question_answers: payload.question_answers } : {}),
         ...(payload.competitor_products ? { competitor_products: payload.competitor_products } : {}),
         ...(payload.poi_data ? { poi_data: payload.poi_data } : {}),
-      },
+      }),
       response_mode: "streaming",
       user: getDifyUser(),
     }),

@@ -31,6 +31,7 @@ import {
   listVirtualShelfHistory,
   recordVirtualShelf,
 } from '../services/scenes.service.js';
+import { computeBenchmarkForScene } from '../services/benchmark.service.js';
 import {
   listQuestions,
   saveQuestions,
@@ -147,6 +148,35 @@ shelvesRouter.get(
   asyncHandler(async (_req, res) => {
     const scenes = await listScenes();
     res.json({ scenes });
+  }),
+);
+
+// ---- 标杆店 SKU 数据（实时计算，不落库） -------------------------------
+//
+// URL 里的 :sceneId 是「listScenes 返回数组的 index」(0..N-1)，跟 PositionPage
+// 用的 idx 一致——而不是 plan_position_mapping.position_code（因为 code 可重复）。
+// 走 index 才能拿到当前场景准确的 categories；上下游一致性见前端 usePlanPositions
+// 注释。
+shelvesRouter.get(
+  '/scenes/:sceneId/benchmark',
+  requireAuth,
+  requireStore,
+  asyncHandler(async (req, res) => {
+    const sceneIndex = Number(req.params.sceneId);
+    if (!Number.isFinite(sceneIndex) || sceneIndex < 0) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'sceneId 必须是非负数字');
+    }
+    const scenes = await listScenes();
+    const scene = scenes[sceneIndex];
+    if (!scene) {
+      throw new AppError(404, ErrorCodes.NOT_FOUND, 'scene 不存在');
+    }
+    const categoryNames = scene.categories.map((c) => c.name);
+    const items = await computeBenchmarkForScene(
+      req.user!.currentStoreId!,
+      categoryNames,
+    );
+    res.json({ items });
   }),
 );
 
