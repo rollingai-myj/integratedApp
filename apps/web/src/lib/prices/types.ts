@@ -42,6 +42,13 @@ export interface CurvePeriod {
   price: number;
   monthlySales: number;       // 该价格段内的月化销量
   monthlyGrossProfit: number; // 该价格段内的月化毛利
+  /**
+   * 该段在销量快照表中是否已有真实销量数据。
+   * 调价当下会在 fact 表插一行 source='price_change' 但 sales=null（决策 D3，
+   * 等下一次 ERP 周同步才会补上）。这段时间该价格的快照里"没有数据"，
+   * 柱状图不应渲染（值永远是 0 无意义），调价记录的"月均毛利变化"文案也不应出现。
+   */
+  hasSalesData: boolean;
 }
 
 export interface CurveData {
@@ -54,6 +61,19 @@ export interface CurveData {
 /** 由 SKU 编码拼出阿里云图片地址（沿用原 repo 约定） */
 export const getSkuImageUrl = (code: string): string =>
   `https://rollingai-meiyijia.oss-cn-shanghai.aliyuncs.com/product_pic/${code}.png`;
+
+/**
+ * 由 SKU 编码拼出条形码图片地址。
+ *
+ * OSS 上条形码按 8 位 SKU 编码归档；纯数字短于 8 位的需要前补 0。
+ * 货架模块同款规则在 shelves/lib/preloadSkuAssets.ts；这里独立维护
+ * 避免价盘对货架模块反向依赖（规则极简，复制成本远低于跨模块耦合）。
+ */
+export const getSkuBarcodeUrl = (code: string | undefined): string | null => {
+  if (!code) return null;
+  const padded = /^\d+$/.test(code) && code.length < 8 ? code.padStart(8, '0') : code;
+  return `https://rollingai-meiyijia.oss-cn-shanghai.aliyuncs.com/SKU_bar_code/${padded}.png`;
+};
 
 /** 数据库行 → 组件期望的 SKU 形状 */
 export function rowToSku(row: StoreSkuRow): SKU {
@@ -94,7 +114,16 @@ export function pointsToPeriods(
     a.snapshotDate < b.snapshotDate ? -1 : 1,
   );
 
-  const segments: Array<{ price: number; from: string; to: string; sumSales: number; sumProfit: number; days: number }> = [];
+  const segments: Array<{
+    price: number;
+    from: string;
+    to: string;
+    sumSales: number;
+    sumProfit: number;
+    days: number;
+    /** 段内至少有一个点带真实销量数据 */
+    anyHasSales: boolean;
+  }> = [];
   for (const p of sorted) {
     const price = Number(p.retailPrice ?? 0);
     if (!Number.isFinite(price) || price <= 0) continue;
@@ -104,6 +133,8 @@ export function pointsToPeriods(
     const wholesale = p.wholesalePrice != null
       ? Number(p.wholesalePrice)
       : (fallbackWholesale > 0 ? fallbackWholesale : 0);
+    // 该点是否带真实销量：salesQty30d 显式非空且 > 0
+    const pointHasSales = p.salesQty30d != null && Number(p.salesQty30d) > 0;
 
     let profit: number;
     if (margin != null && margin > 0) {
@@ -122,6 +153,7 @@ export function pointsToPeriods(
       last.sumSales += sales;
       last.sumProfit += profit;
       last.days += 1;
+      if (pointHasSales) last.anyHasSales = true;
     } else {
       segments.push({
         price,
@@ -130,6 +162,7 @@ export function pointsToPeriods(
         sumSales: sales,
         sumProfit: profit,
         days: 1,
+        anyHasSales: pointHasSales,
       });
     }
   }
@@ -141,6 +174,7 @@ export function pointsToPeriods(
     // 取该段的均值（每天的 30 天销量本来就近似月化，这里再取均值平滑一下）
     monthlySales: Math.round(seg.sumSales / Math.max(seg.days, 1)),
     monthlyGrossProfit: Math.round((seg.sumProfit / Math.max(seg.days, 1)) * 100) / 100,
+    hasSalesData: seg.anyHasSales,
   }));
 }
 

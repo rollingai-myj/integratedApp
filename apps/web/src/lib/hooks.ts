@@ -98,6 +98,25 @@ export function usePriceCurve(
   });
 }
 
+/**
+ * 调价流水（ops_store_price_change）—— "调价历史"的真实数据源。
+ *
+ * 不传 skuCode 拿门店全部记录（HistoryDialog 用）；传 skuCode 时拿单 sku 流水
+ * （SkuDetailDialog 时间线用）。同日多次调价每次都是独立行，自然支持
+ * 8→9→10 这种连续调价的完整展示。
+ */
+export function usePriceChanges(
+  storeId: string | null | undefined,
+  params?: { skuCode?: string; limit?: number },
+) {
+  return useQuery({
+    queryKey: ['prices', 'changes', storeId, params?.skuCode ?? '', params?.limit ?? 200] as const,
+    queryFn: () => pricesApi.changes(params),
+    enabled: !!storeId,
+    staleTime: 30_000,
+  });
+}
+
 export function useSubmitPriceChange() {
   const qc = useQueryClient();
   return useMutation<
@@ -109,6 +128,7 @@ export function useSubmitPriceChange() {
     onSuccess: async (_, vars) => {
       await qc.invalidateQueries({ queryKey: ['master', 'skus', vars.storeId] });
       await qc.invalidateQueries({ queryKey: ['prices', 'curve', vars.storeId] });
+      await qc.invalidateQueries({ queryKey: ['prices', 'changes', vars.storeId] });
     },
   });
 }

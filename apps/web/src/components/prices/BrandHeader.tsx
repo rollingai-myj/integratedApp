@@ -6,7 +6,12 @@
 import { Link } from '@tanstack/react-router';
 import { useMe } from '@/lib/auth';
 
-export function BrandHeader({ showBack }: { showBack?: boolean }) {
+interface Props {
+  /** 显示左上角返回箭头。默认指向 /prices；场景选择页传 '/' 回到门户 */
+  backTo?: '/' | '/prices';
+}
+
+export function BrandHeader({ backTo }: Props) {
   const meQuery = useMe();
   const storeCode = meQuery.data?.currentStore?.code ?? '';
 
@@ -14,9 +19,9 @@ export function BrandHeader({ showBack }: { showBack?: boolean }) {
     <header className="sticky top-0 z-30 w-full">
       <div className="glass-card mx-3 mt-3 flex h-14 items-center justify-between rounded-full px-2.5 pl-3 pr-2">
         <div className="flex min-w-0 items-center gap-2.5">
-          {showBack && (
+          {backTo && (
             <Link
-              to="/prices"
+              to={backTo}
               className="icon-btn h-9 w-9 text-base"
               aria-label="返回"
             >

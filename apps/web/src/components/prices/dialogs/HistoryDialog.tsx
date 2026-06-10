@@ -24,8 +24,9 @@ export interface HistoryEntry {
   dateLabel: string;
   from: number;
   to: number;
-  profit: number;
-  profitUp: boolean;
+  /** 新价已有销量快照时填月均毛利；尚无销量时省略 → 渲染时跳过那一行 */
+  profit?: number;
+  profitUp?: boolean;
 }
 
 interface Props {
@@ -41,7 +42,7 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="overflow-y-auto rounded-[22px] sm:max-w-md"
+        className="flex flex-col overflow-hidden rounded-[22px] sm:max-w-md"
         style={{
           zoom,
           // zoom 会把元素整体放大 zoom 倍，vh/vw 是基于视口的，所以这里反向除一次保持视觉 88vh / 94vw
@@ -49,7 +50,7 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
           maxWidth: `${94 / zoom}vw`,
         }}
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <div className="label-eyebrow" style={{ color: 'var(--brand)' }}>
             HISTORY
           </div>
@@ -69,7 +70,7 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
             暂无调价记录
           </div>
         ) : (
-          <ul className="space-y-2">
+          <ul className="flex-1 min-h-0 space-y-2 overflow-y-auto">
             {entries.map((entry, i) => {
               const sku = rowToSku(entry.row);
               const diff = entry.to - entry.from;
@@ -111,11 +112,13 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
                         {up ? '↑' : '↓'} {fmtMoney(Math.abs(diff))}
                       </span>
                     </div>
-                    <div className="mt-0.5 flex items-center text-[10px]">
-                      <span style={{ color: entry.profitUp ? '#059669' : '#DC2626' }}>
-                        月毛利{entry.profitUp ? '增长' : '减少'}到 {fmtMoney(entry.profit)}
-                      </span>
-                    </div>
+                    {entry.profit != null && entry.profitUp != null && (
+                      <div className="mt-0.5 flex items-center text-[10px]">
+                        <span style={{ color: entry.profitUp ? '#059669' : '#DC2626' }}>
+                          月均毛利{entry.profitUp ? '增长' : '减少'}到 {fmtMoney(entry.profit)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </li>
               );

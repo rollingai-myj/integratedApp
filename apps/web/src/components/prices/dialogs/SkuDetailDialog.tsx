@@ -33,16 +33,23 @@ import {
   type CurveData,
   type CurvePeriod,
   fmtMoney,
+  getSkuBarcodeUrl,
   rowToSku,
   type SKU,
 } from '@/lib/prices/types';
-import type { StoreSkuRow } from '@myj/shared';
+import type { PriceChangeRecord, StoreSkuRow } from '@myj/shared';
 import type { SkuDiagnosis } from '@/lib/prices/diagnosis';
 
 interface Props {
   row: StoreSkuRow | null;
   curve: CurveData | null;          // 已适配好的曲线数据
   diagnosis?: SkuDiagnosis;          // 当前 SKU 的诊断（若有）
+  /**
+   * 当前 SKU 的调价流水（按 createdAt DESC）。
+   * 是"调价记录"的真实数据源 —— 同日多次调价不会被覆盖。父组件按
+   * detailRow.skuCode 过滤后注入；为空数组时不渲染时间线。
+   */
+  changes: PriceChangeRecord[];
   open: boolean;
   onOpenChange: (v: boolean) => void;
   /** 实际触发调价提交。父组件通过 useSubmitPriceChange 注入 */
@@ -59,6 +66,7 @@ interface ChartDataPoint {
   periodLabel: string;
   startDate: string | null;
   endDate: string | null;
+  hasSalesData: boolean;
 }
 
 // 价格曲线柱状图（来自原版，仅 import 路径调整）
@@ -101,7 +109,7 @@ const PriceCurveChart = memo(function PriceCurveChart({
             axisLine={false}
             tickLine={false}
             label={{
-              value: '每月赚（月毛利）',
+              value: '每月赚（月均毛利）',
               position: 'bottom',
               offset: 10,
               fontSize: 10,
@@ -163,7 +171,7 @@ const PriceCurveChart = memo(function PriceCurveChart({
           <div className="font-semibold text-foreground">{selectedPeriod.periodLabel}</div>
           <div className="mt-1 text-muted-foreground">
             售价 <span className="font-medium text-foreground">{fmtMoney(selectedPeriod.price)}</span>
-            {' · '}月毛利 <span className="font-medium text-foreground">{fmtMoney(selectedPeriod.monthlyProfit)}</span>
+            {' · '}月均毛利 <span className="font-medium text-foreground">{fmtMoney(selectedPeriod.monthlyProfit)}</span>
           </div>
         </div>
       )}
@@ -184,6 +192,7 @@ export function SkuDetailDialog({
   row,
   curve,
   diagnosis,
+  changes,
   open,
   onOpenChange,
   onSubmit,
@@ -240,6 +249,7 @@ export function SkuDetailDialog({
     if (!sku) return [];
     const periods = curve?.periods;
     if (!periods || periods.length === 0) {
+      // 兜底"当前价"伪段：当作有销量（fallback 是组件初次进入无 curve 时的占位）
       return [
         {
           price: sku.currentPrice,
@@ -248,10 +258,14 @@ export function SkuDetailDialog({
           periodLabel: '当前',
           startDate: null,
           endDate: null,
+          hasSalesData: true,
         },
       ];
     }
+    // 柱状图只显示销量快照里"已经有数据"的价格段 —— 调价当下的孤立 price_change
+    // 在 fact 表只有价格没有销量，柱子永远是 0，渲染出来反而误导
     return [...periods]
+      .filter((p) => p.hasSalesData)
       .sort((a, b) => b.price - a.price)
       .map((p) => ({
         price: p.price,
@@ -260,6 +274,7 @@ export function SkuDetailDialog({
         periodLabel: periodLabel(p),
         startDate: p.startDate,
         endDate: p.endDate,
+        hasSalesData: p.hasSalesData,
       }));
   }, [sku, curve]);
 
@@ -316,31 +331,33 @@ export function SkuDetailDialog({
 
   const unchanged = sku ? Math.abs(newPrice - sku.currentPrice) < 0.01 : true;
 
-  // 调价时间线 — 从 periods 推（相邻段对比月毛利涨跌）
+  // 调价时间线 — 从 ops_store_price_change 流水推
+  //   - 同日多次调价完整保留（早期版本从 periods 反推会因 ON CONFLICT 覆盖丢失）
+  //   - 月均毛利富集：在 curve.periods 找匹配价格的段，只用 hasSalesData=true 的段
+  //   - 新价当下没销量时 profit/profitUp = undefined，渲染时只显示"日期 + 售价 X→Y"
   const periods = curve?.periods;
   const timeline = useMemo(() => {
-    if (!sku || !periods || periods.length < 2) return null;
-    return periods
-      .map((p, i) => {
-        if (i === 0) return null;
-        const prev = periods[i - 1]!;
-        const diffProfit = p.monthlyGrossProfit - prev.monthlyGrossProfit;
+    if (!sku || changes.length === 0) return null;
+    const findPeriod = (price: number) =>
+      periods?.find((p) => Math.abs(p.price - price) < 0.01 && p.hasSalesData);
+    const list = changes
+      .filter((c) => c.oldPrice != null) // 首次定价（无前价）不属于"调价记录"
+      .map((c) => {
+        const newPeriod = findPeriod(c.newPrice);
+        const oldPeriod = findPeriod(c.oldPrice!);
         return {
-          dateLabel: periodLabel(p),
-          from: prev.price,
-          to: p.price,
-          profit: p.monthlyGrossProfit,
-          profitUp: diffProfit >= 0,
+          dateLabel: fmtShort(new Date(c.effectiveDate)),
+          from: c.oldPrice!,
+          to: c.newPrice,
+          profit: newPeriod?.monthlyGrossProfit,
+          profitUp:
+            newPeriod && oldPeriod
+              ? newPeriod.monthlyGrossProfit >= oldPeriod.monthlyGrossProfit
+              : undefined,
         };
-      })
-      .filter(Boolean) as Array<{
-      dateLabel: string;
-      from: number;
-      to: number;
-      profit: number;
-      profitUp: boolean;
-    }>;
-  }, [sku, periods]);
+      });
+    return list.length > 0 ? list : null;
+  }, [sku, changes, periods]);
 
   if (!sku) return null;
 
@@ -435,12 +452,13 @@ export function SkuDetailDialog({
     </div>
   ) : null;
 
-  const hasPeriods = periods && periods.length >= 2;
+  // 柱状图需要至少 2 个"有销量数据"的段才有可比性 —— 全是孤立调价点时不渲染
+  const hasChartData = chartData.length >= 2;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="overflow-hidden rounded-[20px] sm:max-w-md"
+        className="flex flex-col overflow-hidden rounded-[20px] sm:max-w-md"
         style={{
           zoom,
           // zoom 把元素整体放大 zoom 倍，vh/vw 是基于视口的，所以反向除一次保持视觉 92vh / 94vw
@@ -448,26 +466,28 @@ export function SkuDetailDialog({
           maxWidth: `${94 / zoom}vw`,
         }}
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <div className="label-eyebrow" style={{ color: 'var(--brand)' }}>
             SKU DETAIL
           </div>
           <DialogTitle className="text-[20px] font-extrabold tracking-tight">商品详情</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-2">
+        {/* 调价警告 / 低于批发价提示 / AI 诊断 / 柱状图 都可能撑高内容,
+            flex-1 + overflow-y-auto + min-h-0 让 Footer 永远可见 */}
+        <div className="flex-1 min-h-0 space-y-2 overflow-y-auto">
           {/* 商品头部 */}
-          <div className="solid-card flex gap-2.5 p-2" style={{ borderRadius: '16px' }}>
+          <div className="solid-card flex items-center gap-2.5 p-2" style={{ borderRadius: '16px' }}>
             <SkuImage src={sku.imgUrl} alt={sku.name} code={sku.code} className="h-[48px] w-[48px] shrink-0" />
-            <div className="min-w-0 flex-1 py-0.5">
-              <div className="text-[13px] font-semibold leading-snug">{sku.name}</div>
+            <div className="min-w-0 flex-1">
+              <div className="line-clamp-2 text-[12px] font-semibold leading-snug">{sku.name}</div>
               <div className="mt-0.5 text-[11px] text-muted-foreground">
                 {sku.spec} · {sku.brand}
               </div>
-              <div className="mt-1 chip-base">
-                <span className="num">SKU {sku.code}</span>
-              </div>
+              <div className="num mt-0.5 text-[10px] text-muted-foreground">SKU {sku.code}</div>
             </div>
+            {/* 条形码：与选品/货架模块共用 OSS 图源；加载失败时隐藏避免破图 */}
+            <BarcodeImage code={sku.code} />
           </div>
 
           {timeline ? (
@@ -481,14 +501,20 @@ export function SkuDetailDialog({
                     <span className="num font-medium text-foreground">
                       {fmtMoney(t.from)}→{fmtMoney(t.to)}
                     </span>
-                    {'，月毛利'}
-                    <span
-                      style={{ color: t.profitUp ? '#059669' : '#DC2626' }}
-                      className="font-medium"
-                    >
-                      {t.profitUp ? '增长' : '减少'}
-                    </span>
-                    到<span className="num text-foreground">{fmtMoney(t.profit)}</span>
+                    {/* 新价没有销量快照时（profit/profitUp = undefined），
+                        不展示"月均毛利..."以免误导（毛利根本算不出来） */}
+                    {t.profit != null && t.profitUp != null && (
+                      <>
+                        {'，月均毛利'}
+                        <span
+                          style={{ color: t.profitUp ? '#059669' : '#DC2626' }}
+                          className="font-medium"
+                        >
+                          {t.profitUp ? '增长' : '减少'}
+                        </span>
+                        到<span className="num text-foreground">{fmtMoney(t.profit)}</span>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
@@ -500,7 +526,7 @@ export function SkuDetailDialog({
               <Cell label="单件毛利" value={fmtMoney(unit)} />
               <Cell label="月销量" value={sku.ownStoreSales.toString()} />
               <Cell label="月销售额" value={fmtMoney(monthSales)} />
-              <Cell label="月毛利" value={fmtMoney(monthProfit)} brand />
+              <Cell label="月均毛利" value={fmtMoney(monthProfit)} brand />
             </div>
           )}
 
@@ -528,7 +554,7 @@ export function SkuDetailDialog({
             </div>
           )}
 
-          {hasPeriods && (
+          {hasChartData && (
             <div className="solid-card px-2.5 pb-1 pt-2" style={{ borderRadius: '16px' }}>
               <PriceCurveChart
                 data={chartData}
@@ -543,7 +569,7 @@ export function SkuDetailDialog({
           {editingContent}
         </div>
 
-        <DialogFooter className="flex-row gap-2 pt-0">
+        <DialogFooter className="shrink-0 flex-row gap-2 pt-0">
           <Button variant="outline" className="flex-1 rounded-full" onClick={() => onOpenChange(false)}>
             关闭
           </Button>
@@ -586,5 +612,24 @@ function Cell({ label, value, brand }: { label: string; value: string; brand?: b
         {value}
       </div>
     </div>
+  );
+}
+
+/**
+ * 商品头部卡片右侧的条形码缩略图。
+ * OSS 图源；加载失败时隐藏整个 <img>，避免 alt 文字渲染破坏布局。
+ */
+function BarcodeImage({ code }: { code: string }) {
+  const url = getSkuBarcodeUrl(code);
+  const [failed, setFailed] = useState(false);
+  if (!url || failed) return null;
+  return (
+    <img
+      src={url}
+      alt=""
+      aria-hidden
+      className="ml-auto h-9 w-auto shrink-0 self-center"
+      onError={() => setFailed(true)}
+    />
   );
 }

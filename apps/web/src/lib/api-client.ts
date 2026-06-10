@@ -25,6 +25,7 @@ import type {
   ListStoresResponse,
   ListStoreSkusResponse,
   PriceCurveResponse,
+  ListPriceChangesResponse,
   SubmitPriceChangeRequest,
   SubmitPriceChangeResponse,
   DiagnoseBatchResponse,
@@ -191,6 +192,19 @@ export const pricesApi = {
   /** 提交一次调价（D3：写流水 + 同时插一行 snapshot）— 当前 session 门店 */
   adjust: (body: SubmitPriceChangeRequest) =>
     request<SubmitPriceChangeResponse>('/prices/adjust', { method: 'POST', body }),
+
+  /**
+   * 调价流水记录（ops_store_price_change）— 当前 session 门店
+   * 同一 sku 同一天可多条，按 createdAt DESC 返回。是"调价历史"的真实数据源
+   * （早期版本从 fact 表 periods 反推会因 ON CONFLICT 覆盖丢失同日多次记录）
+   */
+  changes: (params?: { skuCode?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.skuCode) qs.set('skuCode', params.skuCode);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<ListPriceChangesResponse>(`/prices/changes${q ? `?${q}` : ''}`);
+  },
 
   /** 批量 AI 诊断（走 Dify）— 当前 session 门店 */
   diagnose: (
