@@ -457,16 +457,14 @@ export function SkuDetailDialog({
 
         <div className="space-y-2">
           {/* 商品头部 */}
-          <div className="solid-card flex gap-2.5 p-2" style={{ borderRadius: '16px' }}>
+          <div className="solid-card flex items-center gap-2.5 p-2" style={{ borderRadius: '16px' }}>
             <SkuImage src={sku.imgUrl} alt={sku.name} code={sku.code} className="h-[48px] w-[48px] shrink-0" />
-            <div className="min-w-0 flex-1 py-0.5">
+            <div className="min-w-0 flex-1">
               <div className="text-[13px] font-semibold leading-snug">{sku.name}</div>
               <div className="mt-0.5 text-[11px] text-muted-foreground">
                 {sku.spec} · {sku.brand}
               </div>
-              <div className="mt-1 chip-base">
-                <span className="num">SKU {sku.code}</span>
-              </div>
+              <div className="num mt-0.5 text-[10px] text-muted-foreground">SKU {sku.code}</div>
             </div>
           </div>
 
