@@ -60,20 +60,23 @@ function LoginPage() {
   useEffect(() => {
     if (!search.code) return;
     if (feishuExchange.isPending || feishuExchange.isSuccess) return;
-    feishuExchange.mutate(search.code, {
-      onSuccess: () => {
-        void navigate({ to: '/', search: undefined as never });
+    feishuExchange.mutate(
+      { code: search.code, state: search.state },
+      {
+        onSuccess: () => {
+          void navigate({ to: '/', search: undefined as never });
+        },
+        onError: (err) => {
+          if (err instanceof ApiError) {
+            setErrMsg(err.message);
+          } else {
+            setErrMsg('飞书登录失败，请重试');
+          }
+        },
       },
-      onError: (err) => {
-        if (err instanceof ApiError) {
-          setErrMsg(err.message);
-        } else {
-          setErrMsg('飞书登录失败，请重试');
-        }
-      },
-    });
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search.code]);
+  }, [search.code, search.state]);
 
   const onSubmitPassword = (e: React.FormEvent) => {
     e.preventDefault();

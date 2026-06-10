@@ -140,10 +140,11 @@ export async function upsertUserFromFeishu(
     return { userId, isNewUser, defaultStoreId };
   });
 
+  const email = feishuUser.email ?? feishuUser.enterprise_email ?? null;
   return {
     userId: result.userId,
-    displayName: feishuUser.name,
-    email: feishuUser.email ?? feishuUser.enterprise_email ?? null,
+    displayName: resolveDisplayName(feishuUser, email),
+    email,
     avatarUrl: feishuUser.avatar?.avatar_240 ?? feishuUser.avatar?.avatar_72 ?? null,
     isNewUser: result.isNewUser,
     matchedStores,
@@ -200,12 +201,33 @@ async function findOrCreateUser(
      VALUES ($1, $2, $3, 'active')
      RETURNING id`,
     [
-      feishuUser.name,
+      resolveDisplayName(feishuUser, email),
       email ?? null,
       feishuUser.avatar?.avatar_240 ?? feishuUser.avatar?.avatar_72 ?? null,
     ],
   );
   return inserted.rows[0]!.id;
+}
+
+/**
+ * 兜底 display_name：飞书 name 字段类型是 string，但实际可能返回 null
+ * （账号未设中文名 / 仅有英文名 / scope 不全）。users.display_name 是 NOT NULL，
+ * 不能直接写空。优先级：中文名 → 英文名 → 邮箱前缀 → 手机后 4 位 → open_id 后 8 位。
+ */
+function resolveDisplayName(
+  feishuUser: FeishuUserContact,
+  email: string | null | undefined,
+): string {
+  const candidates = [
+    feishuUser.name?.trim(),
+    feishuUser.en_name?.trim(),
+    email?.split('@')[0]?.trim(),
+    feishuUser.mobile ? `用户${feishuUser.mobile.slice(-4)}` : null,
+  ];
+  for (const c of candidates) {
+    if (c) return c;
+  }
+  return `飞书用户_${feishuUser.open_id.slice(-8)}`;
 }
 
 /**

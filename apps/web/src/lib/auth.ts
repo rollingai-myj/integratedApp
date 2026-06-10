@@ -44,8 +44,8 @@ export function useLogin() {
 export function useFeishuExchange() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (code: string) =>
-      authApi.feishuExchange({ code, client: 'browser' }),
+    mutationFn: (vars: { code: string; state?: string }) =>
+      authApi.feishuExchange({ ...vars, client: 'browser' }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
     },
