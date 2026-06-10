@@ -512,15 +512,15 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
       {/* Header */}
+      {/* padding-top 加到 84px：让标题和右侧按钮避开 BrandHeader 胶囊（mt-3 + h-14 ≈ 68px）。 */}
       <div style={{
         background: `linear-gradient(160deg, ${accent}, ${TOKENS.redDark})`,
-        color: '#fff', padding: '52px 20px 28px', position: 'relative', overflow: 'hidden',
+        color: '#fff', padding: '84px 20px 28px', position: 'relative', overflow: 'hidden',
         flexShrink: 0,
       }}>
         <div style={{ position: 'absolute', top: -60, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(255,255,255,0.08)' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
           <div>
-            <div style={{ fontSize: 12, opacity: 0.85, letterSpacing: 1, marginBottom: 2 }}>美宜佳</div>
             <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: 1 }}>促销海报设计师</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>

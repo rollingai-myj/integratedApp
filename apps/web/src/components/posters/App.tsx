@@ -11,11 +11,10 @@ import { ScreenResult } from './screens/Result';
 import { ScreenBatch } from './screens/Batch';
 import { ScreenRetry } from './screens/Retry';
 import { generatePoster, type PosterResult, type PosterStyleId } from './ai';
-import { LoginScreen } from './Login';
 import { StorePrompt } from './StorePrompt';
 import { addRecent } from './recent';
 import { authClient } from './auth-client';
-import { recordLogin, getMyRole } from '@/lib/auth.functions';
+import { recordLogin } from '@/lib/auth.functions';
 import { startSession, heartbeat } from '@/lib/usage.functions';
 import { getStoreForDevice, bindStoreToDevice } from '@/lib/store.functions';
 import { stripLeadingProductName, stripLeadingPromoCodes } from '@/utils/promoDisplayText';
@@ -62,7 +61,6 @@ function PosterAppInner() {
   const guide = useGuide();
 
   const [authed, setAuthed] = React.useState<boolean | null>(null);
-  const [isSuperAdmin, setIsSuperAdmin] = React.useState(false);
   const [storeId, setStoreId] = React.useState<string | null>(null);
   const [needsStore, setNeedsStore] = React.useState(false);
   const [sessionTick, setSessionTick] = React.useState(0);
@@ -72,31 +70,23 @@ function PosterAppInner() {
     deviceIdRef.current = getOrCreateDeviceId();
     const { subscription } = authClient.onAuthStateChange((session) => {
       setAuthed(!!session);
-      if (!session) { setStoreId(null); setNeedsStore(false); setIsSuperAdmin(false); }
+      if (!session) { setStoreId(null); setNeedsStore(false); }
     });
     const sess = authClient.getSession();
     setAuthed(!!sess);
     return () => subscription.unsubscribe();
   }, []);
 
-  // After login: get role, check device store binding, then record login + start usage session.
+  // After login: check device store binding, then record login + start usage session.
   React.useEffect(() => {
     if (!authed) return;
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
     let sessionId: string | null = null;
     (async () => {
-      let admin = false;
-      try {
-        const { roles } = await getMyRole();
-        admin = roles.includes('super_admin');
-        if (!cancelled) setIsSuperAdmin(admin);
-        // 注意：原 standalone repo 在这里会 window.location.href='/admin' 让超管去后台；
-        // 整合后超管也能直接用海报功能（且 currentStore 已在 /select-store 选好），
-        // 不再 redirect。"进入后台"角标改成回首页（功能选择页）。
-      } catch (e) { console.warn('[getMyRole]', e); }
+      // 原 standalone repo 在这里有"超管跳 /admin"逻辑，整合后由门户 / select-store 决定
+      // 默认门店，posters 不再需要前端判定 super_admin 也不再插自己的"返回首页"按钮。
 
-      // Non-admin: ensure device has a store binding before continuing.
       let resolvedStore: string | null = null;
       try {
         const { storeId: bound } = await getStoreForDevice({ data: { deviceId: deviceIdRef.current } });
@@ -203,34 +193,13 @@ function PosterAppInner() {
       background: '#000', overflow: 'hidden',
       fontFamily: '-apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif',
     }}>
-      {authed === null ? null : !authed ? <LoginScreen onLogin={() => setAuthed(true)} /> : <>
+      {!authed ? null : <>
       {needsStore && <StorePrompt accent={ACCENT} onSubmit={handleStoreSubmit} />}
       {!needsStore && <>
-      {isSuperAdmin && (
-        <div style={{
-          position: 'absolute', top: 8, right: 8, zIndex: 100,
-          background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 10px',
-          borderRadius: 12, fontSize: 11, cursor: 'pointer',
-        }} onClick={() => { window.location.href = '/'; }}>返回首页</div>
-      )}
-      {storeId && (
-        <div style={{
-          position: 'absolute', top: 8, left: 8, zIndex: 100,
-          background: 'rgba(0,0,0,0.5)', color: '#fff', padding: '4px 10px',
-          borderRadius: 12, fontSize: 11,
-        }}>门店：{storeId}</div>
-      )}
-      <div
-        onClick={async () => {
-          if (!confirm('确认退出登录？')) return;
-          authClient.signOut();
-        }}
-        style={{
-          position: 'absolute', top: 8, right: isSuperAdmin ? 80 : 8, zIndex: 100,
-          background: 'rgba(0,0,0,0.5)', color: '#fff', padding: '4px 10px',
-          borderRadius: 12, fontSize: 11, cursor: 'pointer',
-        }}
-      >退出</div>
+      {/* 顶部"门店 / 返回首页 / 退出"三按钮已下线：
+           - 门店号 → 由外层 BrandHeader 展示
+           - 返回首页 → 由 BrandHeader 的 ← 箭头承担
+           - 退出 → 走门户右上角统一退出，不再有 posters 自有登录流程 */}
       {screen === 'welcome' && (<ScreenWelcome accent={ACCENT} onDone={() => go('home')} />)}
       {screen === 'home' && (<ScreenHome accent={ACCENT}
         onStart={(promo) => {

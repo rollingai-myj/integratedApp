@@ -1,7 +1,8 @@
 /**
  * Adapted for 统一应用：原 poster repo 是独立 SPA，这文件管自己的 JWT + localStorage。
  * 整合后登录在 host 路由（/login）完成 → 统一 cookie sso_token；
- * 这里改成读 host-bridge 注入的当前用户，不再触发自己的登录流程。
+ * 这里只剩 host-bridge → PosterApp 的"用户/门店变了"通知通道，
+ * 不再保留 signIn / signOut（PosterApp 内的旧账密登录页已删）。
  */
 import { getHostContext } from './host-bridge';
 
@@ -27,14 +28,6 @@ function buildSession(): Session | null {
 export const authClient = {
   getSession(): Session | null {
     return buildSession();
-  },
-
-  async signIn(_email: string, _password: string): Promise<{ error: Error | null }> {
-    return { error: new Error('请在统一应用的 /login 页面登录') };
-  },
-
-  signOut() {
-    listeners.forEach((cb) => cb(null));
   },
 
   onAuthStateChange(cb: AuthCallback) {
