@@ -78,6 +78,18 @@ interface CachedToken {
 
 const FEISHU_BASE = 'https://open.feishu.cn';
 
+/**
+ * 网页授权需要的最小 scope 集合。
+ *
+ * - contact:contact.base:readonly：调 /contact/v3/users/{open_id} 取 name / mobile / department_path
+ *   所必需。不传则授权页不勾该项，颁发的 user_access_token 调通讯录接口会报
+ *   "Unauthorized... required one of these privileges"。
+ *
+ * scope 用空格分隔（飞书 authen 文档约定）。后续若新增能力（如读企业级
+ * 通讯录、读云文档），在这里追加，并在飞书后台开权限。
+ */
+const FEISHU_OAUTH_SCOPES = ['contact:contact.base:readonly'].join(' ');
+
 export class FeishuService {
   private tenantToken: CachedToken | null = null;
   private jsapiTicket: CachedToken | null = null;
@@ -250,7 +262,10 @@ export class FeishuService {
   buildAuthorizeUrl(state: string, redirectUri?: string): string {
     const url = new URL(`${FEISHU_BASE}/open-apis/authen/v1/authorize`);
     url.searchParams.set('app_id', config.FEISHU_APP_ID);
+    url.searchParams.set('client_id', config.FEISHU_APP_ID);
+    url.searchParams.set('response_type', 'code');
     url.searchParams.set('redirect_uri', redirectUri ?? config.FEISHU_REDIRECT_URI);
+    url.searchParams.set('scope', FEISHU_OAUTH_SCOPES);
     url.searchParams.set('state', state);
     return url.toString();
   }
