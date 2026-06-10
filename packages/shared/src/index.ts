@@ -264,6 +264,10 @@ export interface SubmitPriceChangeResponse {
   record: PriceChangeRecord;
 }
 
+export interface ListPriceChangesResponse {
+  changes: PriceChangeRecord[];
+}
+
 export interface DiagnoseSkuResult {
   skuCode: string;
   suggestion: 'up' | 'down' | 'hold' | 'unknown';

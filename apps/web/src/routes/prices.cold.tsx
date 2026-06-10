@@ -32,6 +32,7 @@ import {
 import { useMe } from '@/lib/auth';
 import {
   useDiagnoseSkus,
+  usePriceChanges,
   usePriceCurve,
   useStoreSkus,
   useSubmitPriceChange,
@@ -50,7 +51,7 @@ import {
   ruleBasedDiagnosis,
   type SkuDiagnosis,
 } from '@/lib/prices/diagnosis';
-import type { StoreSkuRow } from '@myj/shared';
+import type { PriceChangeRecord, StoreSkuRow } from '@myj/shared';
 
 export const Route = createFileRoute('/prices/cold')({
   component: ColdPage,
@@ -82,6 +83,12 @@ function ColdPage() {
     [allRows],
   );
   const curveQuery = usePriceCurve(storeId, allSkuCodes, 90);
+  // 调价流水：是"调价历史 / 调价记录"的真实数据源（同日多次调价不会被覆盖）
+  const changesQuery = usePriceChanges(storeId);
+  const allChanges = useMemo<PriceChangeRecord[]>(
+    () => changesQuery.data?.changes ?? [],
+    [changesQuery.data],
+  );
 
   // 曲线按 skuCode 索引 + 适配到原版 CurveData
   const curveByCode = useMemo(() => {
@@ -233,39 +240,44 @@ function ColdPage() {
     [allRows],
   );
 
-  // 历史 entries：从所有曲线推
+  // SKU 索引（流水→详情时按 skuCode 找回 row）
+  const skuByCode = useMemo(() => {
+    const m = new Map<string, StoreSkuRow>();
+    for (const r of allRows) m.set(r.skuCode, r);
+    return m;
+  }, [allRows]);
+
+  // 历史 entries：从调价流水推（每次调价一条独立记录，同日多次也能完整展示）
+  // 月均毛利富集：在 curve.periods 里按价格找匹配段，只用有真实销量的段
   const historyEntries = useMemo<HistoryEntry[]>(() => {
     const list: HistoryEntry[] = [];
-    for (const r of allRows) {
-      const curve = curveByCode.get(r.skuCode);
-      if (!curve || curve.periods.length < 2) continue;
-      for (let i = 1; i < curve.periods.length; i++) {
-        const curr = curve.periods[i]!;
-        const prev = curve.periods[i - 1]!;
-        const diffProfit = curr.monthlyGrossProfit - prev.monthlyGrossProfit;
-        let dateLabel: string;
-        if (curr.startDate && curr.endDate && curr.startDate !== curr.endDate) {
-          dateLabel = `${fmtShort(new Date(curr.startDate))} ～ ${fmtShort(new Date(curr.endDate))}`;
-        } else if (curr.startDate) {
-          dateLabel = `${fmtShort(new Date(curr.startDate))} ～ 至今`;
-        } else {
-          dateLabel = '当前';
-        }
-        list.push({
-          row: r,
-          startDate: curr.startDate || '',
-          endDate: curr.endDate,
-          dateLabel,
-          from: prev.price,
-          to: curr.price,
-          // 新价没有销量快照时，月均毛利无法算 → 留空让 HistoryDialog 省略那一行
-          profit: curr.hasSalesData ? curr.monthlyGrossProfit : undefined,
-          profitUp: curr.hasSalesData ? diffProfit >= 0 : undefined,
-        });
-      }
+    for (const c of allChanges) {
+      // oldPrice 为 null 说明 fact 表查不到上一价，是首次定价而非调价 → 跳过
+      if (c.oldPrice == null) continue;
+      const row = skuByCode.get(c.skuCode);
+      if (!row) continue;
+      const periods = curveByCode.get(c.skuCode)?.periods ?? [];
+      const findPeriod = (price: number) =>
+        periods.find((p) => Math.abs(p.price - price) < 0.01 && p.hasSalesData);
+      const newPeriod = findPeriod(c.newPrice);
+      const oldPeriod = findPeriod(c.oldPrice);
+      list.push({
+        row,
+        startDate: c.effectiveDate,
+        endDate: null,
+        dateLabel: fmtShort(new Date(c.effectiveDate)),
+        from: c.oldPrice,
+        to: c.newPrice,
+        // 仅当新价已有销量快照时才填月均毛利；否则 HistoryDialog 不渲染那一行
+        profit: newPeriod?.monthlyGrossProfit,
+        profitUp:
+          newPeriod && oldPeriod
+            ? newPeriod.monthlyGrossProfit >= oldPeriod.monthlyGrossProfit
+            : undefined,
+      });
     }
-    return list.sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
-  }, [allRows, curveByCode]);
+    return list; // 后端已按 createdAt DESC
+  }, [allChanges, skuByCode, curveByCode]);
   const historyCount = historyEntries.length;
 
   // 启动 loader
@@ -410,6 +422,7 @@ function ColdPage() {
         row={detailRow}
         curve={detailRow ? curveByCode.get(detailRow.skuCode) ?? null : null}
         diagnosis={detailRow ? diagnoses[detailRow.skuCode] : undefined}
+        changes={detailRow ? allChanges.filter((c) => c.skuCode === detailRow.skuCode) : []}
         open={!!detailRow}
         onOpenChange={(v) => !v && setDetailRow(null)}
         onSubmit={onSubmitPriceChange}

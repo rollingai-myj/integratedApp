@@ -37,13 +37,19 @@ import {
   rowToSku,
   type SKU,
 } from '@/lib/prices/types';
-import type { StoreSkuRow } from '@myj/shared';
+import type { PriceChangeRecord, StoreSkuRow } from '@myj/shared';
 import type { SkuDiagnosis } from '@/lib/prices/diagnosis';
 
 interface Props {
   row: StoreSkuRow | null;
   curve: CurveData | null;          // 已适配好的曲线数据
   diagnosis?: SkuDiagnosis;          // 当前 SKU 的诊断（若有）
+  /**
+   * 当前 SKU 的调价流水（按 createdAt DESC）。
+   * 是"调价记录"的真实数据源 —— 同日多次调价不会被覆盖。父组件按
+   * detailRow.skuCode 过滤后注入；为空数组时不渲染时间线。
+   */
+  changes: PriceChangeRecord[];
   open: boolean;
   onOpenChange: (v: boolean) => void;
   /** 实际触发调价提交。父组件通过 useSubmitPriceChange 注入 */
@@ -186,6 +192,7 @@ export function SkuDetailDialog({
   row,
   curve,
   diagnosis,
+  changes,
   open,
   onOpenChange,
   onSubmit,
@@ -324,33 +331,33 @@ export function SkuDetailDialog({
 
   const unchanged = sku ? Math.abs(newPrice - sku.currentPrice) < 0.01 : true;
 
-  // 调价时间线 — 从 periods 推（相邻段对比月均毛利涨跌）
-  // 新价当下还没销量快照时（hasSalesData=false），月均毛利无意义，
-  // profit/profitUp 置 undefined，渲染时只显示"日期 + 售价 X→Y"
+  // 调价时间线 — 从 ops_store_price_change 流水推
+  //   - 同日多次调价完整保留（早期版本从 periods 反推会因 ON CONFLICT 覆盖丢失）
+  //   - 月均毛利富集：在 curve.periods 找匹配价格的段，只用 hasSalesData=true 的段
+  //   - 新价当下没销量时 profit/profitUp = undefined，渲染时只显示"日期 + 售价 X→Y"
   const periods = curve?.periods;
   const timeline = useMemo(() => {
-    if (!sku || !periods || periods.length < 2) return null;
-    return periods
-      .map((p, i) => {
-        if (i === 0) return null;
-        const prev = periods[i - 1]!;
-        const diffProfit = p.monthlyGrossProfit - prev.monthlyGrossProfit;
+    if (!sku || changes.length === 0) return null;
+    const findPeriod = (price: number) =>
+      periods?.find((p) => Math.abs(p.price - price) < 0.01 && p.hasSalesData);
+    const list = changes
+      .filter((c) => c.oldPrice != null) // 首次定价（无前价）不属于"调价记录"
+      .map((c) => {
+        const newPeriod = findPeriod(c.newPrice);
+        const oldPeriod = findPeriod(c.oldPrice!);
         return {
-          dateLabel: periodLabel(p),
-          from: prev.price,
-          to: p.price,
-          profit: p.hasSalesData ? p.monthlyGrossProfit : undefined,
-          profitUp: p.hasSalesData ? diffProfit >= 0 : undefined,
+          dateLabel: fmtShort(new Date(c.effectiveDate)),
+          from: c.oldPrice!,
+          to: c.newPrice,
+          profit: newPeriod?.monthlyGrossProfit,
+          profitUp:
+            newPeriod && oldPeriod
+              ? newPeriod.monthlyGrossProfit >= oldPeriod.monthlyGrossProfit
+              : undefined,
         };
-      })
-      .filter(Boolean) as Array<{
-      dateLabel: string;
-      from: number;
-      to: number;
-      profit?: number;
-      profitUp?: boolean;
-    }>;
-  }, [sku, periods]);
+      });
+    return list.length > 0 ? list : null;
+  }, [sku, changes, periods]);
 
   if (!sku) return null;
 
