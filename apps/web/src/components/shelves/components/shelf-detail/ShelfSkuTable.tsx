@@ -111,15 +111,20 @@ export const ShelfSkuTable = ({
   };
 
   const subCategories = useMemo(() => {
+    // 排除空 subCategory：当 SKU 的 category_id 仅指 L1 或为 NULL 时 splitCategory
+    // 会给出空字符串；Radix Select 禁止 <SelectItem value="">（空串保留给 placeholder），
+    // 喂进去会 throw "must have a value prop that is not an empty string"。
     const alignedSet = alignedSubCategories ? new Set(alignedSubCategories) : null;
     const seen = new Set<string>();
     const aligned: string[] = [];
     const rest: string[] = [];
     for (const sku of skus) {
-      if (!seen.has(sku.subCategory)) {
-        seen.add(sku.subCategory);
-        if (alignedSet && alignedSet.has(sku.subCategory)) aligned.push(sku.subCategory);
-        else rest.push(sku.subCategory);
+      const sub = sku.subCategory;
+      if (!sub) continue;
+      if (!seen.has(sub)) {
+        seen.add(sub);
+        if (alignedSet && alignedSet.has(sub)) aligned.push(sub);
+        else rest.push(sub);
       }
     }
     return [...aligned, ...rest];

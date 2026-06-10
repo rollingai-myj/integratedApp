@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
 import { config } from '../config/env.js';
 import { AppError, ErrorCodes } from '../lib/errors.js';
@@ -167,7 +168,26 @@ aiRouter.post(
           return;
         }
         // Web ReadableStream → Node Readable → pipe 到 express res
-        Readable.fromWeb(upstream.body as unknown as import('node:stream/web').ReadableStream).pipe(res);
+        //
+        // 必须用 pipeline 而不是 .pipe()：
+        // - upstream.body 在 AbortSignal.timeout 触发或客户端断连时会 emit 'error'
+        // - 旧写法 .pipe() 不转发错误，源流的 'error' 没人监听 → uncaughtException
+        //   → 整个 Node 进程 FATAL 退出（之前线上 15:52:21 那次就是这个原因）
+        // pipeline 会捕获并 reject promise，我们 log 后吞掉（响应已发，没法再写 502）
+        const upstreamBody = Readable.fromWeb(
+          upstream.body as unknown as import('node:stream/web').ReadableStream,
+        );
+        try {
+          await pipeline(upstreamBody, res);
+        } catch (streamErr) {
+          // 已经开始返响应，不能再 res.status() / next(err)，只能记日志
+          logger.warn(
+            { err: streamErr, workflow, path: pathRaw },
+            'dify-proxy stream interrupted (timeout / upstream abort / client close)',
+          );
+          // 兜底确保 socket 关闭（pipeline 失败时 res 一般已经 destroy）
+          if (!res.destroyed) res.destroy();
+        }
       } catch (err) {
         next(err);
       }

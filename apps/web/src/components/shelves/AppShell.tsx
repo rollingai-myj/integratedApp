@@ -5,6 +5,8 @@
  *   - useMe() 校验登录态；未登录 → /login；未选门店 → /select-store
  *   - 把当前 currentStore.code 注入 AppContext（原 repo 的 selectedStore）
  *   - 首次拉一遍 /api/v1/skus 写入内存缓存，让同步的 getStoreSkuData() 能读到
+ *   - 首次拉 /portal/stores 装门店坐标 cache，让 useShelfQuestions /
+ *     useEnvironmentInsight 同步取到 GCJ02 "lng,lat"
  *   - 注入最小 AuthContext，避免任何残留组件挂载时抛错
  */
 import { useEffect, type ReactNode } from 'react';
@@ -16,6 +18,7 @@ import { IOSDevice } from '@/components/IOSDevice';
 import { AppProvider } from '@/components/shelves/contexts/AppContext';
 import { AuthProvider, type AuthUser } from '@/components/shelves/contexts/AuthContext';
 import { loadStoreSkus } from '@/components/shelves/data/skuDataByStore';
+import { loadStoreCoordinates } from '@/components/shelves/data/storeCoordinates';
 
 interface Props {
   children: ReactNode;
@@ -45,6 +48,19 @@ export function ShelvesAppShell({ children, allowNoStore = false }: Props) {
     queryFn: () => loadStoreSkus(storeCode),
     enabled: !!storeCode,
     staleTime: 5 * 60_000,
+  });
+  // 装门店坐标 cache（/portal/stores 一次性给全部可访问门店的 lat/lng/address）；
+  // 必须在用户进 SurveyPage 触发问题生成前装好，否则 getStoreCoordinates 返回
+  // undefined → useShelfQuestions 抛"门店未配置经纬度"。
+  // staleTime 30 分钟够长：门店地址几乎不变，避免反复拉。
+  useQuery({
+    queryKey: ['shelves', 'store-coordinates'],
+    queryFn: async () => {
+      await loadStoreCoordinates();
+      return true;
+    },
+    enabled: !!me?.user,
+    staleTime: 30 * 60_000,
   });
 
   if (meQuery.isLoading) {

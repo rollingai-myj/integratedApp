@@ -77,9 +77,13 @@ export async function listScenes(): Promise<SceneDefinition[]> {
    ORDER BY position_code, display_order, category_name`,
   );
 
-  const byPos = new Map<number, SceneDefinition>();
+  // 同一个 position_code 可对应多个 position_name（如 code 1 = 面包架【常温奶】
+  // + 面包架【烘焙】，code 9 = 日化 + 家杂），所以分组 key 必须是 (code, name) 复合，
+  // 不能只按 code 折叠（否则两条场景会被合成一条）。
+  const byScene = new Map<string, SceneDefinition>();
   for (const r of res.rows) {
-    const existing = byPos.get(r.position_code);
+    const key = `${r.position_code}::${r.position_name}`;
+    const existing = byScene.get(key);
     if (existing) {
       existing.categories.push({
         name: r.category_name,
@@ -87,7 +91,7 @@ export async function listScenes(): Promise<SceneDefinition[]> {
         displayOrder: r.display_order,
       });
     } else {
-      byPos.set(r.position_code, {
+      byScene.set(key, {
         positionCode: r.position_code,
         positionName: r.position_name,
         categories: [
@@ -100,9 +104,9 @@ export async function listScenes(): Promise<SceneDefinition[]> {
       });
     }
   }
-  return Array.from(byPos.values()).sort(
-    (a, b) => a.positionCode - b.positionCode,
-  );
+  // SQL 已经按 position_code ASC, display_order ASC 排好，Map 插入序即等于
+  // 「场景的展示顺序」，直接转数组保持插入序。
+  return Array.from(byScene.values());
 }
 
 // ---- 调改次数 ------------------------------------------------------------

@@ -46,7 +46,10 @@ export interface ProductRow {
   widthMm: number | null;
   heightMm: number | null;
   categoryId: string | null;
+  /** dim_category 树递归算出的 "L1[/L2[/L3]]" 路径；DB 不存，查询时用 fn_category_path 实时拼 */
   categoryPath: string | null;
+  /** 商品所属系列（如"经典系列"）。当前业务不消费，仅占位 */
+  series: string | null;
   isNewProduct: boolean;
   isPrivateLabel: boolean;
   wholesalePrice: number | null;
@@ -440,7 +443,8 @@ export async function listProducts(args: {
 
   const res = await query<ProductDbRow>(
     `SELECT id, sku_code, product_name, brand, spec, unit, shelf_life_days,
-            length_mm, width_mm, height_mm, category_id, category_path,
+            length_mm, width_mm, height_mm, category_id,
+            fn_category_path(category_id) AS category_path, series,
             is_new_product, is_private_label, wholesale_price, suggested_retail_price,
             introduced_at, official_image_url, status
        FROM dim_product
@@ -464,7 +468,9 @@ interface ProductDbRow {
   width_mm: number | null;
   height_mm: number | null;
   category_id: string | null;
+  /** fn_category_path(category_id) 实时计算结果；dim_product 表里没有这列 */
   category_path: string | null;
+  series: string | null;
   is_new_product: boolean;
   is_private_label: boolean;
   wholesale_price: number | null;
@@ -488,6 +494,7 @@ function mapProduct(r: ProductDbRow): ProductRow {
     heightMm: r.height_mm,
     categoryId: r.category_id,
     categoryPath: r.category_path,
+    series: r.series,
     isNewProduct: r.is_new_product,
     isPrivateLabel: r.is_private_label,
     wholesalePrice: r.wholesale_price,
@@ -519,7 +526,7 @@ export async function listStoreSkus(args: {
   }
   if (args.categoryPath) {
     params.push(args.categoryPath);
-    extra.push(`p.category_path = $${params.length}`);
+    extra.push(`fn_category_path(p.category_id) = $${params.length}`);
   }
   const sql = `
     WITH latest_snap AS (
@@ -535,7 +542,8 @@ export async function listStoreSkus(args: {
       SELECT DISTINCT product_id FROM ops_store_price_change WHERE store_id = $1
     )
     SELECT p.id, p.sku_code, p.product_name, p.brand, p.spec, p.unit, p.shelf_life_days,
-           p.length_mm, p.width_mm, p.height_mm, p.category_id, p.category_path,
+           p.length_mm, p.width_mm, p.height_mm, p.category_id,
+           fn_category_path(p.category_id) AS category_path, p.series,
            p.is_new_product, p.is_private_label, p.wholesale_price, p.suggested_retail_price,
            p.introduced_at, p.official_image_url, p.status,
            ls.retail_price, ls.original_price,
@@ -588,7 +596,8 @@ export interface SkuImportRow {
   brand?: string;
   spec?: string;
   unit?: string;
-  categoryPath?: string;
+  /** 商品所属系列；不参与业务逻辑，仅作字段位 */
+  series?: string;
   wholesalePrice?: number;
   retailPrice?: number;
   originalPrice?: number;
@@ -622,14 +631,14 @@ export async function importStoreSkus(
       try {
         // upsert dim_product
         const prod = await client.query<{ id: string }>(
-          `INSERT INTO dim_product (sku_code, product_name, brand, spec, unit, category_path, wholesale_price)
+          `INSERT INTO dim_product (sku_code, product_name, brand, spec, unit, series, wholesale_price)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (sku_code) WHERE deleted_at IS NULL DO UPDATE
              SET product_name = COALESCE(EXCLUDED.product_name, dim_product.product_name),
                  brand = COALESCE(EXCLUDED.brand, dim_product.brand),
                  spec = COALESCE(EXCLUDED.spec, dim_product.spec),
                  unit = COALESCE(EXCLUDED.unit, dim_product.unit),
-                 category_path = COALESCE(EXCLUDED.category_path, dim_product.category_path),
+                 series = COALESCE(EXCLUDED.series, dim_product.series),
                  wholesale_price = COALESCE(EXCLUDED.wholesale_price, dim_product.wholesale_price),
                  updated_at = now()
            RETURNING id`,
@@ -639,7 +648,7 @@ export async function importStoreSkus(
             r.brand ?? null,
             r.spec ?? null,
             r.unit ?? null,
-            r.categoryPath ?? null,
+            r.series ?? null,
             r.wholesalePrice ?? null,
           ],
         );
@@ -706,7 +715,7 @@ export async function queryCompetitors(args: {
   if (args.byCategoryPath) {
     params.push(args.byCategoryPath);
     filters.push(
-      `EXISTS (SELECT 1 FROM dim_product p WHERE p.sku_code = cp.mapped_sku_code AND p.category_path = $${params.length})`,
+      `EXISTS (SELECT 1 FROM dim_product p WHERE p.sku_code = cp.mapped_sku_code AND fn_category_path(p.category_id) = $${params.length})`,
     );
   }
   if (args.bySkuCodes && args.bySkuCodes.length > 0) {

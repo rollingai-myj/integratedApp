@@ -184,12 +184,12 @@ const PhotoPage = () => {
     });
 
     // 诊断 — 完成后立即持久化（即使已退出页面也写入草稿）
-    runSceneDiagnosis(selectedStore, shelfId, photos[0].url, skus, position)
+    runSceneDiagnosis(selectedStore, shelfId, sceneId, photos[0].url, skus, position)
       .catch(() => null)
       .then((diag) => { setDiagnosis(diag); patchDraft({ diagnosis: diag }); });
 
     // 选品 — 同上
-    runSceneSelection(selectedStore, shelfId, skus, position)
+    runSceneSelection(selectedStore, shelfId, sceneId, skus, position)
       .catch(() => null)
       .then((strat) => { setStrategy(strat); patchDraft({ strategy: strat }); });
   };

@@ -19,6 +19,7 @@ import { isRemoveAction } from '@/components/shelves/lib/strategyAction';
 import { difyProxyUrl } from '@/components/shelves/lib/difyProxyUrl';
 import { readWorkflowFinished } from '@/components/shelves/lib/difyWorkflowStream';
 import { getDifyUser } from '@/components/shelves/lib/difyUser';
+import { serializeDifyInputs } from '@/components/shelves/lib/difyInputs';
 import { apiFetch } from '@/components/shelves/lib/api-client';
 import { filterPromoBySkus } from '@/components/shelves/services/difyVirtualShelfApi';
 import { saveSceneRuntime } from '@/components/shelves/services/sceneRuntime';
@@ -175,7 +176,7 @@ async function runOneCategory(
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ inputs, response_mode: 'streaming', user: getDifyUser() }),
+    body: JSON.stringify({ inputs: serializeDifyInputs(inputs), response_mode: 'streaming', user: getDifyUser() }),
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');

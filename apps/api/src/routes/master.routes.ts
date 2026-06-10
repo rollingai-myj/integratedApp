@@ -174,7 +174,7 @@ const skuImportSchema = z.object({
       brand: z.string().optional(),
       spec: z.string().optional(),
       unit: z.string().optional(),
-      categoryPath: z.string().optional(),
+      series: z.string().optional(),
       wholesalePrice: z.number().optional(),
       retailPrice: z.number().optional(),
       originalPrice: z.number().optional(),

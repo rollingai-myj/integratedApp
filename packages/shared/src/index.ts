@@ -62,6 +62,12 @@ export interface StoreRef {
   city?: string | null;
   /** 是否项目店（V029 起）；项目店有定制陈列规则，Dify 工作流分支 */
   isProjectStore?: boolean;
+  /** GCJ02 纬度；选品/价盘的"周边商圈洞察"调高德 v5 around 必填 */
+  latitude?: number | null;
+  /** GCJ02 经度；同上 */
+  longitude?: number | null;
+  /** 详细地址；Dify insight 工作流 prompt 也会用 */
+  address?: string | null;
 }
 
 export type ModuleKey = 'shelves' | 'prices' | 'posters' | 'admin';
@@ -180,7 +186,10 @@ export interface ProductRow {
   widthMm: number | null;
   heightMm: number | null;
   categoryId: string | null;
+  /** dim_category 树递归算出的 "L1[/L2[/L3]]"；后端 fn_category_path() 实时计算 */
   categoryPath: string | null;
+  /** 商品所属系列（如"经典系列"）；当前不参与业务逻辑，仅占位 */
+  series: string | null;
   isNewProduct: boolean;
   isPrivateLabel: boolean;
   wholesalePrice: number | null;

@@ -10,6 +10,7 @@ import { padSkuCode } from "@/components/shelves/lib/skuCode";
 import { difyProxyUrl } from "@/components/shelves/lib/difyProxyUrl";
 import { getAuthHeaders, apiFetch } from "@/components/shelves/lib/api-client";
 import { getDifyUser } from "@/components/shelves/lib/difyUser";
+import { serializeDifyInputs } from "@/components/shelves/lib/difyInputs";
 
 export interface DifyWorkflowResponse {
   workflow_run_id: string;
@@ -219,7 +220,7 @@ export async function generateVirtualShelfFromDify(
         "Content-Type": "application/json",
         ...getAuthHeaders(),
       },
-      body: JSON.stringify({ inputs, response_mode: "streaming", user: getDifyUser() }),
+      body: JSON.stringify({ inputs: serializeDifyInputs(inputs), response_mode: "streaming", user: getDifyUser() }),
       signal: controller.signal,
     });
   } catch (err: any) {

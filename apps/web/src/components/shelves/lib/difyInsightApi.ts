@@ -3,6 +3,7 @@ import { difyProxyUrl } from "./difyProxyUrl";
 import { getAuthHeaders } from "@/components/shelves/lib/api-client";
 import { readWorkflowFinished } from "./difyWorkflowStream";
 import { getDifyUser } from "./difyUser";
+import { serializeDifyInputs } from "./difyInputs";
 
 export interface InsightQuestion {
   id: number;
@@ -86,10 +87,10 @@ export async function runEnvironmentInsightWorkflow(
     },
     signal: ctrl.signal,
     body: JSON.stringify({
-      inputs: {
+      inputs: serializeDifyInputs({
         competitor: { items: competitor },
         crowdSource: { items: crowdSource },
-      },
+      }),
       response_mode: "streaming",
       user: getDifyUser(),
     }),

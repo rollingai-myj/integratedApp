@@ -3,7 +3,7 @@ import { alignShelf, type DiagnosisResult } from "@/components/shelves/services/
 import { analyzeSelection, type StrategyResult } from "@/components/shelves/services/difyApi";
 import { getShelfSurveyAnswers } from "@/components/shelves/services/shelfSurvey";
 import { getEnvironmentInsight } from "@/components/shelves/services/storeEnvironment";
-import type { PlanPosition } from "@/components/shelves/services/scenes";
+import { getSceneBenchmark, type PlanPosition } from "@/components/shelves/services/scenes";
 
 function fmt(s: SkuRow) {
   const sales30 = parseFloat(s.sales30d || "0") || 0;
@@ -29,17 +29,32 @@ export function sceneSkus(allStoreSkus: SkuRow[], position: PlanPosition | null)
   return allStoreSkus.filter((s) => cats.has(s.majorCategory));
 }
 
-/** 诊断（DIFY_KEY_ALIGN）：传首图 + 场景 SKU */
+/**
+ * 标杆店 SKU 数据：后端 fn computeBenchmarkForScene 算的加权平均，结构跟 fmt() 输出一致。
+ * 包成 Dify 期望的 { items: [...] } shape。失败/空数据时 null（调用方按 undefined 兜底）。
+ */
+async function fetchBenchmarkItems(sceneId: number): Promise<{ items: unknown[] } | undefined> {
+  const items = await getSceneBenchmark(sceneId).catch(() => []);
+  if (items.length === 0) return undefined;
+  return { items };
+}
+
+/** 诊断（DIFY_KEY_ALIGN）：传首图 + 场景 SKU + 标杆店 SKU */
 export async function runSceneDiagnosis(
   storeId: string,
   shelfId: string,
+  sceneId: number,
   photoUrl: string,
   skus: SkuRow[],
   position: PlanPosition | null,
 ): Promise<DiagnosisResult | null> {
-  const qa = (await getShelfSurveyAnswers(storeId, shelfId)) ?? [];
+  const [qa, benchmark] = await Promise.all([
+    getShelfSurveyAnswers(storeId, shelfId).then((r) => r ?? []).catch(() => []),
+    fetchBenchmarkItems(sceneId),
+  ]);
   const res = await alignShelf(photoUrl, {
     sku_data: { items: skus.map(fmt) },
+    benchmark_sku_data: benchmark,
     question_answers: qa.length ? { items: qa.map((x) => ({ question: x.question, answer: x.answer })) } : undefined,
     major_category: position?.categories?.[0] ?? "",
     mid_category: [...new Set(skus.map((s) => s.midCategory).filter(Boolean))].join(","),
@@ -52,12 +67,14 @@ export async function runSceneDiagnosis(
 export async function runSceneSelection(
   storeId: string,
   shelfId: string,
+  sceneId: number,
   skus: SkuRow[],
   position: PlanPosition | null,
 ): Promise<StrategyResult | null> {
-  const [qaRaw, env] = await Promise.all([
+  const [qaRaw, env, benchmark] = await Promise.all([
     getShelfSurveyAnswers(storeId, shelfId).catch(() => []),
     getEnvironmentInsight(storeId).catch(() => null),
+    fetchBenchmarkItems(sceneId),
   ]);
   const qa = qaRaw ?? [];
   const questionAnswersJson = qa.length
@@ -68,7 +85,7 @@ export async function runSceneSelection(
     position?.categories?.[0] ?? "",
     [...new Set(skus.map((s) => s.subCategory).filter(Boolean))].join(","),
     [...new Set(skus.map((s) => s.midCategory).filter(Boolean))].join(","),
-    undefined,
+    benchmark,
     undefined,
     questionAnswersJson,
     undefined,
