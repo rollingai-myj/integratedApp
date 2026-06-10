@@ -3,12 +3,16 @@
  *
  * - 应用全局壳：HTML 文档、字体、全局样式
  * - 应用全局 Provider：React Query
+ * - 全局 <Toaster>（sonner）：所有模块的 toast()/toastSuccess() 调用都靠它渲染；
+ *   早期只有 prices.cold 局部挂了一个，导致 shelves/posters 的 toast 全部"静默"，
+ *   用户点保存看不到任何反馈，以为没生效。
  * - <Outlet /> 渲染子路由
  */
 import { createRootRoute, Outlet, Scripts } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
+import { Toaster } from '@/components/ui/sonner';
 import '../styles.css';
 
 export const Route = createRootRoute({
@@ -44,6 +48,7 @@ function RootComponent() {
     <RootDocument>
       <QueryClientProvider client={qc}>
         <Outlet />
+        <Toaster position="top-center" richColors />
       </QueryClientProvider>
     </RootDocument>
   );

@@ -58,6 +58,10 @@ export interface StoreRef {
   name: string;
   /** 是否为该用户的"默认门店"（无明确指定时进入这家） */
   isPrimary?: boolean;
+  /** 城市（V029 起），如 '东莞'；Dify ALIGN/SELECTION 工作流 prompt 用 */
+  city?: string | null;
+  /** 是否项目店（V029 起）；项目店有定制陈列规则，Dify 工作流分支 */
+  isProjectStore?: boolean;
 }
 
 export type ModuleKey = 'shelves' | 'prices' | 'posters' | 'admin';

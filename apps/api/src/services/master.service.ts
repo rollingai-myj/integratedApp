@@ -239,13 +239,30 @@ export async function upsertStore(
 
 // ---- 周边洞察 -------------------------------------------------------------
 
+export interface InsightQuestion {
+  id: number;
+  direction: string;
+  context: string;
+  question: string;
+  options: string[];
+}
+
 export interface EnvironmentInsight {
   storeId: string;
+  // 基础结构化字段（M0 已有）
   city: string | null;
   mainDemographic: string | null;
   consumptionLevel: string | null;
   competitorCount: number | null;
   populationDensity: string | null;
+  // V025 加：原 skuSelection repo 的扩展字段
+  category: string | null;
+  crowdSourceAnalysis: string | null;
+  competitorAnalysis: string | null;
+  topCompetitors: string[];
+  questions: InsightQuestion[];
+  reportMarkdown: string | null;
+  // 兜底 + 元数据
   insightData: Record<string, unknown>;
   generatedAt: string;
   source: string | null;
@@ -261,12 +278,20 @@ export async function getEnvironmentInsight(
     consumption_level: string | null;
     competitor_count: number | null;
     population_density: string | null;
+    category: string | null;
+    crowd_source_analysis: string | null;
+    competitor_analysis: string | null;
+    top_competitors: unknown;
+    questions: unknown;
+    report_markdown: string | null;
     insight_data: Record<string, unknown>;
     generated_at: string;
     source: string | null;
   }>(
     `SELECT store_id, city, main_demographic, consumption_level, competitor_count,
-            population_density, insight_data, generated_at, source
+            population_density, category, crowd_source_analysis, competitor_analysis,
+            top_competitors, questions, report_markdown,
+            insight_data, generated_at, source
        FROM store_environment_insights
       WHERE store_id = $1
       LIMIT 1`,
@@ -281,6 +306,16 @@ export async function getEnvironmentInsight(
     consumptionLevel: r.consumption_level,
     competitorCount: r.competitor_count,
     populationDensity: r.population_density,
+    category: r.category,
+    crowdSourceAnalysis: r.crowd_source_analysis,
+    competitorAnalysis: r.competitor_analysis,
+    topCompetitors: Array.isArray(r.top_competitors)
+      ? (r.top_competitors as string[])
+      : [],
+    questions: Array.isArray(r.questions)
+      ? (r.questions as InsightQuestion[])
+      : [],
+    reportMarkdown: r.report_markdown,
     insightData: r.insight_data,
     generatedAt: r.generated_at,
     source: r.source,
@@ -293,6 +328,12 @@ export interface UpsertInsightInput {
   consumptionLevel?: string | null;
   competitorCount?: number | null;
   populationDensity?: string | null;
+  category?: string | null;
+  crowdSourceAnalysis?: string | null;
+  competitorAnalysis?: string | null;
+  topCompetitors?: string[];
+  questions?: InsightQuestion[];
+  reportMarkdown?: string | null;
   insightData?: Record<string, unknown>;
   source?: string | null;
 }
@@ -302,17 +343,29 @@ export async function upsertEnvironmentInsight(
   input: UpsertInsightInput,
   generatedBy: string,
 ): Promise<EnvironmentInsight> {
+  // 仅更新调用方传了的字段（partial upsert）—— 让 InfoPage 分段保存（环境段 / 问答段
+  // / 货架段）不会互相覆盖。
+  const existing = await getEnvironmentInsight(storeId);
   await query(
     `INSERT INTO store_environment_insights
        (store_id, city, main_demographic, consumption_level, competitor_count,
-        population_density, insight_data, source, generated_by, generated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, now())
+        population_density, category, crowd_source_analysis, competitor_analysis,
+        top_competitors, questions, report_markdown,
+        insight_data, source, generated_by, generated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12,
+             $13::jsonb, $14, $15, now())
      ON CONFLICT (store_id) DO UPDATE
        SET city = EXCLUDED.city,
            main_demographic = EXCLUDED.main_demographic,
            consumption_level = EXCLUDED.consumption_level,
            competitor_count = EXCLUDED.competitor_count,
            population_density = EXCLUDED.population_density,
+           category = EXCLUDED.category,
+           crowd_source_analysis = EXCLUDED.crowd_source_analysis,
+           competitor_analysis = EXCLUDED.competitor_analysis,
+           top_competitors = EXCLUDED.top_competitors,
+           questions = EXCLUDED.questions,
+           report_markdown = EXCLUDED.report_markdown,
            insight_data = EXCLUDED.insight_data,
            source = EXCLUDED.source,
            generated_by = EXCLUDED.generated_by,
@@ -320,13 +373,19 @@ export async function upsertEnvironmentInsight(
            updated_at = now()`,
     [
       storeId,
-      input.city ?? null,
-      input.mainDemographic ?? null,
-      input.consumptionLevel ?? null,
-      input.competitorCount ?? null,
-      input.populationDensity ?? null,
-      JSON.stringify(input.insightData ?? {}),
-      input.source ?? 'manual',
+      input.city !== undefined ? input.city : (existing?.city ?? null),
+      input.mainDemographic !== undefined ? input.mainDemographic : (existing?.mainDemographic ?? null),
+      input.consumptionLevel !== undefined ? input.consumptionLevel : (existing?.consumptionLevel ?? null),
+      input.competitorCount !== undefined ? input.competitorCount : (existing?.competitorCount ?? null),
+      input.populationDensity !== undefined ? input.populationDensity : (existing?.populationDensity ?? null),
+      input.category !== undefined ? input.category : (existing?.category ?? null),
+      input.crowdSourceAnalysis !== undefined ? input.crowdSourceAnalysis : (existing?.crowdSourceAnalysis ?? null),
+      input.competitorAnalysis !== undefined ? input.competitorAnalysis : (existing?.competitorAnalysis ?? null),
+      JSON.stringify(input.topCompetitors ?? existing?.topCompetitors ?? []),
+      JSON.stringify(input.questions ?? existing?.questions ?? []),
+      input.reportMarkdown !== undefined ? input.reportMarkdown : (existing?.reportMarkdown ?? null),
+      JSON.stringify(input.insightData ?? existing?.insightData ?? {}),
+      input.source ?? existing?.source ?? 'manual',
       generatedBy,
     ],
   );

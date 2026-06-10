@@ -11,7 +11,7 @@
  */
 import { createFileRoute } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Toaster, toast } from 'sonner';
+import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -298,7 +298,6 @@ function ColdPage() {
   return (
     <IOSDevice>
     <div className="min-h-screen pb-24">
-      <Toaster position="top-center" offset={72} richColors />
       <BrandHeader showBack />
 
       <div className="px-4 pb-1 pt-4">

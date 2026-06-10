@@ -43,8 +43,10 @@ export function createApp(): Express {
   );
 
   // 3) 解析 body / cookie
-  app.use(express.json({ limit: '2mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+  //    海报源图（base64 data URL）+ 选品货架照片（base64）都会走 JSON body，
+  //    一张 ~3-5MB 的 JPEG base64 后会接近 7MB，所以放宽到 12MB。
+  app.use(express.json({ limit: '12mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '12mb' }));
   app.use(cookieParser());
 
   // 4) 业务路由
