@@ -10,6 +10,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { PosterApp } from '@/components/posters/App';
+import { BrandHeader } from '@/components/posters/BrandHeader';
 import { setHostContext } from '@/components/posters/host-bridge';
 import { authClient } from '@/components/posters/auth-client';
 import { IOSDevice } from '@/components/IOSDevice';
@@ -71,9 +72,15 @@ function PostersHostPage() {
   // PosterApp 原 standalone repo 假设父容器铺满视口（自带 width/height: 100%），
   // 嵌到统一应用后必须给它一个有明确尺寸的壳，否则 100% × 100% 解析成 0 → 空白。
   // 沿用其它模块的 IOSDevice 容器（390 设计稿 + zoom 等比放大），视觉与首页一致。
+  //
+  // BrandHeader 用 absolute 浮在 PosterApp 之上（z-30）而非挤占 layout：PosterApp 是
+  // 黑/红全屏 phone UI，header 是顶部胶囊浮层，红底铺到屏幕最顶不被推下。
   return (
     <IOSDevice>
-      <PosterApp />
+      <div className="relative h-full">
+        <PosterApp />
+        <BrandHeader backTo="/" />
+      </div>
     </IOSDevice>
   );
 }

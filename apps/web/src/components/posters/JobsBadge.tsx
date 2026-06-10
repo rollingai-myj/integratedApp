@@ -7,6 +7,7 @@ import { TOKENS } from "./tokens";
 import { Icon } from "./icons";
 import { useJobs, type SessionView, type Job } from "./JobsContext";
 import { saveSession, isSessionSaved } from "./sessionHistory";
+import { useIOSDeviceZoom } from "@/components/IOSDevice";
 
 /**
  * SessionDrawer / preview / RequeueSheet 都用 position:fixed 顶满视口。
@@ -121,6 +122,14 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
   const [longPressUrls, setLongPressUrls] = React.useState<string[] | null>(null);
   const [downloading, setDownloading] = React.useState(false);
 
+  // 抽屉 portal 到 body 后跳出了 IOSDevice 的 zoom 容器，里面字号/padding 都是裸 px，
+  // 视觉上比 phone 内部（被 zoom 3x+ 放大）小一截。把 IOSDevice 的 zoom 加回到抽屉
+  // inner 上，让视觉等比。补偿：maxWidth 用设计稿宽度、height 用 (92/zoom)vh，
+  // 保证 zoom 后视觉宽度 = 视口宽 / 视觉高度 = 92vh。
+  const ctxZoom = useIOSDeviceZoom();
+  const zoom = ctxZoom?.zoom ?? 1;
+  const drawerMaxWidth = ctxZoom?.designWidth ?? 480;
+
   const successful = session.jobs.filter(j => !!j.result_image_url);
   const startLabel = new Date(session.startedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
   const durationLabel = formatDuration(Date.now() - session.startedAt);
@@ -187,7 +196,10 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
       display: "flex", alignItems: "flex-end", justifyContent: "center",
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: TOKENS.bg, width: "100%", maxWidth: 480, height: "92vh",
+        background: TOKENS.bg, width: "100%",
+        maxWidth: drawerMaxWidth,
+        height: `${92 / zoom}vh`,
+        zoom,
         borderRadius: "24px 24px 0 0",
         padding: "20px 18px 0",
         display: "flex", flexDirection: "column",
