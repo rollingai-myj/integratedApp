@@ -57,6 +57,7 @@ function PricesHomePage() {
     <div className="min-h-full bg-background">
       <BrandHeader backTo="/" />
       <main className="px-4 py-5 pb-8">
+
         <h1 className="text-lg font-semibold text-foreground">请选择场景</h1>
 
         {scenesQuery.isLoading ? (
