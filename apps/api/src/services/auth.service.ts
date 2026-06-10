@@ -98,14 +98,17 @@ export async function loginWithPassword(args: {
     throw new AppError(401, ErrorCodes.UNAUTHENTICATED, '账号或密码不正确');
   }
 
-  // 取出主店作为默认 active_store
-  const primaryStoreRes = await query<{ store_id: string }>(
-    `SELECT store_id FROM user_stores
-     WHERE user_id = $1 AND is_primary = TRUE
-     LIMIT 1`,
+  // 决策（2026-06-10）：与飞书登录统一——单店直接进入，多店落到 null
+  // 让前端 /select-store 选店；这样多店账号每次登录都能选店。
+  const storeCountRes = await query<{ count: string; primary_id: string | null }>(
+    `SELECT COUNT(*)::text AS count,
+            (SELECT store_id FROM user_stores WHERE user_id = $1 LIMIT 1) AS primary_id
+       FROM user_stores
+      WHERE user_id = $1`,
     [user.id],
   );
-  const activeStoreId = primaryStoreRes.rows[0]?.store_id ?? null;
+  const storeCount = Number(storeCountRes.rows[0]?.count ?? 0);
+  const activeStoreId = storeCount === 1 ? storeCountRes.rows[0]?.primary_id ?? null : null;
 
   const { token, tokenHash } = issueToken();
   const ttlSec = config.SESSION_TTL_SECONDS;
@@ -366,10 +369,11 @@ function pickCurrentStore(
     const match = stores.find((s) => s.id === sessionStoreId);
     if (match) return match;
   }
-  // 只回退到 primary：保证普通账号（user_stores 里有 is_primary 记录）登录后默认进自家门店。
-  // 不再 fallback 到 stores[0]：超管所有门店都是 isPrimary=false，登录后 currentStore 保持 null，
-  // 前端据此跳到 /select-store 选店页。
-  return stores.find((s) => s.isPrimary) ?? null;
+  // session.active_store_id 为 null 的场景：超管首登（user_stores 为空）、飞书/legacy
+  // 多店账号登录（loginWith* 故意不写）、超管手动 user_stores=NULL。
+  // 都让前端通过 currentStore=null + stores>0 跳到 /select-store 选店页。
+  // 不 fallback 到 stores[0]，避免"被默认选了一家但用户不知道"。
+  return null;
 }
 
 function computeModules(roles: string[]): ModuleKey[] {
