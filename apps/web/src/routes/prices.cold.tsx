@@ -59,7 +59,11 @@ export const Route = createFileRoute('/prices/cold')({
     meta: [
       { title: '冷藏品价盘分析 · 美宜佳' },
       { name: 'description', content: '美宜佳冷藏品价格诊断、调整与效果追踪' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1, maximum-scale=1' },
+      {
+        name: 'viewport',
+        content:
+          'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no',
+      },
     ],
   }),
 });
