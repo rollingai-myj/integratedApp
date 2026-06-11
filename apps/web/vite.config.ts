@@ -6,6 +6,9 @@ import { tanstackStart } from '@tanstack/react-start/plugin/vite';
 
 // https://tanstack.com/start
 export default defineConfig({
+  // 环境变量统一从仓库根 .env 读 —— 单一事实源
+  // Vite 只会暴露 VITE_* 前缀变量到 import.meta.env,后端密钥不会泄露到 bundle
+  envDir: '../..',
   plugins: [
     tsconfigPaths({ projects: ['./tsconfig.json'] }),
     tanstackStart({
