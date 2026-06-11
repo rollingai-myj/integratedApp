@@ -20,6 +20,8 @@ export type SessionHistory = {
   endedAt: number;
   total: number;             // including failed jobs across all batches
   items: SessionHistoryItem[]; // successful posters only
+  /** 写入时当前 currentStore.id。销量跟踪 tab 按当前 store 过滤；老数据为空。 */
+  storeId?: string | null;
 };
 
 function migrateV1IfNeeded() {

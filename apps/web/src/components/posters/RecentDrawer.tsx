@@ -5,8 +5,10 @@ import { loadRecent, removeRecent, countThisWeek, type RecentPoster } from './re
 import { loadSessionHistory, removeSession, type SessionHistory } from './sessionHistory';
 import { saveImages } from './lib/download';
 import { LongPressGallery } from './LongPressGallery';
+import { SalesTrackingView } from './SalesTrackingView';
+import { getHostContext } from './host-bridge';
 
-type Tab = 'single' | 'session';
+type Tab = 'single' | 'session' | 'sales-tracking';
 
 export function RecentDrawer({ accent, onClose }: { accent: string; onClose: () => void }) {
   const [tab, setTab] = React.useState<Tab>('session');
@@ -84,7 +86,11 @@ export function RecentDrawer({ accent, onClose }: { accent: string; onClose: () 
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 12, background: '#f3f4f6', padding: 3, borderRadius: 10 }}>
-          {([['session', '按组'], ['single', '单张']] as Array<[Tab, string]>).map(([id, label]) => {
+          {([
+            ['session', '按组'],
+            ['single', '单张'],
+            ['sales-tracking', '销量跟踪'],
+          ] as Array<[Tab, string]>).map(([id, label]) => {
             const active = tab === id;
             return (
               <button key={id} onClick={() => { setTab(id); setEditing(false); }} style={{
@@ -100,7 +106,7 @@ export function RecentDrawer({ accent, onClose }: { accent: string; onClose: () 
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-          {tab === 'single' ? (
+          {tab === 'single' && (
             recent.length === 0 ? (
               <EmptyState text="还没做过单张海报" />
             ) : (
@@ -122,7 +128,8 @@ export function RecentDrawer({ accent, onClose }: { accent: string; onClose: () 
                 ))}
               </div>
             )
-          ) : (
+          )}
+          {tab === 'session' && (
             sessions.length === 0 ? (
               <EmptyState text="还没保存按组记录。生成完后点「保存到历史」就能存下来。" />
             ) : (
@@ -135,6 +142,14 @@ export function RecentDrawer({ accent, onClose }: { accent: string; onClose: () 
                 ))}
               </div>
             )
+          )}
+          {tab === 'sales-tracking' && (
+            <SalesTrackingView
+              accent={accent}
+              sessions={sessions}
+              currentStoreId={getHostContext()?.storeId ?? null}
+              onPreviewPoster={(url) => setPreviewUrl(url)}
+            />
           )}
         </div>
 
