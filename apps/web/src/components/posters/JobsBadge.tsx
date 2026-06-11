@@ -7,6 +7,7 @@ import { TOKENS } from "./tokens";
 import { Icon } from "./icons";
 import { useJobs, type SessionView, type Job } from "./JobsContext";
 import { saveSession, isSessionSaved } from "./sessionHistory";
+import { getHostContext } from "./host-bridge";
 import { useIOSDeviceZoom } from "@/components/IOSDevice";
 
 /**
@@ -146,6 +147,8 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
       startedAt: session.startedAt,
       endedAt: Date.now(),
       total: session.total,
+      // 落 storeId：销量跟踪 tab 据此过滤，确保 A 店做的 SKU 不会在 B 店销量页冒出来
+      storeId: getHostContext()?.storeId ?? null,
       items: successful.map(j => ({
         imageUrl: j.result_image_url!,
         copy: j.params?.copy,
