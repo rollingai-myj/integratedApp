@@ -128,6 +128,14 @@
     font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
       "Hiragino Sans GB", "Microsoft YaHei", "SF Pro Text", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    /* 视口锁定：所有路由都被 IOSDevice 套了内部 overflow-y-auto 的滚动容器，
+       body 本身不该再产生任何方向的滚动 / 回弹。
+       不锁的话 iOS Safari 会让整页可以上下左右拖动偏离原视图。 */
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    margin: 0;
   }
   .tabular { font-variant-numeric: tabular-nums; }
 }

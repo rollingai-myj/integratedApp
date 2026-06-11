@@ -22,7 +22,11 @@ export const Route = createFileRoute('/posters/')({
     meta: [
       { title: '活动海报 · 美宜佳' },
       { name: 'description', content: 'AI 生成活动促销海报' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1, maximum-scale=1' },
+      {
+        name: 'viewport',
+        content:
+          'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no',
+      },
     ],
   }),
 });
