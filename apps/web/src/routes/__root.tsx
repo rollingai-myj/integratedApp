@@ -14,6 +14,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Toaster } from '@/components/ui/sonner';
 import '../styles.css';
+import stylesCssUrl from '../styles.css?url';
 
 export const Route = createRootRoute({
   head: () => ({
@@ -26,7 +27,10 @@ export const Route = createRootRoute({
         content: '美宜佳门店助手统一应用：货盘选品、价盘管理、活动海报。',
       },
     ],
-    links: [{ rel: 'icon', href: '/favicon.ico' }],
+    links: [
+      { rel: 'icon', href: '/favicon.ico' },
+      { rel: 'stylesheet', href: stylesCssUrl },
+    ],
   }),
   component: RootComponent,
 });
@@ -57,7 +61,9 @@ function RootComponent() {
 function RootDocument({ children }: { children: ReactNode }) {
   return (
     <html lang="zh-CN">
-      <head />
+      <head>
+        <link rel="stylesheet" href={stylesCssUrl} />
+      </head>
       <body>
         {children}
         <Scripts />

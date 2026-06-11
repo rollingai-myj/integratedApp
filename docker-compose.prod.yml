@@ -12,9 +12,14 @@
 #   - 不暴露 api/web 直连端口(只通过 nginx 走外网)
 #   - nginx web upstream 切到 srvx 的 3000 端口
 #   - postgres 不启动(profile=dev,生产用 RDS)
+#   - nginx 端口由 base compose WEB_PORT 环境变量控制(默认 8080,生产 8085)
 #
 # 所有密钥从服务器 .env.production 由 --env-file 注入到 compose process env,
 # 再由 env_file: .env.production 进容器(deploy.sh 会确保 .env.production 存在)
+#
+# 注意:此文件不使用 Docker Compose 的 !reset 标签(服务器 v2.27.0 兼容性问题),
+# !reset 对空列表 [] 可正常工作,但对非空列表会丢弃数据。
+# ports/volumes/depends_on 清空用 !reset [],nginx 端口改为 base compose 的 WEB_PORT 控制。
 # =============================================================================
 
 services:
@@ -72,7 +77,6 @@ services:
     environment:
       # 生产 web 跑在 srvx 的 3000 端口(dev 是 vite dev 的 5173)
       WEB_UPSTREAM_PORT: '3000'
-    ports: !reset
-      # 宿主机暴露端口由 .env.production 的 WEB_PORT 控制(默认 8088)
-      # 边缘 Caddy 反代 https://YOUR_DOMAIN → 127.0.0.1:${WEB_PORT}
-      - '${WEB_PORT:-8088}:80'
+    # 端口不由这里覆盖,改由 base compose 的 WEB_PORT 环境变量控制:
+    #   dev .env 无 WEB_PORT → 默认 8080
+    #   生产 .env.production WEB_PORT=8085 → 监听 8085
