@@ -27,7 +27,15 @@ type BatchItem = {
 import { STYLES } from '../styles';
 
 const MAX_ITEMS = 10;
-const BG_PHOTO_KEY = 'myj_bg_photo';
+// 按 store 隔离的背景照 key：v030 之前所有店共用 'myj_bg_photo'（A 店上传 B 店能看到），
+// 现在改成 myj_bg_photo_<storeId>。模块顶部一次性清掉老全局 key 避免占空间。
+const BG_PHOTO_KEY_PREFIX = 'myj_bg_photo_';
+const LEGACY_BG_PHOTO_KEY = 'myj_bg_photo';
+const bgPhotoKey = (storeId: string | null) =>
+  BG_PHOTO_KEY_PREFIX + (storeId ?? '_no_store');
+try {
+  if (typeof window !== 'undefined') localStorage.removeItem(LEGACY_BG_PHOTO_KEY);
+} catch {}
 const PNG_PROBE_KEY = 'myj_png_probe';
 const UPLOAD_MODE_REMEMBER_KEY = 'myj_upload_mode_remembered';
 const OSS_BASE = 'https://rollingai-meiyijia.oss-cn-shanghai.aliyuncs.com/product_pic';
@@ -123,13 +131,13 @@ export function ScreenBatch({
   const fileRefs = React.useRef<Record<string, HTMLInputElement | null>>({});
   const bgFileRef = React.useRef<HTMLInputElement | null>(null);
 
-  // 加载本地缓存的店内背景照
+  // 加载本地缓存的店内背景照（按 storeId 隔离）
   React.useEffect(() => {
     try {
-      const cached = localStorage.getItem(BG_PHOTO_KEY);
-      if (cached) setBgPhoto(cached);
+      const cached = localStorage.getItem(bgPhotoKey(storeId));
+      setBgPhoto(cached ?? null);
     } catch {}
-  }, []);
+  }, [storeId]);
 
   // 探测所有 SKU 是否有官方 PNG（含组合活动的每个成员）
   React.useEffect(() => {
@@ -204,7 +212,7 @@ export function ScreenBatch({
     try {
       const dataUrl = await compressImage(f, { keepAlpha: false });
       setBgPhoto(dataUrl);
-      try { localStorage.setItem(BG_PHOTO_KEY, dataUrl); } catch {}
+      try { localStorage.setItem(bgPhotoKey(storeId), dataUrl); } catch {}
     } catch (err) {
       console.error('[batch] bg compress fail', err);
     }
