@@ -3,9 +3,21 @@
  *
  * 启动时一次性校验所有环境变量，缺失必填项立即抛错。
  * 其它模块从这里 import { config }，绝不直接读 process.env。
+ *
+ * 加载顺序:
+ *   1. 本地 dev:从仓库根 .env 加载（dotenv 静默无文件 → 当生产用）
+ *   2. 生产 docker:容器内无 .env 文件,env vars 由 --env-file 注入到 process.env
+ *      → dotenv.config 静默 no-op,直接走 process.env 校验
  */
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+
+// __dirname:dev 时是 apps/api/src/config,prod 时是 apps/api/dist/config
+// 两种情况下都是 4 层到仓库根
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
 const envSchema = z.object({
   // 服务

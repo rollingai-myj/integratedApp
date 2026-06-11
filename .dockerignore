@@ -1,0 +1,62 @@
+# =============================================================================
+# Docker 构建上下文排除清单 —— 镜像里绝不出现这些文件
+# =============================================================================
+
+# 依赖与构建产物
+**/node_modules
+**/dist
+**/build
+**/.output
+**/.cache
+**/.vite
+**/.parcel-cache
+**/*.tsbuildinfo
+
+# 环境变量(关键:不能进镜像!生产由 --env-file 注入)
+.env
+.env.*
+!.env.production.example
+!.env.example
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Compose 文件(镜像内不需要)
+docker-compose*.yml
+docker-compose.override.yml
+
+# 测试 / 覆盖率
+coverage
+.nyc_output
+**/*.test.ts
+**/*.spec.ts
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+
+# 日志
+logs
+*.log
+npm-debug.log*
+
+# 文档(可选,看是否要进镜像)
+docs
+
+# 部署 / 运维
+deploy.sh
+.claude
+.cursor
+
+# 数据
+dumps
+*.dump
+*.sql.bak
+
+# Postgres 卷数据(本地 dev 留下的)
+postgres_data

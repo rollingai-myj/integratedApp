@@ -1,0 +1,35 @@
+# =============================================================================
+# 个人 compose 覆盖文件(示例)
+#
+# 用法:
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   编辑加入个人配置
+#
+# 说明:
+#   - docker-compose.override.yml 由 Docker Compose 自动加载(无需 -f)
+#   - 已加入 .gitignore,不会被提交
+#   - 仅用于 dev,生产 deploy.sh 用 -f base -f prod 显式指定,不读 override
+# =============================================================================
+
+# 示例 1:本地端口冲突时改端口
+# services:
+#   postgres:
+#     ports:
+#       - '5433:5432'           # 避开别的项目的 5432
+#   api:
+#     ports:
+#       - '8788:8787'           # 避开别的项目的 8787
+
+# 示例 2:开启 Node.js inspect 调试
+# services:
+#   api:
+#     command: ['npx', 'tsx', '--inspect=0.0.0.0:9229', 'watch', 'src/index.ts']
+#     ports:
+#       - '8787:8787'
+#       - '9229:9229'
+
+# 示例 3:个人 Dify key 覆盖
+# services:
+#   api:
+#     environment:
+#       DIFY_KEY_SELECTION: app-MyPersonalKeyForTest

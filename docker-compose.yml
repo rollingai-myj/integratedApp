@@ -1,22 +1,153 @@
+# =============================================================================
+# 美宜佳门店助手 · 基础编排（dev 默认 + 服务定义）
+#
+# 用法:
+#   docker compose --profile dev up -d postgres    # 仅起本地 Postgres
+#   docker compose --profile dev up -d             # 起全栈本地 dev(含热重载)
+#   docker compose logs -f api                     # 看后端日志
+#
+# 生产部署(叠加 docker-compose.prod.yml,由 deploy.sh 拼装):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     --env-file .env.production up -d --build
+#
+# 单一事实源:所有变量来自仓库根 .env(本地)或 .env.production(生产)
+# 都通过 env_file 注入容器,docker-compose 内不再重复声明
+# =============================================================================
+
 services:
+  # ---- 本地 PostgreSQL --------------------------------------------------------
+  # profile=dev:生产不启动(用 RDS),deploy.sh 不会拉起这个服务
   postgres:
     image: postgres:16-alpine
     container_name: myj-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: myj_dev
-      POSTGRES_USER: myj
-      POSTGRES_PASSWORD: myj
+    profiles:
+      - dev
+    env_file:
+      # required: false 让生产部署时(.env 不在服务器)不报错
+      # 本地 dev 由 .env 提供变量;生产由 .env.production(prod overlay)提供
+      - path: .env
+        required: false
     ports:
       - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U myj -d myj_dev']
+      test: ['CMD-SHELL', 'pg_isready']
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ---- 后端 API ---------------------------------------------------------------
+  # 默认 build.target=build(镜像含 devDeps,可挂源码热重载)
+  # 生产 overlay 切到 target=runtime + 删 volumes + 改 command
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: build
+    container_name: myj-api
+    env_file:
+      # required: false 让生产部署时(.env 不在服务器)不报错
+      # 本地 dev 由 .env 提供变量;生产由 .env.production(prod overlay)提供
+      - path: .env
+        required: false
+    environment:
+      # 容器间通信:env_file 里的 DATABASE_URL 指向 localhost,容器里要走 postgres 服务名
+      DATABASE_URL: postgresql://${POSTGRES_USER:-myj}:${POSTGRES_PASSWORD:-myj}@postgres:5432/${POSTGRES_DB:-myj_dev}
+      # 清空 Docker Desktop macOS 注入的宿主代理,避免容器间 502
+      HTTP_PROXY: ''
+      HTTPS_PROXY: ''
+      http_proxy: ''
+      https_proxy: ''
+      NO_PROXY: 'localhost,127.0.0.1,postgres,api,web,nginx,.local,.internal'
+      no_proxy: 'localhost,127.0.0.1,postgres,api,web,nginx,.local,.internal'
+    ports:
+      - '8787:8787'
+    volumes:
+      # 源码挂载 → tsx watch 热重载
+      - ./apps/api/src:/app/apps/api/src:delegated
+      - ./packages/shared/src:/app/packages/shared/src:delegated
+      # 防 host node_modules 覆盖容器内 deps
+      - /app/node_modules
+    working_dir: /app/apps/api
+    command: ['npx', 'tsx', 'watch', 'src/index.ts']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ---- 前端 SSR(TanStack Start) ----------------------------------------------
+  # 默认 Vite dev server(HMR),生产 overlay 切到 srvx + 编译后的 SSR bundle
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: build
+      args:
+        VITE_API_BASE_URL: ''
+    container_name: myj-web
+    env_file:
+      # required: false 让生产部署时(.env 不在服务器)不报错
+      # 本地 dev 由 .env 提供变量;生产由 .env.production(prod overlay)提供
+      - path: .env
+        required: false
+    environment:
+      HTTP_PROXY: ''
+      HTTPS_PROXY: ''
+      http_proxy: ''
+      https_proxy: ''
+      NO_PROXY: 'localhost,127.0.0.1,postgres,api,web,nginx,.local,.internal'
+      no_proxy: 'localhost,127.0.0.1,postgres,api,web,nginx,.local,.internal'
+    ports:
+      - '5173:5173'
+    volumes:
+      - ./apps/web/src:/app/apps/web/src:delegated
+      - ./apps/web/public:/app/apps/web/public:delegated
+      - ./apps/web/vite.config.ts:/app/apps/web/vite.config.ts:delegated
+      - ./packages/shared/src:/app/packages/shared/src:delegated
+      - /app/node_modules
+    working_dir: /app/apps/web
+    command: ['npx', 'vite', 'dev', '--host', '0.0.0.0', '--port', '5173']
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # ---- 反向代理 ---------------------------------------------------------------
+  # dev:对接 web:5173(Vite dev) + api:8787
+  # prod:overlay 改 WEB_UPSTREAM_PORT=3000 对接 srvx
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: myj-nginx
+    environment:
+      WEB_UPSTREAM_PORT: '5173'
+      HTTP_PROXY: ''
+      HTTPS_PROXY: ''
+      NO_PROXY: '*'
+      no_proxy: '*'
+    ports:
+      - '8080:80'
+    depends_on:
+      - api
+      - web
+    restart: unless-stopped
+    networks:
+      - app-network
 
 volumes:
   postgres_data:
     name: myj_postgres_data
+
+networks:
+  app-network:
+    driver: bridge
+    name: myj_network

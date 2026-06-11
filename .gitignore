@@ -11,13 +11,18 @@ build/
 *.tsbuildinfo
 
 # ========== Env ==========
-# 把所有 .env / .env.* 都视为本地秘密，仅 .env.example 入库（白名单）
+# 环境变量统一在仓库根管理(单一事实源):
+#   .env                       本地 dev 实参 (gitignored)
+#   .env.example               本地 dev 模板 (入库)
+#   .env.production            生产实参 (仅服务器,gitignored)
+#   .env.production.example    生产模板 (入库,deploy.sh 用它做 drift 校验)
+#   .env.local                 个人 override (gitignored,可选)
+#   docker-compose.override.yml 个人 compose tweaks (gitignored)
 .env
 .env.*
-apps/*/.env
-apps/*/.env.*
 !.env.example
-!apps/*/.env.example
+!.env.production.example
+docker-compose.override.yml
 
 # ========== Editor / OS ==========
 .DS_Store

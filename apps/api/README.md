@@ -13,8 +13,8 @@
 ```bash
 # 在仓库根目录
 npm install                                  # 装所有 workspace 依赖
-docker-compose up -d postgres                # 起本地 Postgres
-cp apps/api/.env.example apps/api/.env
+docker compose --profile dev up -d postgres  # 起本地 Postgres
+cp .env.example .env                          # 环境变量统一在仓库根管理
 
 # 初始化数据库（建表 + 写种子数据）
 npm run migrate

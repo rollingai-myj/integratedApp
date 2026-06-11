@@ -1,0 +1,78 @@
+# =============================================================================
+# 生产环境覆盖配置
+#
+# 用法(由 deploy.sh 自动拼装):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     --env-file .env.production up -d --build
+#
+# 此文件叠加在 docker-compose.yml 之上,覆盖 dev 专用配置:
+#   - api/web 切到 runtime target(slim image,无 devDeps)
+#   - 关闭源码挂载(运行编译产物)
+#   - 关闭热重载,换成生产 command
+#   - 不暴露 api/web 直连端口(只通过 nginx 走外网)
+#   - nginx web upstream 切到 srvx 的 3000 端口
+#   - postgres 不启动(profile=dev,生产用 RDS)
+#
+# 所有密钥从服务器 .env.production 由 --env-file 注入到 compose process env,
+# 再由 env_file: .env.production 进容器(deploy.sh 会确保 .env.production 存在)
+# =============================================================================
+
+services:
+  api:
+    build:
+      target: runtime
+    env_file:
+      # required: false 允许本地 dry-run(docker compose config)在缺文件时也能验证语法
+      # 生产部署 deploy.sh 会先校验 .env.production 存在且完整,再启动
+      - path: .env.production
+        required: false
+    # 生产无本地 postgres 可等(RDS 在容器外,deploy.sh 用 docker run --rm 迁移)
+    depends_on: !reset {}
+    volumes: !reset []
+    ports: !reset []
+    environment:
+      # 仅覆盖 dev base 里硬编码的 DATABASE_URL(指向 postgres 服务)
+      # 让其透传 .env.production 里的 RDS URL
+      DATABASE_URL: ${DATABASE_URL}
+      NODE_ENV: production
+    command: ['node', 'dist/index.js']
+
+  web:
+    build:
+      target: runtime
+      args:
+        # 生产 VITE_API_BASE_URL 烧进 client bundle
+        # 默认空字符串 → 前端走相对路径,经 nginx 反代
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    env_file:
+      # required: false 允许本地 dry-run(docker compose config)在缺文件时也能验证语法
+      # 生产部署 deploy.sh 会先校验 .env.production 存在且完整,再启动
+      - path: .env.production
+        required: false
+    volumes: !reset []
+    ports: !reset []
+    environment:
+      NODE_ENV: production
+    depends_on: !reset {}
+    command:
+      - node
+      - /app/node_modules/srvx/bin/srvx.mjs
+      - serve
+      - --prod
+      - --entry
+      - dist/server/server.js
+      - --static
+      - dist/client
+      - --port
+      - '3000'
+      - --host
+      - 0.0.0.0
+
+  nginx:
+    environment:
+      # 生产 web 跑在 srvx 的 3000 端口(dev 是 vite dev 的 5173)
+      WEB_UPSTREAM_PORT: '3000'
+    ports: !reset
+      # 宿主机暴露端口由 .env.production 的 WEB_PORT 控制(默认 8088)
+      # 边缘 Caddy 反代 https://YOUR_DOMAIN → 127.0.0.1:${WEB_PORT}
+      - '${WEB_PORT:-8088}:80'

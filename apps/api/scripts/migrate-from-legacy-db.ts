@@ -15,7 +15,13 @@
  * auth_sessions（会话）、profiles（重复于 auth_users）。
  */
 import { Pool } from 'pg';
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// scripts/migrate-from-legacy-db.ts → 仓库根:3 层
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 const OLD_URL =
   process.env.OLD_DATABASE_URL ||
