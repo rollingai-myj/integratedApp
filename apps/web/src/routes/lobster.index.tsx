@@ -7,12 +7,12 @@
  *   - 拍照上传(海报技能);生成的海报直接在气泡里展示
  *   - 空态给三个建议问题,一点即问
  *
- * 会话续聊:本页存活期间记住 conversationId;离开重进 = 新会话
- * (历史会话接口已就位,会话侧栏留待下一迭代)。
+ * 会话续聊:打开页面自动恢复最近一次会话;顶部可查看历史会话列表
+ * (切换/删除)或开启新对话。
  */
 import { createFileRoute, useNavigate, Link } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, Send, X } from 'lucide-react';
+import { ArrowLeft, Camera, History, Send, SquarePen, Trash2, X } from 'lucide-react';
 import { IOSDevice } from '@/components/IOSDevice';
 import { useMe, isAuthenticated } from '@/lib/auth';
 
@@ -158,6 +158,46 @@ function SkuCardsBlock({ data }: { data: SkuCardsData }) {
   );
 }
 
+interface ConversationMeta {
+  id: string;
+  title: string | null;
+  updatedAt: string;
+}
+
+interface HistoryMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  posterUrl: string | null;
+  skuCards: SkuCardsData | null;
+}
+
+/** 历史消息 → 渲染条目(顺序与直播一致:卡片/海报在气泡前) */
+function historyToItems(messages: HistoryMessage[]): ChatItem[] {
+  const out: ChatItem[] = [];
+  for (const m of messages) {
+    if (m.role === 'user') {
+      out.push({ kind: 'user', text: m.text });
+      continue;
+    }
+    if (m.skuCards?.items?.length) out.push({ kind: 'sku_cards', data: m.skuCards });
+    if (m.posterUrl) out.push({ kind: 'poster', url: m.posterUrl });
+    if (m.text) out.push({ kind: 'assistant', text: m.text, streaming: false });
+  }
+  return out;
+}
+
+function fmtConvTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now.getTime() - 86400_000).toDateString() === d.toDateString();
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (sameDay) return `今天 ${hm}`;
+  if (yesterday) return `昨天 ${hm}`;
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
 const SUGGESTIONS = [
   '我的货卖得怎么样?',
   '冷藏品怎么选?',
@@ -200,6 +240,9 @@ function LobsterPage() {
   const [input, setInput] = useState('');
   const [photo, setPhoto] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [restoring, setRestoring] = useState(true);
+  const [histOpen, setHistOpen] = useState(false);
+  const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const conversationIdRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -207,6 +250,60 @@ function LobsterPage() {
   useEffect(() => {
     if (meQuery.isSuccess && !isAuthenticated(me)) void navigate({ to: '/login' });
   }, [meQuery.isSuccess, me, navigate]);
+
+  async function fetchConversations(): Promise<ConversationMeta[]> {
+    const res = await fetch('/api/v1/lobster/conversations', { credentials: 'include' });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { conversations?: ConversationMeta[] };
+    const list = data.conversations ?? [];
+    setConversations(list);
+    return list;
+  }
+
+  async function loadConversation(id: string) {
+    const res = await fetch(`/api/v1/lobster/conversations/${id}/messages`, {
+      credentials: 'include',
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { messages?: HistoryMessage[] };
+    conversationIdRef.current = id;
+    setItems(historyToItems(data.messages ?? []));
+    setHistOpen(false);
+  }
+
+  // 打开页面自动恢复最近一次会话
+  useEffect(() => {
+    if (!meQuery.isSuccess || !isAuthenticated(me)) return;
+    void (async () => {
+      try {
+        const list = await fetchConversations();
+        if (list.length > 0) await loadConversation(list[0]!.id);
+      } finally {
+        setRestoring(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meQuery.isSuccess]);
+
+  function newChat() {
+    if (busy) return;
+    conversationIdRef.current = null;
+    setItems([]);
+    setHistOpen(false);
+  }
+
+  async function deleteConversation(id: string) {
+    if (!window.confirm('删除这个对话?记忆不受影响,但聊天记录找不回来了')) return;
+    await fetch(`/api/v1/lobster/conversations/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (conversationIdRef.current === id) {
+      conversationIdRef.current = null;
+      setItems([]);
+    }
+    void fetchConversations();
+  }
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -367,7 +464,7 @@ function LobsterPage() {
 
   return (
     <IOSDevice>
-      <div className="h-full flex flex-col bg-canvas">
+      <div className="relative h-full flex flex-col bg-canvas">
         {/* 顶部条 */}
         <header className="shrink-0 flex items-center gap-2 px-4 pt-3 pb-2.5 border-b border-hairline bg-surface">
           <Link to="/" className="p-1 -ml-1 text-ink-muted">
@@ -381,11 +478,94 @@ function LobsterPage() {
               {me.currentStore ? me.currentStore.name : '未选择门店'} · AI 店务助手(实验)
             </div>
           </div>
+          <button
+            type="button"
+            aria-label="历史对话"
+            disabled={busy}
+            onClick={() => {
+              setHistOpen(true);
+              void fetchConversations();
+            }}
+            className="p-2 text-ink-muted active:scale-95 transition-transform disabled:opacity-40"
+          >
+            <History size={19} />
+          </button>
+          <button
+            type="button"
+            aria-label="新对话"
+            disabled={busy}
+            onClick={newChat}
+            className="p-2 -mr-1 text-ink-muted active:scale-95 transition-transform disabled:opacity-40"
+          >
+            <SquarePen size={19} />
+          </button>
         </header>
+
+        {/* 历史对话抽屉 */}
+        {histOpen && (
+          <div className="absolute inset-0 z-20 bg-canvas flex flex-col">
+            <header className="shrink-0 flex items-center gap-2 px-4 pt-3 pb-2.5 border-b border-hairline bg-surface">
+              <button
+                type="button"
+                aria-label="关闭历史"
+                onClick={() => setHistOpen(false)}
+                className="p-1 -ml-1 text-ink-muted"
+              >
+                <X size={20} />
+              </button>
+              <div className="text-[16px] font-semibold text-ink">历史对话</div>
+            </header>
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+              <button
+                type="button"
+                onClick={newChat}
+                className="w-full mb-3 px-4 py-3 rounded-2xl border border-hairline bg-surface text-[14px] font-medium text-ink flex items-center gap-2 active:scale-[0.98] transition-transform"
+              >
+                <SquarePen size={16} /> 开始新对话
+              </button>
+              {conversations.length === 0 && (
+                <div className="text-center text-[13px] text-ink-muted py-8">还没有历史对话</div>
+              )}
+              {conversations.map((c) => (
+                <div
+                  key={c.id}
+                  className={`mb-2 rounded-2xl border bg-surface flex items-center ${
+                    conversationIdRef.current === c.id ? 'border-ink/30' : 'border-hairline'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => void loadConversation(c.id)}
+                    className="flex-1 min-w-0 text-left px-4 py-3 active:scale-[0.99] transition-transform"
+                  >
+                    <div className="text-[14px] text-ink truncate">{c.title || '新对话'}</div>
+                    <div className="text-[11px] text-ink-muted mt-0.5">
+                      {fmtConvTime(c.updatedAt)}
+                      {conversationIdRef.current === c.id ? ' · 当前' : ''}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="删除对话"
+                    onClick={() => void deleteConversation(c.id)}
+                    className="shrink-0 p-3 text-ink-muted active:scale-95 transition-transform"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 消息区 */}
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
-          {items.length === 0 && (
+          {items.length === 0 && restoring && (
+            <div className="h-full flex items-center justify-center text-[13px] text-ink-muted">
+              正在回忆上次聊到哪…🦞
+            </div>
+          )}
+          {items.length === 0 && !restoring && (
             <div className="h-full flex flex-col items-center justify-center gap-4">
               <div className="text-[44px]" aria-hidden>
                 🦞
