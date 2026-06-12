@@ -21,12 +21,13 @@ const MODULE_DEFS: Array<{ key: ModuleKey; label: string }> = [
   { key: 'shelves', label: '货盘选品' },
   { key: 'prices', label: '价盘管理' },
   { key: 'posters', label: '活动海报' },
+  { key: 'lobster', label: '美宜佳龙虾' },
   { key: 'admin', label: '后台管理' },
 ];
 
 const ROLE_MODULES: Record<string, ModuleKey[]> = {
-  super_admin: ['shelves', 'prices', 'posters', 'admin'],
-  store_owner: ['shelves', 'prices', 'posters'],
+  super_admin: ['shelves', 'prices', 'posters', 'lobster', 'admin'],
+  store_owner: ['shelves', 'prices', 'posters', 'lobster'],
   analyst: ['shelves', 'prices'],
   account_manager: ['shelves', 'prices'],
 };

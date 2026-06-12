@@ -15,6 +15,7 @@
     "migrate": "tsx src/db/migrate.ts up",
     "migrate:status": "tsx src/db/migrate.ts status",
     "migrate:legacy": "tsx scripts/migrate-from-legacy-db.ts",
+    "seed:dev": "tsx scripts/seed-dev.ts",
     "test": "vitest run"
   },
   "dependencies": {

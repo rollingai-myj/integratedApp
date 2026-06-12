@@ -70,7 +70,7 @@ export interface StoreRef {
   address?: string | null;
 }
 
-export type ModuleKey = 'shelves' | 'prices' | 'posters' | 'admin';
+export type ModuleKey = 'shelves' | 'prices' | 'posters' | 'admin' | 'lobster';
 
 /** 友好告警（飞书部门指向的门店未登记等场景） */
 export interface AuthNotice {
@@ -480,4 +480,57 @@ export interface ListScenesResponse {
 
 export interface ListSceneAdjustmentCountsResponse {
   counts: SceneAdjustmentCount[];
+}
+
+// ============================================================================
+// 模块 13 · 美宜佳龙虾 (Lobster) — 门店 AI 对话助手(实验)
+// ============================================================================
+
+/** 龙虾会话(一次连续聊天) */
+export interface LobsterConversation {
+  id: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 龙虾消息(历史回放用) */
+export interface LobsterMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  /** 纯文本;用户带图的消息正文后会追加 [📷 已上传照片] 占位 */
+  text: string;
+  /** 该条 assistant 消息过程中生成的海报(如有) */
+  posterUrl?: string | null;
+  createdAt: string;
+}
+
+/** POST /api/v1/lobster/chat 请求体(响应为 SSE 流) */
+export interface LobsterChatRequest {
+  /** 不传 = 新开会话 */
+  conversationId?: string;
+  message: string;
+  /** 店长拍照(data URL);海报技能用 */
+  photoDataUrl?: string;
+}
+
+/** SSE 事件流的各事件 payload(event 字段区分类型) */
+export type LobsterStreamEvent =
+  | { type: 'start'; conversationId: string }
+  | { type: 'delta'; text: string }
+  | { type: 'tool_start'; name: string; label: string }
+  | { type: 'tool_end'; name: string; ok: boolean }
+  | { type: 'poster'; posterUrl: string; posterId: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string };
+
+/** GET /api/v1/lobster/conversations */
+export interface LobsterConversationsResponse {
+  conversations: LobsterConversation[];
+}
+
+/** GET /api/v1/lobster/conversations/:id/messages */
+export interface LobsterMessagesResponse {
+  conversation: LobsterConversation;
+  messages: LobsterMessage[];
 }

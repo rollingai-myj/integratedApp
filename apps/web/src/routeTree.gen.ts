@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ShelvesIndexRouteImport } from './routes/shelves.index'
 import { Route as PricesIndexRouteImport } from './routes/prices.index'
 import { Route as PostersIndexRouteImport } from './routes/posters.index'
+import { Route as LobsterIndexRouteImport } from './routes/lobster.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as ShelvesPositionRouteImport } from './routes/shelves.position'
 import { Route as PricesColdRouteImport } from './routes/prices.cold'
@@ -55,6 +56,11 @@ const PricesIndexRoute = PricesIndexRouteImport.update({
 const PostersIndexRoute = PostersIndexRouteImport.update({
   id: '/posters/',
   path: '/posters/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LobsterIndexRoute = LobsterIndexRouteImport.update({
+  id: '/lobster/',
+  path: '/lobster/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
@@ -125,6 +131,7 @@ export interface FileRoutesByFullPath {
   '/prices/cold': typeof PricesColdRoute
   '/shelves/position': typeof ShelvesPositionRouteWithChildren
   '/admin/': typeof AdminIndexRoute
+  '/lobster/': typeof LobsterIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
@@ -143,6 +150,7 @@ export interface FileRoutesByTo {
   '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
   '/admin': typeof AdminIndexRoute
+  '/lobster': typeof LobsterIndexRoute
   '/posters': typeof PostersIndexRoute
   '/prices': typeof PricesIndexRoute
   '/shelves': typeof ShelvesIndexRoute
@@ -163,6 +171,7 @@ export interface FileRoutesById {
   '/prices/cold': typeof PricesColdRoute
   '/shelves/position': typeof ShelvesPositionRouteWithChildren
   '/admin/': typeof AdminIndexRoute
+  '/lobster/': typeof LobsterIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
@@ -184,6 +193,7 @@ export interface FileRouteTypes {
     | '/prices/cold'
     | '/shelves/position'
     | '/admin/'
+    | '/lobster/'
     | '/posters/'
     | '/prices/'
     | '/shelves/'
@@ -202,6 +212,7 @@ export interface FileRouteTypes {
     | '/select-store'
     | '/prices/cold'
     | '/admin'
+    | '/lobster'
     | '/posters'
     | '/prices'
     | '/shelves'
@@ -221,6 +232,7 @@ export interface FileRouteTypes {
     | '/prices/cold'
     | '/shelves/position'
     | '/admin/'
+    | '/lobster/'
     | '/posters/'
     | '/prices/'
     | '/shelves/'
@@ -241,6 +253,7 @@ export interface RootRouteChildren {
   PricesColdRoute: typeof PricesColdRoute
   ShelvesPositionRoute: typeof ShelvesPositionRouteWithChildren
   AdminIndexRoute: typeof AdminIndexRoute
+  LobsterIndexRoute: typeof LobsterIndexRoute
   PostersIndexRoute: typeof PostersIndexRoute
   PricesIndexRoute: typeof PricesIndexRoute
   ShelvesIndexRoute: typeof ShelvesIndexRoute
@@ -288,6 +301,13 @@ declare module '@tanstack/react-router' {
       path: '/posters'
       fullPath: '/posters/'
       preLoaderRoute: typeof PostersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lobster/': {
+      id: '/lobster/'
+      path: '/lobster'
+      fullPath: '/lobster/'
+      preLoaderRoute: typeof LobsterIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/': {
@@ -403,6 +423,7 @@ const rootRouteChildren: RootRouteChildren = {
   PricesColdRoute: PricesColdRoute,
   ShelvesPositionRoute: ShelvesPositionRouteWithChildren,
   AdminIndexRoute: AdminIndexRoute,
+  LobsterIndexRoute: LobsterIndexRoute,
   PostersIndexRoute: PostersIndexRoute,
   PricesIndexRoute: PricesIndexRoute,
   ShelvesIndexRoute: ShelvesIndexRoute,

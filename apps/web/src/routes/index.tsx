@@ -48,6 +48,7 @@ const MODULES: ModuleDef[] = [
   { id: 'prices',   name: '价盘管理', desc: '智能调价 · 价格追踪', to: '/prices',  icon: <PriceIcon /> },
   { id: 'radar',    name: '竞品报告', desc: '商品结构 · 售价对比',                 icon: <RadarIcon /> }, // 竞品同事的模块，暂未启用
   { id: 'posters',  name: '活动海报', desc: '私域运营 · 海报生成', to: '/posters', icon: <PosterIcon /> },
+  { id: 'lobster',  name: '美宜佳龙虾', desc: 'AI 店务助手 · 有问必答', to: '/lobster', icon: <LobsterIcon /> },
 ];
 
 function HomePage() {
@@ -306,6 +307,24 @@ function PosterIcon() {
       <rect x="8" y="6" width="32" height="36" rx="3" stroke="var(--primary)" strokeWidth="2" fill="var(--primary)" fillOpacity="0.1" />
       <circle cx="17" cy="16" r="3" fill="var(--primary)" />
       <path d="M8 32l9-9 8 8 6-5 9 9" stroke="var(--primary)" strokeWidth="2" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+function LobsterIcon() {
+  // 对话气泡 + 龙虾钳,代表"会聊天的龙虾"
+  return (
+    <svg viewBox="0 0 48 48" width="30" height="30" fill="none">
+      <path
+        d="M24 8c-9.4 0-17 6.3-17 14 0 4.4 2.5 8.3 6.4 10.9L11 40l8.2-3.4c1.5.3 3.1.4 4.8.4 9.4 0 17-6.3 17-14S33.4 8 24 8z"
+        stroke="var(--primary)"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        fill="var(--primary)"
+        fillOpacity="0.1"
+      />
+      <circle cx="17.5" cy="22" r="2" fill="var(--primary)" />
+      <circle cx="24" cy="22" r="2" fill="var(--primary)" opacity="0.7" />
+      <circle cx="30.5" cy="22" r="2" fill="var(--primary)" opacity="0.45" />
     </svg>
   );
 }

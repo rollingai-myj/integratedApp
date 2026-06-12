@@ -25,8 +25,11 @@ import { requireRole } from '../middleware/role.js';
 
 export const adminRouter = Router();
 
-// 该模块所有接口都要求 super_admin
-adminRouter.use(requireAuth, requireRole('super_admin'));
+// 该模块所有接口都要求 super_admin。
+// 注意必须限定 '/admin' 路径:Router.use 不带路径会对"流经本 router 的所有请求"
+// 生效,而本 router 在 routes/index.ts 挂载靠前,曾把后面挂载的 storage/ai/
+// sessions/detect 等模块对非超管整体 403。
+adminRouter.use('/admin', requireAuth, requireRole('super_admin'));
 
 // 账号管理 --------------------------------------------------------------
 

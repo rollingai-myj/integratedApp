@@ -21,6 +21,7 @@ import { aiRouter } from './ai.routes.js';
 import { sessionsRouter } from './sessions.routes.js';
 import { detectRouter } from './detect.routes.js';
 import { docsRouter } from './docs.routes.js';
+import { lobsterRouter } from './lobster.routes.js';
 
 const VERSION = '0.1.0-m0';
 
@@ -49,6 +50,7 @@ export function registerRoutes(): Router {
   apiV1.use(aiRouter);          // 模块 11
   apiV1.use(sessionsRouter);    // 模块 12
   apiV1.use(detectRouter);      // 选品 detect / virtual-shelf 触发
+  apiV1.use(lobsterRouter);     // 模块 13 · 美宜佳龙虾(实验)
 
   return apiV1;
 }

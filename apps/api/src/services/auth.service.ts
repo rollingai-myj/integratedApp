@@ -51,8 +51,8 @@ interface StoreRow {
 }
 
 const MODULES_BY_ROLE: Record<string, ModuleKey[]> = {
-  super_admin: ['shelves', 'prices', 'posters', 'admin'],
-  store_owner: ['shelves', 'prices', 'posters'],
+  super_admin: ['shelves', 'prices', 'posters', 'lobster', 'admin'],
+  store_owner: ['shelves', 'prices', 'posters', 'lobster'],
   analyst: ['shelves', 'prices'],
   account_manager: ['shelves', 'prices'],
 };
