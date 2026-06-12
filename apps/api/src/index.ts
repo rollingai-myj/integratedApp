@@ -4,10 +4,24 @@
  * - 启动 HTTP 服务
  * - 优雅退出：收到 SIGINT/SIGTERM 后停止接收新请求 + 关闭 DB 连接池
  */
+import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
+
 import { createApp } from './app.js';
 import { config } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { closePool } from './db/index.js';
+
+// Node 的 fetch(undici)默认不读 HTTP(S)_PROXY 环境变量,在必须走代理的
+// 网络里会裸连外网导致超时(如 openrouter.ai)。这里尊重标准代理变量,
+// 并把连接超时从默认 10s 放宽到 30s 以容忍代理隧道建立的抖动。
+// 不设代理变量时行为不变(直连)。NO_PROXY 照常生效(本地地址不走代理)。
+if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy) {
+  setGlobalDispatcher(new EnvHttpProxyAgent({ connect: { timeout: 30_000 } }));
+  logger.info(
+    { proxy: process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY },
+    'outbound fetch via proxy (EnvHttpProxyAgent)',
+  );
+}
 
 const app = createApp();
 
