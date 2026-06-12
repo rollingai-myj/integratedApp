@@ -100,7 +100,8 @@ async function streamChatCompletion(args: {
         body: JSON.stringify({
           model: args.model,
           messages: args.messages,
-          tools: args.tools,
+          // 空数组某些上游会拒绝,无工具时干脆不传
+          ...(args.tools.length ? { tools: args.tools } : {}),
           stream: true,
         }),
         signal: AbortSignal.timeout(180_000),
@@ -711,6 +712,20 @@ async function execTool(name: string, rawArgs: string, ctx: ToolContext): Promis
 // 系统提示词
 // ---------------------------------------------------------------------------
 
+function formatMemorySection(memories: MemoryRow[]): string {
+  if (memories.length === 0) return '';
+  const lines = memories
+    .map((m) => `- [${MEMORY_KIND_LABEL[m.kind] ?? m.kind}] ${m.content}`)
+    .join('\n');
+  return `
+
+# 你记住的本店情况(来自过往对话)
+${lines}
+
+记忆使用规则:这些是历史信息,数字可能已过时——提到具体数据前先用工具查最新值;
+店长的偏好和决定要主动遵守、适时跟进(如"上次你说暂停补货,现在情况是…")。`;
+}
+
 function buildSystemPrompt(store: { name: string; city: string | null }): string {
   const today = new Date().toLocaleDateString('zh-CN', {
     year: 'numeric',
@@ -767,6 +782,116 @@ function buildSystemPrompt(store: { name: string; city: string | null }): string
 - 重要:你的回复显示在手机聊天气泡里,**不支持 Markdown 渲染**。
   禁止用表格(|)、标题(#)、加粗(**)、分割线(---);
   用短句、换行、"·"或 emoji 开头的列表来组织内容,一行别太长。`;
+}
+
+// ---------------------------------------------------------------------------
+// 长期记忆:跨会话沉淀(读取注入 + 对话后异步提炼)
+// ---------------------------------------------------------------------------
+
+const MEMORY_INJECT_LIMIT = 30;
+const MEMORY_KIND_LABEL: Record<string, string> = {
+  preference: '偏好',
+  decision: '决定',
+  fact: '门店情况',
+};
+
+interface MemoryRow {
+  id: string;
+  kind: string;
+  content: string;
+}
+
+async function loadMemories(storeId: string): Promise<MemoryRow[]> {
+  const res = await query<MemoryRow>(
+    `SELECT id, kind, content FROM lobster_memory
+     WHERE store_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [storeId, MEMORY_INJECT_LIMIT],
+  );
+  return res.rows;
+}
+
+const memoryOpsSchema = z.object({
+  ops: z
+    .array(
+      z.discriminatedUnion('op', [
+        z.object({
+          op: z.literal('add'),
+          kind: z.enum(['preference', 'decision', 'fact']),
+          content: z.string().min(4).max(200),
+        }),
+        z.object({ op: z.literal('delete'), id: z.string().uuid() }),
+      ]),
+    )
+    .max(6),
+});
+
+/**
+ * 对话结束后从本轮内容提炼长期记忆。异步执行,失败只记日志,
+ * 绝不影响用户看到的回复。
+ */
+async function extractMemories(args: {
+  storeId: string;
+  userId: string;
+  conversationId: string;
+  userMessage: string;
+  assistantText: string;
+}): Promise<void> {
+  const existing = await loadMemories(args.storeId);
+  const prompt = `你是门店助手"美宜佳龙虾"的记忆提炼器。从下面这轮对话中提取值得跨会话长期记住的信息。
+
+只提取三类:
+- preference:店长的沟通/工作偏好(如"只要前5名,别给长清单")
+- decision:店长做出的经营决定(如"五连包暂停补货,下月再看")
+- fact:门店的长期特征(如"学生客群为主""隔壁新开了全家")
+
+不要提取:能从数据库随时查到的数据(销量/库存/价格都会变)、一次性的提问、寒暄。
+宁缺毋滥:多数对话没有值得记的,输出空数组即可。每轮最多 3 条 add,每条一句话、自包含、不依赖上下文。
+如果本轮对话表明某条已有记忆过时或被推翻,用 delete 删掉它(可同时 add 新的替代)。
+
+已有记忆(JSON):
+${JSON.stringify(existing)}
+
+本轮对话:
+店长: ${args.userMessage.slice(0, 1000)}
+龙虾: ${args.assistantText.slice(0, 2000)}
+
+只输出 JSON,不要任何其他文字。格式:
+{"ops":[{"op":"add","kind":"preference","content":"..."},{"op":"delete","id":"<已有记忆的id>"}]}`;
+
+  const model = await getLobsterModel();
+  const result = await streamChatCompletion({
+    model,
+    messages: [{ role: 'user', content: prompt }],
+    tools: [],
+    onDelta: () => {},
+  });
+  const raw = result.text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+  const parsed = memoryOpsSchema.safeParse(JSON.parse(raw));
+  if (!parsed.success) {
+    logger.warn({ raw: raw.slice(0, 300) }, 'lobster: memory ops parse failed');
+    return;
+  }
+  for (const op of parsed.data.ops) {
+    if (op.op === 'add') {
+      await query(
+        `INSERT INTO lobster_memory (store_id, user_id, kind, content, source_conversation_id)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [args.storeId, args.userId, op.kind, op.content, args.conversationId],
+      );
+    } else {
+      // 带 store_id 条件,防模型幻觉出别家门店的 id
+      await query(`DELETE FROM lobster_memory WHERE id = $1 AND store_id = $2`, [
+        op.id,
+        args.storeId,
+      ]);
+    }
+  }
+  if (parsed.data.ops.length > 0) {
+    logger.info(
+      { storeId: args.storeId, ops: parsed.data.ops.length },
+      'lobster: memories updated',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -961,8 +1086,16 @@ export async function runLobsterTurn(args: {
       ]
     : args.message;
 
+  const memories = await loadMemories(storeId);
   const messages: ChatMessage[] = [
-    { role: 'system', content: buildSystemPrompt({ name: store.rows[0]?.store_name ?? '本店', city: store.rows[0]?.city ?? null }) },
+    {
+      role: 'system',
+      content:
+        buildSystemPrompt({
+          name: store.rows[0]?.store_name ?? '本店',
+          city: store.rows[0]?.city ?? null,
+        }) + formatMemorySection(memories),
+    },
     ...history,
     { role: 'user', content: userContent },
   ];
@@ -1008,6 +1141,14 @@ export async function runLobsterTurn(args: {
       await query(`UPDATE lobster_conversations SET updated_at = now() WHERE id = $1`, [
         conversationId,
       ]);
+      // 异步提炼长期记忆,不阻塞本轮收尾,失败不影响用户
+      void extractMemories({
+        storeId,
+        userId,
+        conversationId,
+        userMessage: args.message,
+        assistantText: result.text,
+      }).catch((err) => logger.warn({ err }, 'lobster: memory extraction failed'));
       return;
     }
 
