@@ -80,6 +80,7 @@ lobsterRouter.post(
           onToolStart: (name, label) => send({ type: 'tool_start', name, label }),
           onToolEnd: (name, ok) => send({ type: 'tool_end', name, ok }),
           onPoster: (posterUrl, posterId) => send({ type: 'poster', posterUrl, posterId }),
+          onSkuCards: (payload) => send({ type: 'sku_cards', ...payload }),
         },
       });
       send({ type: 'done' });
@@ -140,6 +141,7 @@ lobsterRouter.get(
             (m.content.text ?? '') +
             (m.role === 'user' && m.content.hasPhoto ? '\n[📷 已上传照片]' : ''),
           posterUrl: m.content.posterUrl ?? null,
+          skuCards: m.content.skuCards ?? null,
           createdAt: m.created_at,
         })),
     });

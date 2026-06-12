@@ -32,12 +32,131 @@ export const Route = createFileRoute('/lobster/')({
 
 // ---- 渲染用的消息条目 -------------------------------------------------------
 
+interface SkuCardsData {
+  title: string;
+  items: Array<{
+    skuCode: string;
+    name: string;
+    spec: string | null;
+    action: 'add' | 'remove' | 'keep' | 'watch';
+    reason: string | null;
+    retailPrice: number | null;
+    salesQty30d: number | null;
+    stockQty: number | null;
+  }>;
+}
+
 type ChatItem =
   | { kind: 'user'; text: string; photoPreview?: string }
   | { kind: 'assistant'; text: string; streaming: boolean }
   | { kind: 'tool'; label: string; done: boolean }
   | { kind: 'poster'; url: string }
+  | { kind: 'sku_cards'; data: SkuCardsData }
   | { kind: 'error'; text: string };
+
+/** 剪贴板写入,带老 webview 降级 */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+const ACTION_STYLE: Record<
+  SkuCardsData['items'][number]['action'],
+  { label: string; cls: string }
+> = {
+  add: { label: '上新', cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+  remove: { label: '下架', cls: 'bg-red-50 border-red-200 text-red-600' },
+  keep: { label: '保留', cls: 'bg-sky-50 border-sky-200 text-sky-700' },
+  watch: { label: '观察', cls: 'bg-amber-50 border-amber-200 text-amber-700' },
+};
+
+function SkuCardsBlock({ data }: { data: SkuCardsData }) {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  async function copy(key: string, text: string) {
+    if (await copyToClipboard(text)) {
+      setCopied(key);
+      setTimeout(() => setCopied((c) => (c === key ? null : c)), 1500);
+    }
+  }
+
+  const fullList = data.items
+    .map((it) => `${it.skuCode}\t${it.name}${it.spec ? ` ${it.spec}` : ''}\t[${ACTION_STYLE[it.action].label}]`)
+    .join('\n');
+
+  return (
+    <div className="max-w-[92%] w-full rounded-2xl border border-hairline bg-surface overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-hairline">
+        <div className="text-[13px] font-medium">📋 {data.title}</div>
+        <button
+          type="button"
+          onClick={() => void copy('__all__', fullList)}
+          className="text-[12px] px-2 py-1 rounded-lg border border-hairline bg-canvas active:scale-95 transition-transform"
+        >
+          {copied === '__all__' ? '✓ 已复制' : '复制清单'}
+        </button>
+      </div>
+      {data.items.map((it) => {
+        const a = ACTION_STYLE[it.action];
+        const facts = [
+          it.retailPrice !== null ? `${it.retailPrice.toFixed(2)}元` : null,
+          it.salesQty30d !== null ? `近30天销${it.salesQty30d}` : null,
+          it.stockQty !== null ? `库存${it.stockQty}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        return (
+          <div key={it.skuCode} className="px-3 py-2 border-b border-hairline last:border-b-0">
+            <div className="flex items-start gap-2">
+              <span
+                className={`shrink-0 mt-0.5 text-[11px] px-1.5 py-0.5 rounded-md border ${a.cls}`}
+              >
+                {a.label}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] leading-snug">
+                  {it.name}
+                  {it.spec ? <span className="text-ink-muted"> {it.spec}</span> : null}
+                </div>
+                <div className="text-[11px] text-ink-muted mt-0.5">
+                  {it.skuCode}
+                  {facts ? ` · ${facts}` : ''}
+                </div>
+                {it.reason ? (
+                  <div className="text-[12px] text-ink-muted mt-0.5">{it.reason}</div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => void copy(it.skuCode, it.skuCode)}
+                aria-label={`复制编码 ${it.skuCode}`}
+                className="shrink-0 text-[12px] px-2 py-1 rounded-lg border border-hairline bg-canvas text-ink-muted active:scale-95 transition-transform"
+              >
+                {copied === it.skuCode ? '✓' : '复制'}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 const SUGGESTIONS = [
   '我的货卖得怎么样?',
@@ -162,6 +281,8 @@ function LobsterPage() {
             ok?: boolean;
             posterUrl?: string;
             message?: string;
+            title?: string;
+            items?: SkuCardsData['items'];
           };
           try {
             ev = JSON.parse(trimmed.slice(5).trim());
@@ -191,6 +312,14 @@ function LobsterPage() {
               const next = [...prev];
               const bubble = next.pop()!;
               next.push({ kind: 'poster', url: ev.posterUrl! }, bubble);
+              return next;
+            });
+          } else if (ev.type === 'sku_cards' && ev.items?.length) {
+            const data: SkuCardsData = { title: ev.title ?? '商品建议清单', items: ev.items };
+            setItems((prev) => {
+              const next = [...prev];
+              const bubble = next.pop()!;
+              next.push({ kind: 'sku_cards', data }, bubble);
               return next;
             });
           } else if (ev.type === 'error') {
@@ -352,6 +481,13 @@ function LobsterPage() {
                         长按图片可保存到相册
                       </div>
                     </div>
+                  </div>
+                );
+              }
+              if (it.kind === 'sku_cards') {
+                return (
+                  <div key={i} className="flex justify-start">
+                    <SkuCardsBlock data={it.data} />
                   </div>
                 );
               }

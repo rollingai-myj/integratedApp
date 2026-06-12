@@ -207,6 +207,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_selection_context: '汇总选品参考数据',
   list_active_promotions: '查询当前促销活动',
   generate_poster: '生成促销海报',
+  show_sku_cards: '整理商品推荐清单',
 };
 
 export function toolLabel(name: string): string {
@@ -318,6 +319,38 @@ const TOOLS: unknown[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'show_sku_cards',
+      description:
+        '把涉及具体商品的建议整理成结构化卡片展示给店长(带"复制编码/复制清单"按钮,方便店长去订货系统操作)。在给出选品/补货/下架等建议后调用。只放你已通过其他工具查到、确认存在于本店的 SKU 编码;卡片会自动带上商品名和价格,不存在的编码会被拒绝。调用后不要在文字里再重复罗列同一份清单。',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: '清单标题,如"烘焙糕点调整建议"' },
+          items: {
+            type: 'array',
+            description: '最多 12 条',
+            items: {
+              type: 'object',
+              properties: {
+                skuCode: { type: 'string', description: '本店 SKU 编码' },
+                action: {
+                  type: 'string',
+                  enum: ['add', 'remove', 'keep', 'watch'],
+                  description: 'add 建议上新/补货,remove 建议下架,keep 建议保留,watch 建议观察',
+                },
+                reason: { type: 'string', description: '一句话理由,带具体数字' },
+              },
+              required: ['skuCode', 'action'],
+            },
+          },
+        },
+        required: ['items'],
+      },
+    },
+  },
 ];
 
 function capResult(v: unknown): string {
@@ -335,13 +368,44 @@ function flattenCategories(nodes: CategoryNode[]): string[] {
   return nodes.map(pathOf);
 }
 
+/** show_sku_cards 推给前端的结构化推荐卡片(经 DB 校验,模型编不出来) */
+export interface SkuCardsPayload {
+  title: string;
+  items: Array<{
+    skuCode: string;
+    name: string;
+    spec: string | null;
+    action: 'add' | 'remove' | 'keep' | 'watch';
+    reason: string | null;
+    retailPrice: number | null;
+    salesQty30d: number | null;
+    stockQty: number | null;
+  }>;
+}
+
 interface ToolContext {
   userId: string;
   storeId: string;
   conversationId: string;
   /** generate_poster 产出的海报,带回给路由层发 SSE 事件 + 写进 assistant 消息 */
   onPoster: (posterUrl: string, posterId: string) => void;
+  /** show_sku_cards 产出的推荐卡片,同上 */
+  onSkuCards: (payload: SkuCardsPayload) => void;
 }
+
+const skuCardsArgsSchema = z.object({
+  title: z.string().max(40).optional(),
+  items: z
+    .array(
+      z.object({
+        skuCode: z.string().min(1).max(64),
+        action: z.enum(['add', 'remove', 'keep', 'watch']),
+        reason: z.string().max(120).optional(),
+      }),
+    )
+    .min(1)
+    .max(12),
+});
 
 const posterArgsSchema = z.object({
   copyText: z.string().min(1).max(60),
@@ -572,6 +636,72 @@ async function execTool(name: string, rawArgs: string, ctx: ToolContext): Promis
       });
     }
 
+    case 'show_sku_cards': {
+      const parsed = skuCardsArgsSchema.safeParse(parsedArgs);
+      if (!parsed.success) {
+        return JSON.stringify({ error: parsed.error.issues[0]?.message ?? '参数不合法' });
+      }
+      const wanted = [...new Map(parsed.data.items.map((i) => [i.skuCode.trim(), i])).values()];
+      const found = await query<{
+        sku_code: string;
+        product_name: string;
+        spec: string | null;
+        retail_price: string | null;
+        sales_qty_30d: number | null;
+        stock_qty: number | null;
+      }>(
+        `SELECT p.sku_code, p.product_name, p.spec,
+                f.retail_price, f.sales_qty_30d, f.stock_qty
+         FROM dim_product p
+         LEFT JOIN LATERAL (
+           SELECT retail_price, sales_qty_30d, stock_qty
+           FROM fact_store_sku_weekly
+           WHERE product_id = p.id AND store_id = $1
+           ORDER BY snapshot_date DESC LIMIT 1
+         ) f ON TRUE
+         WHERE p.sku_code = ANY($2)`,
+        [ctx.storeId, wanted.map((i) => i.skuCode.trim())],
+      );
+      const byCode = new Map(found.rows.map((r) => [r.sku_code, r]));
+      const items: SkuCardsPayload['items'] = [];
+      const unknown: string[] = [];
+      for (const it of wanted) {
+        const row = byCode.get(it.skuCode.trim());
+        if (!row) {
+          unknown.push(it.skuCode);
+          continue;
+        }
+        items.push({
+          skuCode: row.sku_code,
+          name: row.product_name,
+          spec: row.spec,
+          action: it.action,
+          reason: it.reason ?? null,
+          retailPrice: row.retail_price === null ? null : Number(row.retail_price),
+          salesQty30d: row.sales_qty_30d,
+          stockQty: row.stock_qty,
+        });
+      }
+      if (items.length === 0) {
+        return JSON.stringify({
+          error: 'NO_VALID_SKU',
+          message: '提供的编码在商品库中都不存在,请用工具查到的真实 skuCode 重试。',
+          unknownSkuCodes: unknown,
+        });
+      }
+      const payload: SkuCardsPayload = {
+        title: parsed.data.title?.trim() || '商品建议清单',
+        items,
+      };
+      ctx.onSkuCards(payload);
+      return JSON.stringify({
+        ok: true,
+        shownCount: items.length,
+        ...(unknown.length ? { skippedUnknownSkuCodes: unknown } : {}),
+        note: '卡片已展示给店长(带复制按钮),不要在文字里重复罗列清单内容。',
+      });
+    }
+
     default:
       return JSON.stringify({ error: `未知工具 ${name}` });
   }
@@ -608,6 +738,10 @@ function buildSystemPrompt(store: { name: string; city: string | null }): string
 2. 用 get_selection_context 拿数据包(在售表现/引入候选/总部基准/竞品价)。
 3. 给出结构化建议:【建议保留】【建议上新】【建议下架/观察】,每条都带数据理由(销量、毛利、库存、竞品价、是否总部基准款)。
 4. 下架建议要谨慎,提醒店长结合实际客流确认。
+5. 涉及具体商品清单时(选品调整、补货提醒、滞销清单等),**先调用 show_sku_cards**
+   把清单做成卡片(店长可一键复制编码去订货系统),然后文字部分只写一两句最重要的
+   结论和注意事项。**严禁在文字里逐条罗列商品**——卡片已经展示了,文字再列一遍
+   店长要看两份重复内容。
 
 # 技能 2:促销海报
 店长想做海报时:
@@ -668,6 +802,7 @@ export interface LobsterMessageRow {
     text?: string;
     hasPhoto?: boolean;
     posterUrl?: string | null;
+    skuCards?: SkuCardsPayload | null;
     calls?: Array<{ id: string; name: string; arguments: string }>;
     toolCallId?: string;
     name?: string;
@@ -764,6 +899,7 @@ export interface LobsterTurnEvents {
   onToolStart: (name: string, label: string) => void;
   onToolEnd: (name: string, ok: boolean) => void;
   onPoster: (posterUrl: string, posterId: string) => void;
+  onSkuCards: (payload: SkuCardsPayload) => void;
 }
 
 export async function runLobsterTurn(args: {
@@ -839,6 +975,7 @@ export async function runLobsterTurn(args: {
   // 4) agent loop
   const model = await getLobsterModel();
   let lastPosterUrl: string | null = null;
+  let lastSkuCards: SkuCardsPayload | null = null;
   const toolCtx: ToolContext = {
     userId,
     storeId,
@@ -846,6 +983,10 @@ export async function runLobsterTurn(args: {
     onPoster: (url, id) => {
       lastPosterUrl = url;
       events.onPoster(url, id);
+    },
+    onSkuCards: (payload) => {
+      lastSkuCards = payload;
+      events.onSkuCards(payload);
     },
   };
 
@@ -862,6 +1003,7 @@ export async function runLobsterTurn(args: {
       await insertMessage(conversationId, 'assistant', {
         text: result.text,
         ...(lastPosterUrl ? { posterUrl: lastPosterUrl } : {}),
+        ...(lastSkuCards ? { skuCards: lastSkuCards } : {}),
       });
       await query(`UPDATE lobster_conversations SET updated_at = now() WHERE id = $1`, [
         conversationId,
