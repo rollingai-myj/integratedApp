@@ -236,7 +236,7 @@ const TOOLS: unknown[] = [
     function: {
       name: 'query_skus',
       description:
-        '查询本门店在售 SKU 的销量/价格/毛利/库存。可按关键词或品类路径(如"饮料/茶饮料/即饮茶")筛选。注意:search 只匹配商品名/编码,问"某品类卖得如何"时务必用 categoryPath(先 get_category_tree 拿准确路径),用关键词会漏掉名字不含该词的商品。',
+        '查询本门店在售 SKU 的销量/价格/毛利/库存。可按关键词或品类路径筛选;categoryPath 支持前缀匹配,给一级("烘焙糕点")、二级("烘焙糕点/面包")或三级路径都行。注意:search 只匹配商品名/编码,问"某品类卖得如何"时务必用 categoryPath(先 get_category_tree 拿准确名称),用关键词会漏掉名字不含该词的商品。',
       parameters: {
         type: 'object',
         properties: {
@@ -399,12 +399,15 @@ async function execTool(name: string, rawArgs: string, ctx: ToolContext): Promis
     }
 
     case 'query_skus': {
-      const skus = await listStoreSkus({
+      // master.listStoreSkus 的 categoryPath 是"完整三级路径精确匹配",
+      // 而模型常给一级/二级前缀(如"烘焙糕点"),这里改为前缀过滤
+      const all = await listStoreSkus({
         storeId: ctx.storeId,
         search: typeof parsedArgs.search === 'string' ? parsedArgs.search : undefined,
-        categoryPath:
-          typeof parsedArgs.categoryPath === 'string' ? parsedArgs.categoryPath : undefined,
       });
+      const prefix =
+        typeof parsedArgs.categoryPath === 'string' ? parsedArgs.categoryPath.trim() : '';
+      const skus = prefix ? all.filter((s) => s.categoryPath?.startsWith(prefix)) : all;
       return capResult({
         count: skus.length,
         skus: skus.slice(0, 60).map((s) => ({
@@ -425,14 +428,24 @@ async function execTool(name: string, rawArgs: string, ctx: ToolContext): Promis
     }
 
     case 'query_competitor_prices': {
-      const skuCodes = Array.isArray(parsedArgs.skuCodes)
+      let skuCodes = Array.isArray(parsedArgs.skuCodes)
         ? (parsedArgs.skuCodes as string[]).filter((x) => typeof x === 'string')
-        : undefined;
-      const rows = await queryCompetitors({
-        bySkuCodes: skuCodes?.length ? skuCodes : undefined,
-        byCategoryPath:
-          typeof parsedArgs.categoryPath === 'string' ? parsedArgs.categoryPath : undefined,
-      });
+        : [];
+      // 按品类问竞品时:先取本店该品类(前缀匹配)的 SKU,再按编码对标,
+      // 避开 queryCompetitors byCategoryPath 的三级路径精确匹配限制
+      const prefix =
+        typeof parsedArgs.categoryPath === 'string' ? parsedArgs.categoryPath.trim() : '';
+      if (!skuCodes.length && prefix) {
+        const all = await listStoreSkus({ storeId: ctx.storeId });
+        skuCodes = all
+          .filter((s) => s.categoryPath?.startsWith(prefix))
+          .map((s) => s.skuCode)
+          .slice(0, 50);
+      }
+      if (!skuCodes.length) {
+        return JSON.stringify({ count: 0, note: '请提供 skuCodes 或本店有商品的品类路径' });
+      }
+      const rows = await queryCompetitors({ bySkuCodes: skuCodes });
       return capResult({ count: rows.length, competitors: rows.slice(0, 60) });
     }
 
