@@ -5,7 +5,7 @@
  *   1. HTTP-only Cookie `sso_token`
  *   2. Header `Authorization: Bearer <token>`
  *
- * 校验：token → SHA-256 → auth_sessions.token_hash 查找；过期 / revoked / 用户停用都视为未登录
+ * 校验：token → SHA-256 → user_sessions.token_hash 查找；过期 / revoked / 用户停用都视为未登录
  *
  * 中间件挂上的 req.user 包含基础字段（id / name / roles / currentStoreId），
  * 进一步的门店列表等让 handler 自己再去查（保持中间件轻）
@@ -20,14 +20,20 @@ declare module 'express-serve-static-core' {
   interface Request {
     user?: AuthenticatedUser;
     sessionToken?: string;
+    /** 当前登录会话 user_sessions.id（usage 会话挂靠用） */
+    sessionId?: string;
   }
 }
 
 interface SessionLookupRow {
+  session_id: string;
   user_id: string;
   display_name: string;
   status: 'active' | 'disabled';
   active_store_id: string | null;
+  active_store_code: string | null;
+  legacy_account: string | null;
+  auth_method: 'feishu_qr' | 'feishu_h5' | 'legacy_password';
   expires_at: Date;
   revoked_at: Date | null;
   email: string | null;
@@ -50,19 +56,24 @@ export function extractToken(req: Request): string | null {
 
 async function loadUserFromToken(
   token: string,
-): Promise<AuthenticatedUser | null> {
+): Promise<(AuthenticatedUser & { sessionId: string }) | null> {
   const tokenHash = hashToken(token);
   const sessionRes = await query<SessionLookupRow>(
-    `SELECT s.user_id,
+    `SELECT s.id AS session_id,
+            s.user_id,
             u.display_name,
             u.email,
             u.avatar_url,
             u.status,
+            u.legacy_account,
+            s.auth_method,
             s.active_store_id,
+            st.store_code AS active_store_code,
             s.expires_at,
             s.revoked_at
-       FROM auth_sessions s
-       JOIN users u ON u.id = s.user_id AND u.deleted_at IS NULL
+       FROM user_sessions s
+       JOIN users u  ON u.id = s.user_id AND u.deleted_at IS NULL
+  LEFT JOIN stores st ON st.id = s.active_store_id AND st.deleted_at IS NULL
       WHERE s.token_hash = $1
       LIMIT 1`,
     [tokenHash],
@@ -74,7 +85,7 @@ async function loadUserFromToken(
   if (row.status !== 'active') return null;
 
   const rolesRes = await query<{ role: string }>(
-    `SELECT role FROM user_roles WHERE user_id = $1 ORDER BY role`,
+    `SELECT system_role AS role FROM user_roles WHERE user_id = $1 ORDER BY system_role`,
     [row.user_id],
   );
 
@@ -85,6 +96,10 @@ async function loadUserFromToken(
     avatarUrl: row.avatar_url ?? undefined,
     roles: rolesRes.rows.map((r) => r.role),
     currentStoreId: row.active_store_id,
+    currentStoreCode: row.active_store_code,
+    legacyAccount: row.legacy_account,
+    authMethod: row.auth_method,
+    sessionId: row.session_id,
   };
 }
 
@@ -118,8 +133,10 @@ export function requireAuth(
         );
         return;
       }
-      req.user = user;
+      const { sessionId, ...rest } = user;
+      req.user = rest;
       req.sessionToken = token;
+      req.sessionId = sessionId;
       next();
     } catch (err) {
       next(err);
@@ -142,8 +159,10 @@ export function optionalAuth(
     try {
       const user = await loadUserFromToken(token);
       if (user) {
-        req.user = user;
+        const { sessionId, ...rest } = user;
+        req.user = rest;
         req.sessionToken = token;
+        req.sessionId = sessionId;
       }
       next();
     } catch (err) {

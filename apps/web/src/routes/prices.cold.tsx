@@ -1,17 +1,15 @@
 /**
  * 价盘 · 冷藏品工作页（来自原 priceChange repo /cold）
  *
- * 1:1 还原原 repo `src/routes/cold.tsx`，数据层适配：
+ * 数据层：
  *   - SKU 列表：useStoreSkus（统一后端 /skus，session 取 storeId）
  *   - 价格曲线：usePriceCurve 一次性拉所有可见 SKU 的曲线
- *   - 调价：useSubmitPriceChange（D3 两层写入，乐观更新由 React Query 自动 invalidate）
- *   - AI 诊断：useDiagnoseSkus（统一后端 /prices/diagnose，密钥在后端）
- *   - 规则诊断：纯前端，根据曲线趋势判断（adapt 自 lib/prices/diagnosis.ts）
+ *   - 调价：useSubmitPriceChange（只写流水，效果对比靠两期 snapshot）
+ *   - 规则诊断：纯前端，根据曲线趋势判断（lib/prices/diagnosis.ts）
  *   - 调价历史：从所有 SKU 的 periods 推（相邻段对比月毛利涨跌）
  */
 import { createFileRoute } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -31,9 +29,9 @@ import {
 } from '@/components/prices/dialogs/HistoryDialog';
 import { useMe } from '@/lib/auth';
 import {
-  useDiagnoseSkus,
   usePriceChanges,
   usePriceCurve,
+  useScenes,
   useStoreSkus,
   useSubmitPriceChange,
 } from '@/lib/hooks';
@@ -47,7 +45,6 @@ import {
   type CurveData,
 } from '@/lib/prices/types';
 import {
-  adaptDiagnosis,
   ruleBasedDiagnosis,
   type SkuDiagnosis,
 } from '@/lib/prices/diagnosis';
@@ -55,10 +52,14 @@ import type { PriceChangeRecord, StoreSkuRow } from '@myj/shared';
 
 export const Route = createFileRoute('/prices/cold')({
   component: ColdPage,
+  // ?scene=面包架【烘焙】 走烘焙；缺省走冷藏。同一页两套数据，避免再克隆一份 614 行的 UI。
+  validateSearch: (search: Record<string, unknown>): { scene?: string } => ({
+    scene: typeof search.scene === 'string' ? search.scene : undefined,
+  }),
   head: () => ({
     meta: [
-      { title: '冷藏品价盘分析 · 美宜佳' },
-      { name: 'description', content: '美宜佳冷藏品价格诊断、调整与效果追踪' },
+      { title: '价盘分析 · 美宜佳' },
+      { name: 'description', content: '美宜佳门店价格诊断、调整与效果追踪' },
       {
         name: 'viewport',
         content:
@@ -76,8 +77,23 @@ function ColdPage() {
   const meQuery = useMe();
   const storeId = meQuery.data?.currentStore?.id ?? null;
 
+  // 选哪个场景的价盘：URL `?scene=xxx`（精确匹配 hq_categories 场景名）；缺省 = 冷藏
+  const search = Route.useSearch();
+  const sceneName = search.scene || '冷藏';
+
+  // 场景编号从后端拿（不写死 12 / 2，避免场景表重排后悄悄串类）。
+  // scene 没就绪前用 null 关掉 SKU 查询，防止首次发出"不带 scene"的请求把全 13 类商品都拉回来。
+  const scenesQuery = useScenes();
+  const coldScene = useMemo(
+    () => scenesQuery.data?.scenes.find((s) => s.name === sceneName)?.scene,
+    [scenesQuery.data, sceneName],
+  );
+
   // 数据
-  const skusQuery = useStoreSkus(storeId);
+  const skusQuery = useStoreSkus(
+    coldScene != null ? storeId : null,
+    coldScene != null ? { scene: coldScene } : undefined,
+  );
   const allRows = useMemo<StoreSkuRow[]>(
     () => skusQuery.data?.skus ?? [],
     [skusQuery.data],
@@ -106,9 +122,8 @@ function ColdPage() {
     return map;
   }, [curveQuery.data, allRows]);
 
-  // 规则诊断 + AI 诊断（合并）
-  const [aiDiagnoses, setAiDiagnoses] = useState<Record<string, SkuDiagnosis>>({});
-  const ruleDiagnoses = useMemo(() => {
+  // 规则诊断（纯前端基于曲线趋势）
+  const diagnoses = useMemo<Record<string, SkuDiagnosis>>(() => {
     const map: Record<string, SkuDiagnosis> = {};
     for (const r of allRows) {
       const sku = rowToSku(r);
@@ -117,10 +132,6 @@ function ColdPage() {
     }
     return map;
   }, [allRows, curveByCode]);
-  const diagnoses = useMemo<Record<string, SkuDiagnosis>>(
-    () => ({ ...aiDiagnoses, ...ruleDiagnoses }),
-    [aiDiagnoses, ruleDiagnoses],
-  );
 
   // 提交
   const submit = useSubmitPriceChange();
@@ -168,41 +179,6 @@ function ColdPage() {
       submit.reset();
     }
   }, [submit]);
-
-  // AI 诊断 mutation
-  const diagnose = useDiagnoseSkus();
-  const [refreshProgress, setRefreshProgress] = useState('');
-  const refreshDiagnoses = useCallback(async () => {
-    if (diagnose.isPending) return;
-    // 只诊断"没有规则建议"的 SKU
-    const pending = allRows
-      .filter((r: StoreSkuRow) => !ruleDiagnoses[r.skuCode] && !aiDiagnoses[r.skuCode])
-      .map((r: StoreSkuRow) => ({
-        skuCode: r.skuCode,
-        currentPrice: Number(r.retailPrice ?? 0),
-        wholesalePrice: r.wholesalePrice != null ? Number(r.wholesalePrice) : undefined,
-        salesQty30d: r.salesQty30d ?? undefined,
-        grossMargin30d: r.grossMargin30d != null ? Number(r.grossMargin30d) : undefined,
-      }));
-
-    if (pending.length === 0) {
-      setRefreshProgress('所有商品已有诊断');
-      return;
-    }
-
-    setRefreshProgress(`正在诊断 ${pending.length} 个商品…`);
-    try {
-      const res = await diagnose.mutateAsync(pending);
-      const next: Record<string, SkuDiagnosis> = {};
-      for (const r of res.results) next[r.skuCode] = adaptDiagnosis(r);
-      setAiDiagnoses((prev) => ({ ...prev, ...next }));
-      setRefreshProgress(`完成 ${res.results.length} 个商品诊断`);
-      toast.success(`AI 诊断完成：${res.results.length} 个商品`);
-    } catch (err: any) {
-      setRefreshProgress('调用失败');
-      toast.error(err?.message ?? 'AI 诊断调用失败，请稍后重试');
-    }
-  }, [diagnose, allRows, ruleDiagnoses, aiDiagnoses]);
 
   // 过滤 + 排序
   const filtered = useMemo<StoreSkuRow[]>(() => {
@@ -285,13 +261,13 @@ function ColdPage() {
   const historyCount = historyEntries.length;
 
   // 启动 loader
-  if (loading || skusQuery.isLoading) {
+  if (loading || scenesQuery.isLoading || skusQuery.isLoading) {
     return (
       <IOSDevice>
         <div className="flex min-h-screen items-center justify-center bg-background">
           <div className="text-center">
             <PriceTagLoader />
-            <div className="mt-5 text-xs text-muted-foreground">正在加载冷藏品数据…</div>
+            <div className="mt-5 text-xs text-muted-foreground">正在加载{sceneName}数据…</div>
           </div>
         </div>
       </IOSDevice>
@@ -324,7 +300,7 @@ function ColdPage() {
               COLD CHAIN · 2025 Q4
             </div>
             <h1 className="mt-1 text-[26px] font-extrabold leading-[1.1] tracking-tight">
-              冷藏品价盘
+              {sceneName}价盘
             </h1>
           </div>
           <button
@@ -400,26 +376,6 @@ function ColdPage() {
           </div>
         )}
 
-        {/* AI 诊断刷新按钮 */}
-        <div className="flex items-center gap-2 pt-1">
-          <button
-            onClick={refreshDiagnoses}
-            disabled={diagnose.isPending}
-            className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-medium transition active:scale-[0.97]"
-            style={{
-              background: 'color-mix(in oklab, var(--brand) 10%, transparent)',
-              color: 'var(--brand)',
-              border: '1px solid color-mix(in oklab, var(--brand) 20%, transparent)',
-              opacity: diagnose.isPending ? 0.6 : 1,
-            }}
-          >
-            <span>{diagnose.isPending ? '⏳' : '🤖'}</span>
-            <span>{diagnose.isPending ? '分析中…' : '刷新 AI 建议'}</span>
-          </button>
-          {refreshProgress && (
-            <span className="text-[10px] text-muted-foreground">{refreshProgress}</span>
-          )}
-        </div>
       </main>
 
       <SkuDetailDialog

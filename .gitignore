@@ -61,3 +61,7 @@ postgres_data/
 .tmp/
 tmp/
 *.local
+
+# ========== 数据备份与设计稿原件（体积大，不入库） ==========
+dumps/
+myjadviser.zip

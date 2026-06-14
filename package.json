@@ -20,7 +20,9 @@
     "migrate:status": "npm run -w apps/api migrate:status",
     "db:up": "docker-compose up -d postgres",
     "db:down": "docker-compose down",
-    "db:reset": "docker-compose down -v && docker-compose up -d postgres && sleep 3 && npm run migrate"
+    "db:reset": "bash apps/api/scripts/db-reset.sh",
+    "db:verify": "bash apps/api/scripts/db-verify.sh",
+    "db:seed:gen": "bash apps/api/scripts/gen-dev-seed.sh"
   },
   "dependencies": {
     "heic2any": "^0.0.4",

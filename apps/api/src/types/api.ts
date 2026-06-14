@@ -33,14 +33,8 @@ export type {
   PriceChangeRecord,
   SubmitPriceChangeRequest,
   SubmitPriceChangeResponse,
-  DiagnoseSkuResult,
-  DiagnoseBatchResponse,
   PosterTemplate,
   PosterMode,
-  PosterGenerateRequest,
-  PosterRecord,
-  PosterGenerateResponse,
-  PosterListResponse,
   PromotionUpload,
   ProductPromotion,
   PromotionGroupRow,
@@ -62,6 +56,12 @@ import type { CurrentUser } from '@myj/shared';
 export type AuthenticatedUser = CurrentUser & {
   /** 服务端可选附加：当前会话激活的门店 ID（middleware 不挂；handler 自己查） */
   currentStoreId?: string | null;
+  /** 当前会话激活门店的 store_code（如 "粤37893"），构造 Dify user 字段用 */
+  currentStoreCode?: string | null;
+  /** 账密登录的账号名（如 admin/ops），feishu 登录为 null */
+  legacyAccount?: string | null;
+  /** user_sessions.auth_method：判定 Dify user 渠道前缀（lark vs legacyAccount）*/
+  authMethod?: 'feishu_qr' | 'feishu_h5' | 'legacy_password' | null;
 };
 
 /** 统一错误响应体（与 ApiErrorBody 同形，仅给 errorHandler 用） */

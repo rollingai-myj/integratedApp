@@ -15,7 +15,14 @@ export function loadRecent(): RecentPoster[] {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
+    if (!Array.isArray(arr)) return [];
+    // 老条目 imageUrl 可能是 data:image/...;base64,...（OSS 转存修复之前留下）。
+    // iOS Safari 拿大 base64 渲染失败显示纯黑——loadRecent 时直接过掉，并写回 localStorage 顺手清理。
+    const cleaned = arr.filter((r: RecentPoster) => typeof r?.imageUrl === 'string' && !r.imageUrl.startsWith('data:'));
+    if (cleaned.length !== arr.length) {
+      try { localStorage.setItem(KEY, JSON.stringify(cleaned)); } catch {}
+    }
+    return cleaned;
   } catch { return []; }
 }
 

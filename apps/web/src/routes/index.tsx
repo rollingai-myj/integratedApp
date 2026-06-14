@@ -44,7 +44,7 @@ interface ModuleDef {
 }
 
 const MODULES: ModuleDef[] = [
-  { id: 'shelves',  name: '货盘选品', desc: '新品上架 · 滞销下架', to: '/shelves/position', icon: <ShelvesIcon /> },
+  { id: 'shelves',  name: '货盘选品', desc: '新品上架 · 滞销下架', to: '/shelves', icon: <ShelvesIcon /> },
   { id: 'prices',   name: '价盘管理', desc: '智能调价 · 价格追踪', to: '/prices',  icon: <PriceIcon /> },
   { id: 'radar',    name: '竞品报告', desc: '商品结构 · 售价对比',                 icon: <RadarIcon /> }, // 竞品同事的模块，暂未启用
   { id: 'posters',  name: '活动海报', desc: '私域运营 · 海报生成', to: '/posters', icon: <PosterIcon /> },

@@ -6,11 +6,11 @@
  *   - GET /docs.json      OpenAPI spec（JSON 格式）
  *   - GET /docs.yaml      OpenAPI spec（YAML 原文）
  *
- * spec 文件维护在 apps/api/openapi.yaml，手写 + 渐进式补充。
- * 路由代码本身零侵入：所有 schema / 描述都集中在 yaml 里。
+ * spec 优先读 docs/api-to-be.openapi.yaml（refactor 完成后的实现版 source of truth）；
+ * 旧的 apps/api/openapi.yaml 仅作 fallback，后续可删。
  */
 import { Router, type Request, type Response } from 'express';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yamljs';
@@ -19,8 +19,10 @@ import swaggerUi from 'swagger-ui-express';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// 解析 openapi.yaml：src/routes/docs.routes.ts → 上溯两级到 apps/api/ 再拼
-const YAML_PATH = join(__dirname, '..', '..', 'openapi.yaml');
+// src/routes → apps/api/src/routes → ... → repo root → docs/
+const PRIMARY = join(__dirname, '..', '..', '..', '..', 'docs', 'api-to-be.openapi.yaml');
+const FALLBACK = join(__dirname, '..', '..', 'openapi.yaml');
+const YAML_PATH = existsSync(PRIMARY) ? PRIMARY : FALLBACK;
 
 const spec = YAML.load(YAML_PATH);
 const yamlRaw = readFileSync(YAML_PATH, 'utf-8');

@@ -80,7 +80,7 @@ export function rowToSku(row: StoreSkuRow): SKU {
   return {
     code: row.skuCode,
     name: row.productName,
-    imgUrl: row.officialImageUrl ?? getSkuImageUrl(row.skuCode),
+    imgUrl: getSkuImageUrl(row.skuCode),
     spec: row.spec ?? '',
     brand: row.brand ?? '',
     wholesalePrice: Number(row.wholesalePrice ?? 0),
@@ -100,7 +100,7 @@ export function rowToSku(row: StoreSkuRow): SKU {
  *
  * 月化毛利计算优先级：
  *   1. 该 snapshot 有 grossMargin30d 且 > 0 → 月化毛利 = 销量 × 售价 × 毛利率
- *   2. 否则用批发价回填：先看 snapshot.wholesalePrice，再 fallback 到入参（dim_product.wholesale_price）
+ *   2. 否则用批发价回填：先看 snapshot.wholesalePrice，再 fallback 到入参（hq_products.wholesale_price）
  *      → 单件毛利 = 售价 - 批发价；月化毛利 = 销量 × 单件毛利
  *   3. 批发价也没有时 → 月化毛利 = 月销售额（salesAmount30d）作粗略代用
  */

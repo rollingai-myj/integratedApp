@@ -172,6 +172,6 @@ d('loginWithFeishu (integration)', () => {
     const me = await getMeByToken(result.token);
     expect(me.feishuLinked).toBe(true);
     expect(me.modules).toEqual(expect.arrayContaining(['shelves', 'prices', 'posters', 'admin']));
-    expect(me.stores.length).toBeGreaterThanOrEqual(20); // 我们有 23 家
+    expect(me.stores.length).toBeGreaterThanOrEqual(2); // P1 种子缩到 3 家
   });
 });

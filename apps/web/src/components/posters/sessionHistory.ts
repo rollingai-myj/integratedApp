@@ -51,7 +51,22 @@ export function loadSessionHistory(): SessionHistory[] {
     const raw = localStorage.getItem(KEY_V2);
     if (!raw) return [];
     const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
+    if (!Array.isArray(arr)) return [];
+    // 老条目 items[].imageUrl 可能是 data:image/...;base64,...（OSS 转存修复之前留下）。
+    // iOS Safari 拿大 base64 渲染失败显示纯黑——load 时过滤掉这些 item，session 也跟着
+    // 重写回 localStorage 顺手清理。空 session 不丢，记录还在。
+    let dirty = false;
+    const cleaned = arr.map((s: SessionHistory) => {
+      const items = Array.isArray(s.items)
+        ? s.items.filter(it => typeof it?.imageUrl === 'string' && !it.imageUrl.startsWith('data:'))
+        : [];
+      if (items.length !== s.items?.length) dirty = true;
+      return { ...s, items };
+    });
+    if (dirty) {
+      try { localStorage.setItem(KEY_V2, JSON.stringify(cleaned)); } catch {}
+    }
+    return cleaned;
   } catch { return []; }
 }
 

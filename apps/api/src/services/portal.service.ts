@@ -121,7 +121,7 @@ export async function listStoresForUser(
  *   - 找不到匹配 → 403 FORBIDDEN
  *
  * 不改 user_stores.is_primary（那是"长期默认"，由后台账号管理改）；
- * 只改 auth_sessions.active_store_id（当前会话的"现在用哪家"）。
+ * 只改 user_sessions.active_store_id（当前会话的"现在用哪家"）。
  */
 export async function switchActiveStore(
   userId: string,
@@ -167,7 +167,7 @@ export async function switchActiveStore(
   // 更新当前会话的 active_store_id
   const tokenHash = hashToken(sessionToken);
   await query(
-    `UPDATE auth_sessions
+    `UPDATE user_sessions
         SET active_store_id = $1, last_seen_at = now()
       WHERE token_hash = $2`,
     [storeId, tokenHash],
@@ -180,4 +180,45 @@ export async function switchActiveStore(
       name: store.store_name,
     },
   };
+}
+
+/**
+ * 开始一次使用会话（应用外壳计时）。
+ * 挂在登录会话（user_sessions.id）下；user/store/终端信息 JOIN 取，不冗余存。
+ * 顺手把同一登录会话下心跳超时的 active 切片收尾（status=timeout）。
+ */
+export async function startUsageSession(
+  authSessionId: string,
+  deviceId: string | null,
+): Promise<{ id: string }> {
+  await query(
+    `UPDATE sys_usage_sessions
+        SET status = 'timeout', ended_at = last_heartbeat_at, ended_reason = 'heartbeat_timeout'
+      WHERE auth_session_id = $1
+        AND status = 'active'
+        AND last_heartbeat_at < now() - make_interval(secs =>
+              COALESCE((SELECT value::int FROM sys_settings WHERE key = 'usage_heartbeat_timeout_seconds'), 90))`,
+    [authSessionId],
+  );
+  const res = await query<{ id: string }>(
+    `INSERT INTO sys_usage_sessions (auth_session_id, device_id)
+     VALUES ($1, $2)
+     RETURNING id`,
+    [authSessionId, deviceId],
+  );
+  return { id: res.rows[0]!.id };
+}
+
+/** 使用会话心跳；只允许续自己登录会话下的切片 */
+export async function heartbeatUsageSession(
+  usageId: string,
+  authSessionId: string,
+): Promise<boolean> {
+  const res = await query(
+    `UPDATE sys_usage_sessions
+        SET last_heartbeat_at = now()
+      WHERE id = $1 AND auth_session_id = $2 AND status = 'active'`,
+    [usageId, authSessionId],
+  );
+  return (res.rowCount ?? 0) > 0;
 }

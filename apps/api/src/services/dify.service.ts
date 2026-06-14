@@ -14,8 +14,7 @@ export type DifyWorkflow =
   | 'align'
   | 'insight'
   | 'questions'
-  | 'virtual-shelf'
-  | 'price-diagnose';
+  | 'virtual-shelf';
 
 const KEY_MAP: Record<DifyWorkflow, () => string> = {
   selection: () => config.DIFY_KEY_SELECTION,
@@ -23,7 +22,6 @@ const KEY_MAP: Record<DifyWorkflow, () => string> = {
   insight: () => config.DIFY_KEY_INSIGHT,
   questions: () => config.DIFY_KEY_QUESTIONS,
   'virtual-shelf': () => config.DIFY_KEY_VIRTUAL_SHELF,
-  'price-diagnose': () => config.DIFY_KEY_PRICE_DIAGNOSE,
 };
 
 export interface DifyRunResponse {
@@ -122,3 +120,72 @@ export class DifyService {
 }
 
 export const difyService = new DifyService();
+
+// ---------------------------------------------------------------------------
+// SSE 流式调用：把 Dify 的 SSE 直接转给前端（业务端点 ai/* 用）
+// 工作流耗时差异大：strategy/insight ~1-2 分钟，virtual-shelf 可达 10 分钟
+// ---------------------------------------------------------------------------
+
+const STREAM_TIMEOUT_MS: Record<DifyWorkflow, number> = {
+  align: 120_000,
+  selection: 300_000,
+  insight: 120_000,
+  questions: 90_000,
+  'virtual-shelf': 600_000,
+};
+
+/**
+ * 触发 Dify 工作流并返回原生 SSE Response（业务端点 pipeline 透传给前端）。
+ * 失败时抛 AppError；成功返回的 Response.body 需由 caller pipeline 到 res。
+ */
+export async function streamDifyWorkflow(
+  workflow: DifyWorkflow,
+  inputs: Record<string, unknown>,
+  args: { userId?: string } = {},
+): Promise<Response> {
+  const apiKey = KEY_MAP[workflow]?.();
+  if (!apiKey) {
+    throw new AppError(
+      502,
+      ErrorCodes.UPSTREAM_ERROR,
+      `Dify 工作流 ${workflow} 未配置 API key`,
+    );
+  }
+  const url = `${config.DIFY_BASE_URL.replace(/\/$/, '')}/workflows/run`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        inputs: serializeInputs(inputs),
+        response_mode: 'streaming',
+        user: args.userId ?? 'system',
+      }),
+      signal: AbortSignal.timeout(STREAM_TIMEOUT_MS[workflow]),
+    });
+  } catch (err) {
+    logger.error({ err, workflow }, 'dify stream fetch failed');
+    throw new AppError(
+      502,
+      ErrorCodes.UPSTREAM_ERROR,
+      `调用 Dify 流式失败：${(err as Error).message}`,
+    );
+  }
+  if (!res.ok || !res.body) {
+    const body = await res.text().catch(() => '');
+    logger.warn(
+      { status: res.status, body: body.slice(0, 500), workflow },
+      'dify stream non-2xx',
+    );
+    throw new AppError(
+      502,
+      ErrorCodes.UPSTREAM_ERROR,
+      `Dify 工作流 ${workflow} 返回 ${res.status}`,
+    );
+  }
+  return res;
+}

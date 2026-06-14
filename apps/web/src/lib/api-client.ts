@@ -28,11 +28,18 @@ import type {
   ListPriceChangesResponse,
   SubmitPriceChangeRequest,
   SubmitPriceChangeResponse,
-  DiagnoseBatchResponse,
-  DiagnoseSkuResult,
-  PosterGenerateRequest,
-  PosterGenerateResponse,
-  PosterListResponse,
+  CreatePosterTasksRequest,
+  CreatePosterTasksResponse,
+  ListPosterTasksResponse,
+  GetPosterTaskResponse,
+  AdoptPosterGenerationResponse,
+  PosterDownloadResponse,
+  PosterGalleryResponse,
+  PosterTodayCountResponse,
+  PosterAssetUploadResponse,
+  ListPosterAssetsResponse,
+  PosterSalesTrackingResponse,
+  PosterGeneration,
   ActivePromotionsResponse,
   RecommendPromotionsResponse,
   ListShelfConfigsResponse,
@@ -148,12 +155,12 @@ export const masterApi = {
   listStores: () => request<ListStoresResponse>('/master/stores'),
 
   /** 当前 session 门店的在册 SKU（含售价 + 销量快照） */
-  listSkus: (params?: { search?: string; categoryPath?: string }) => {
+  listSkus: (params?: { scene?: number; q?: string }) => {
     const qs = new URLSearchParams();
-    if (params?.search) qs.set('search', params.search);
-    if (params?.categoryPath) qs.set('categoryPath', params.categoryPath);
+    if (params?.scene !== undefined) qs.set('scene', String(params.scene));
+    if (params?.q) qs.set('q', params.q);
     const q = qs.toString();
-    return request<ListStoreSkusResponse>(`/skus${q ? `?${q}` : ''}`);
+    return request<ListStoreSkusResponse>(`/store/skus${q ? `?${q}` : ''}`);
   },
 };
 
@@ -189,9 +196,9 @@ export const pricesApi = {
     return request<PriceCurveResponse>(`/prices/curve${q ? `?${q}` : ''}`);
   },
 
-  /** 提交一次调价（D3：写流水 + 同时插一行 snapshot）— 当前 session 门店 */
+  /** 提交一次调价（**只写流水，不动快照**）— 当前 session 门店 */
   adjust: (body: SubmitPriceChangeRequest) =>
-    request<SubmitPriceChangeResponse>('/prices/adjust', { method: 'POST', body }),
+    request<SubmitPriceChangeResponse>('/prices/changes', { method: 'POST', body }),
 
   /**
    * 调价流水记录（ops_store_price_change）— 当前 session 门店
@@ -205,54 +212,139 @@ export const pricesApi = {
     const q = qs.toString();
     return request<ListPriceChangesResponse>(`/prices/changes${q ? `?${q}` : ''}`);
   },
-
-  /** 批量 AI 诊断（走 Dify）— 当前 session 门店 */
-  diagnose: (
-    skus: Array<{
-      skuCode: string;
-      currentPrice: number;
-      wholesalePrice?: number;
-      salesQty30d?: number;
-      grossMargin30d?: number;
-      competitorPrices?: Array<{ channel: string; price: number }>;
-    }>,
-  ) =>
-    request<DiagnoseBatchResponse>('/prices/diagnose', {
-      method: 'POST',
-      body: { skus },
-    }),
 };
-
-export type { DiagnoseSkuResult };
 
 // ============================================================================
 // 模块 7 · 海报
 // ============================================================================
 
+/**
+ * 海报 API（任务 / 生成分离模型）
+ * createTasks / listTasks / adopt / download / gallery / assets / salesTracking
+ */
 export const postersApi = {
-  /** 单张同步生成（PO-C1） */
-  generate: (body: PosterGenerateRequest) =>
-    request<PosterGenerateResponse>('/posters/generate', { method: 'POST', body }),
+  // ---- 任务 ----
+  createTasks: (body: CreatePosterTasksRequest) =>
+    request<CreatePosterTasksResponse>('/posters/tasks', { method: 'POST', body }),
 
-  /**
-   * 海报历史：
-   * - scope=mine（默认）我跨店生成的全部
-   * - scope=current  我在当前 session 门店生成的（需要已选门店）
-   * - scope=all      仅超管，全部海报（可附 storeId 过滤）
-   */
-  list: (params?: {
+  listTasks: (params?: {
     scope?: 'mine' | 'current' | 'all';
+    status?: 'active' | 'done' | 'failed';
+    batchId?: string;
     storeId?: string;
     limit?: number;
   }) => {
     const qs = new URLSearchParams();
     if (params?.scope) qs.set('scope', params.scope);
+    if (params?.status) qs.set('status', params.status);
+    if (params?.batchId) qs.set('batchId', params.batchId);
     if (params?.storeId) qs.set('storeId', params.storeId);
     if (params?.limit) qs.set('limit', String(params.limit));
     const q = qs.toString();
-    return request<PosterListResponse>(`/posters${q ? `?${q}` : ''}`);
+    return request<ListPosterTasksResponse>(`/posters/tasks${q ? `?${q}` : ''}`);
+  },
+
+  getTask: (taskId: string) =>
+    request<GetPosterTaskResponse>(`/posters/tasks/${encodeURIComponent(taskId)}`),
+
+  cancelBatch: (batchId: string) =>
+    request<{ canceled: number }>(
+      `/posters/tasks/batch/${encodeURIComponent(batchId)}`,
+      { method: 'DELETE' },
+    ),
+
+  regenerate: (taskId: string) =>
+    request<{ generation: PosterGeneration }>(
+      `/posters/tasks/${encodeURIComponent(taskId)}/generations`,
+      { method: 'POST' },
+    ),
+
+  // ---- 生成操作 ----
+  claim: () =>
+    request<{ generation: PosterGeneration } | null>('/posters/generations:claim', {
+      method: 'POST',
+    }),
+
+  adopt: (generationId: string) =>
+    request<AdoptPosterGenerationResponse>(
+      `/posters/generations/${encodeURIComponent(generationId)}/adopt`,
+      { method: 'POST' },
+    ),
+
+  download: (generationId: string) =>
+    request<PosterDownloadResponse>(
+      `/posters/generations/${encodeURIComponent(generationId)}/download`,
+      { method: 'POST' },
+    ),
+
+  // ---- 成品库 / 额度 ----
+  gallery: (params?: {
+    scope?: 'mine' | 'current' | 'all';
+    adopted?: boolean;
+    storeId?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.scope) qs.set('scope', params.scope);
+    if (params?.adopted !== undefined) qs.set('adopted', String(params.adopted));
+    if (params?.storeId) qs.set('storeId', params.storeId);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<PosterGalleryResponse>(`/posters/gallery${q ? `?${q}` : ''}`);
+  },
+
+  todayCount: () => request<PosterTodayCountResponse>('/posters/today-count'),
+
+  // ---- 素材库（multipart 上传走 fetch 直传，单独函数） ----
+  listAssets: (kind?: 'background' | 'product_photo') => {
+    const qs = new URLSearchParams();
+    if (kind) qs.set('kind', kind);
+    const q = qs.toString();
+    return request<ListPosterAssetsResponse>(`/posters/assets${q ? `?${q}` : ''}`);
+  },
+
+  deleteAsset: (assetId: string) =>
+    request<void>(`/posters/assets/${encodeURIComponent(assetId)}`, {
+      method: 'DELETE',
+    }),
+
+  // ---- 销量追踪 ----
+  salesTracking: (params?: { days?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.days) qs.set('days', String(params.days));
+    const q = qs.toString();
+    return request<PosterSalesTrackingResponse>(
+      `/posters/sales-tracking${q ? `?${q}` : ''}`,
+    );
   },
 };
+
+/** 上传素材（multipart）— 单独函数，因为 request<T> 默认 JSON body */
+export async function uploadPosterAsset(args: {
+  kind: 'background' | 'product_photo';
+  file: File | Blob;
+  filename?: string;
+}): Promise<PosterAssetUploadResponse> {
+  const fd = new FormData();
+  fd.append('kind', args.kind);
+  fd.append('file', args.file, args.filename ?? 'upload.bin');
+  const res = await fetch(`${BASE_URL}/posters/assets`, {
+    method: 'POST',
+    credentials: 'include',
+    body: fd,
+  });
+  if (!res.ok) {
+    let msg = `Upload failed: ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body.error?.message) msg = body.error.message;
+    } catch {
+      /* swallow */
+    }
+    throw new Error(msg);
+  }
+  return res.json() as Promise<PosterAssetUploadResponse>;
+}
 
 // ============================================================================
 // 模块 8 · 促销

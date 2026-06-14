@@ -15,6 +15,8 @@ import {
   listModulesForRoles,
   listStoresForUser,
   switchActiveStore,
+  startUsageSession,
+  heartbeatUsageSession,
 } from '../services/portal.service.js';
 
 export const portalRouter = Router();
@@ -68,6 +70,53 @@ portalRouter.post(
           isSuperAdmin,
         );
         res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    })();
+  },
+);
+
+// -- 使用会话（应用外壳计时） ------------------------------------------------
+
+const usageStartSchema = z.object({
+  deviceId: z.string().max(128).optional(),
+});
+
+/** 开始使用会话：挂当前登录会话；返回 { id } 供心跳使用 */
+portalRouter.post(
+  '/portal/usage:start',
+  requireAuth,
+  (req: Request, res: Response, next: NextFunction) => {
+    void (async () => {
+      try {
+        const parsed = usageStartSchema.safeParse(req.body ?? {});
+        const deviceId = parsed.success ? parsed.data.deviceId ?? null : null;
+        const result = await startUsageSession(req.sessionId!, deviceId);
+        res.status(201).json(result);
+      } catch (err) {
+        next(err);
+      }
+    })();
+  },
+);
+
+/** 使用会话心跳（前端每 30s 一次） */
+portalRouter.post(
+  '/portal/usage/:usageId/heartbeat',
+  requireAuth,
+  (req: Request, res: Response, next: NextFunction) => {
+    void (async () => {
+      try {
+        const usageId = z.string().uuid().safeParse(req.params.usageId);
+        if (!usageId.success) {
+          throw new AppError(400, ErrorCodes.VALIDATION_ERROR, 'usageId 必须是 UUID');
+        }
+        const ok = await heartbeatUsageSession(usageId.data, req.sessionId!);
+        if (!ok) {
+          throw new AppError(404, ErrorCodes.NOT_FOUND, '使用会话不存在或已结束');
+        }
+        res.status(204).end();
       } catch (err) {
         next(err);
       }

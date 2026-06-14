@@ -374,7 +374,7 @@ components:
         skuCode: { type: string, example: 6901234567890 }
         newPrice: { type: number, example: 3.50 }
         oldPrice: { type: number, nullable: true }
-        source: { type: string, enum: [manual, ai_suggest, rule_engine], default: manual }
+        source: { type: string, enum: [manual, rule_engine], default: manual }
         note: { type: string, example: 跟竞品对齐 }
 
     PriceChangeRecord:
@@ -387,7 +387,7 @@ components:
         skuCode: { type: string }
         oldPrice: { type: number, nullable: true }
         newPrice: { type: number }
-        source: { type: string, enum: [manual, ai_suggest, rule_engine] }
+        source: { type: string, enum: [manual, rule_engine] }
         effectiveDate: { type: string, format: date }
         createdAt: { type: string, format: date-time }
 
@@ -396,50 +396,6 @@ components:
       required: [record]
       properties:
         record: { $ref: '#/components/schemas/PriceChangeRecord' }
-
-    DiagnoseSkuInput:
-      type: object
-      required: [skuCode, currentPrice]
-      properties:
-        skuCode: { type: string }
-        currentPrice: { type: number }
-        wholesalePrice: { type: number }
-        salesQty30d: { type: integer }
-        grossMargin30d: { type: number }
-        competitorPrices:
-          type: array
-          items:
-            type: object
-            properties:
-              channel: { type: string }
-              price: { type: number }
-
-    DiagnoseSkuResult:
-      type: object
-      required: [skuCode, suggestion, reasoning, confidence, source]
-      properties:
-        skuCode: { type: string }
-        suggestion: { type: string, enum: [up, down, hold, unknown] }
-        suggestedPrice: { type: number, nullable: true }
-        reasoning: { type: string }
-        confidence: { type: number, description: '0~1 之间' }
-        source: { type: string, example: dify }
-
-    DiagnoseBatchRequest:
-      type: object
-      required: [skus]
-      properties:
-        skus:
-          type: array
-          items: { $ref: '#/components/schemas/DiagnoseSkuInput' }
-
-    DiagnoseBatchResponse:
-      type: object
-      required: [results]
-      properties:
-        results:
-          type: array
-          items: { $ref: '#/components/schemas/DiagnoseSkuResult' }
 
     # ── 海报 ─────────────────────────────────────────────────────────────
     PosterGenerateRequest:
@@ -1137,30 +1093,6 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/NoStoreSelected' }
 
-  /prices/diagnose:
-    post:
-      tags: [价盘 (Prices)]
-      summary: 批量 AI 诊断（调 Dify workflow）
-      description: |
-        密钥保存在后端（不暴露给浏览器）。审计写一份到 `audit_events`，
-        `event_kind='price_ai_diagnose'`，`is_ai_call=TRUE`。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/DiagnoseBatchRequest' }
-      responses:
-        '200':
-          description: 诊断结果
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/DiagnoseBatchResponse' }
-        '502':
-          description: 上游 Dify 调用失败
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ApiErrorBody' }
-
   # ── 模块 7：海报 ──────────────────────────────────────────────────────
   /posters/generate:
     post:
@@ -1566,7 +1498,7 @@ paths:
       tags: [AI 网关 (AI Gateway)]
       summary: 统一 Dify 工作流调用
       description: |
-        `:workflow` 为 `price-diagnose` / `shelf-diagnose` / `selection` 等。
+        `:workflow` 为 `align` / `selection` / `insight` / `questions` / `virtual-shelf`。
         密钥在后端 .env，浏览器看不到。审计写 `audit_events.is_ai_call=TRUE`。
       parameters:
         - { name: workflow, in: path, required: true, schema: { type: string } }

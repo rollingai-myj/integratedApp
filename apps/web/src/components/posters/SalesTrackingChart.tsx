@@ -2,7 +2,7 @@
  * 销量跟踪 · 单 SKU 柱状图
  *
  * - X 轴：过去 90 天 weekly snapshot（snapshotDate）
- * - Y 轴：sales_qty_30d（30 天滚动销量；fact_store_sku_weekly 写死的口径）
+ * - Y 轴：sales_qty_30d（30 天滚动销量；store_sku_snapshots 写死的口径）
  * - marker：每个"做海报时间"在 X 轴最接近 snapshot 处用 ReferenceLine 立标
  *
  * 不复用 prices 的 PriceCurveChart：那是"按价格点位横向柱"，与本需求"按时间纵向柱

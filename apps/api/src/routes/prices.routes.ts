@@ -1,8 +1,9 @@
 /**
- * 模块 6：价盘管理（业务接口）
+ * 价盘路由（3 个端点）
  *
- * 全部业务接口从 session.currentStoreId 取门店，不接受客户端传 storeId。
- * 详见 docs/planning/unified-api-spec.md § 0。
+ *   GET  /prices/curve          价格 / 销量曲线（snapshot + change 合并）
+ *   GET  /prices/changes        本店调价历史
+ *   POST /prices/changes        调价（**只写流水，不动快照**）
  */
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
@@ -13,30 +14,32 @@ import {
   getPriceCurve,
   submitPriceChange,
   listPriceChanges,
-  diagnoseBatch,
 } from '../services/prices.service.js';
+import { writeAuditEvent } from '../services/audit.service.js';
 
 export const pricesRouter = Router();
 
 function asyncHandler(
-  fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>,
+  fn: (req: Request, res: Response) => Promise<unknown>,
 ) {
   return (req: Request, res: Response, next: NextFunction) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
+    Promise.resolve(fn(req, res)).catch(next);
   };
 }
 
-// ---- PR-A2 价格曲线 ------------------------------------------------------
+// ---- 价格曲线 ------------------------------------------------------------
 
 pricesRouter.get(
   '/prices/curve',
   requireAuth,
   requireStore,
   asyncHandler(async (req, res) => {
-    const skuCsv =
-      typeof req.query.skuCodes === 'string' ? req.query.skuCodes : undefined;
-    const skuCodes = skuCsv
-      ? skuCsv.split(',').map((s) => s.trim()).filter(Boolean)
+    // 兼容：?skuCode=A 单个；?skuCode=A,B,C 逗号；?skuCodes=A,B 别名
+    const raw =
+      (typeof req.query.skuCode === 'string' ? req.query.skuCode : undefined) ??
+      (typeof req.query.skuCodes === 'string' ? req.query.skuCodes : undefined);
+    const skuCodes = raw
+      ? raw.split(',').map((s) => s.trim()).filter(Boolean)
       : undefined;
     const daysBack = Number(req.query.daysBack) || undefined;
     const curves = await getPriceCurve({
@@ -48,90 +51,54 @@ pricesRouter.get(
   }),
 );
 
-// ---- 历史调价记录 --------------------------------------------------------
+// ---- 调价历史 + 调价 -----------------------------------------------------
 
 pricesRouter.get(
   '/prices/changes',
   requireAuth,
   requireStore,
   asyncHandler(async (req, res) => {
-    const skuCode =
-      typeof req.query.skuCode === 'string' ? req.query.skuCode : undefined;
+    const skuCode = typeof req.query.skuCode === 'string' ? req.query.skuCode : undefined;
     const limit = Number(req.query.limit) || undefined;
     const changes = await listPriceChanges({
       storeId: req.user!.currentStoreId!,
-      skuCode,
-      limit,
+      skuCode, limit,
     });
     res.json({ changes });
   }),
 );
 
-// ---- PR-A4 调价（决策 D3：同时写流水 + 销售快照） ------------------------
-
-const adjustSchema = z.object({
+const submitSchema = z.object({
   skuCode: z.string().min(1),
   newPrice: z.number().nonnegative(),
   oldPrice: z.number().nonnegative().optional(),
-  source: z.enum(['manual', 'ai_suggest', 'rule_engine']).optional(),
-  aiAdvice: z.record(z.unknown()).optional(),
-  aiModel: z.string().optional(),
+  source: z.enum(['manual', 'rule_engine']).optional(),
   effectiveDate: z.string().optional(),
   note: z.string().optional(),
 });
 
 pricesRouter.post(
-  '/prices/adjust',
+  '/prices/changes',
   requireAuth,
   requireStore,
   asyncHandler(async (req, res) => {
-    const body = adjustSchema.parse(req.body);
+    const body = submitSchema.parse(req.body);
     const record = await submitPriceChange(
       req.user!.currentStoreId!,
       body,
       req.user!.id,
       req.user!.name,
     );
+    void writeAuditEvent({
+      eventKind: 'price_change',
+      actorUserId: req.user!.id,
+      targetStoreId: req.user!.currentStoreId!,
+      payload: {
+        skuCode: body.skuCode,
+        oldPrice: record.oldPrice, newPrice: body.newPrice,
+        source: body.source ?? 'manual',
+      },
+    }).catch(() => {});
     res.status(201).json({ record });
-  }),
-);
-
-// ---- PR-B1 批量 AI 诊断 --------------------------------------------------
-
-const diagnoseSchema = z.object({
-  skus: z
-    .array(
-      z.object({
-        skuCode: z.string().min(1),
-        currentPrice: z.number().nonnegative(),
-        wholesalePrice: z.number().nonnegative().optional(),
-        salesQty30d: z.number().int().nonnegative().optional(),
-        grossMargin30d: z.number().optional(),
-        competitorPrices: z
-          .array(
-            z.object({
-              channel: z.string(),
-              price: z.number().nonnegative(),
-            }),
-          )
-          .optional(),
-      }),
-    )
-    .min(1)
-    .max(50),
-});
-
-pricesRouter.post(
-  '/prices/diagnose',
-  requireAuth,
-  requireStore,
-  asyncHandler(async (req, res) => {
-    const body = diagnoseSchema.parse(req.body);
-    const results = await diagnoseBatch(
-      req.user!.currentStoreId!,
-      body.skus,
-      req.user!.id,
-    );
-    res.json({ results });
   }),
 );

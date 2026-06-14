@@ -154,7 +154,17 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     if (!userId) return;
     try {
       const { jobs: rows } = await listMyActiveJobs();
-      setJobs(dedupeJobs(rows as Job[]));
+      // listMyActiveJobs 只回 active（queued/claimed/processing），但本地已经完成
+      // 的 done/error 行必须保留——否则任务一完成 badge 就消失，用户看不到
+      // "已完成 N 张"的结果态。
+      setJobs((prev) => {
+        const fresh = dedupeJobs(rows as Job[]);
+        const freshIds = new Set(fresh.map((j) => j.id));
+        const keptLocal = prev.filter(
+          (j) => !freshIds.has(j.id) && (j.status === "done" || j.status === "error"),
+        );
+        return dedupeJobs([...keptLocal, ...fresh]);
+      });
     } catch (e) { console.warn("[jobs] list", e); }
   }, [userId]);
 
@@ -226,9 +236,17 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
           j.id === id && j.status === "queued" ? { ...j, status: "processing" } : j
         ));
         try {
-          await processPosterJob({ data: { jobId: id } });
+          // process 是同步通路：返回时该 job 已经 succeeded/failed。立即用返回值
+          // 更新本地状态，避免依赖下一轮 refresh —— 下一轮 refresh 拉的是 active
+          // 集合（不含 done/error），如果不在这里就地更新，badge 会从"处理中"
+          // 直接消失（status=processing 的占位被服务端 active 集合替换为空）。
+          const r = await processPosterJob({ data: { jobId: id } });
+          if (r.status) {
+            setJobs(prev => prev.map(j => (j.id === id ? { ...j, status: r.status! } : j)));
+          }
         } catch (e) {
           console.warn("[jobs] process failed", id, e);
+          setJobs(prev => prev.map(j => (j.id === id ? { ...j, status: "error", error: (e as Error).message } : j)));
         }
       }
     });

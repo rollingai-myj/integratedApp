@@ -19,10 +19,14 @@ import {
   promotionsApi,
   shelvesApi,
   scenesApi,
+  uploadPosterAsset,
 } from './api-client.js';
 import type {
-  PosterGenerateRequest,
-  PosterGenerateResponse,
+  CreatePosterTasksRequest,
+  CreatePosterTasksResponse,
+  AdoptPosterGenerationResponse,
+  PosterDownloadResponse,
+  PosterAssetUploadResponse,
   SubmitPriceChangeRequest,
   SubmitPriceChangeResponse,
 } from '@myj/shared';
@@ -41,10 +45,10 @@ export function useStores() {
 
 export function useStoreSkus(
   storeId: string | null | undefined,
-  params?: { search?: string; categoryPath?: string },
+  params?: { scene?: number; q?: string },
 ) {
   return useQuery({
-    queryKey: ['master', 'skus', storeId, params?.search ?? '', params?.categoryPath ?? ''] as const,
+    queryKey: ['master', 'skus', storeId, params?.scene ?? -1, params?.q ?? ''] as const,
     queryFn: () => masterApi.listSkus(params),
     enabled: !!storeId,
     staleTime: 30_000,
@@ -133,61 +137,156 @@ export function useSubmitPriceChange() {
   });
 }
 
-/**
- * 价盘 · AI 批量诊断
- *
- * 调统一后端 /prices/diagnose（密钥保护、配额、审计都在后端）。
- * 入参是想诊断的 SKU 列表（每个含价格 / 销量 / 毛利率），返回每个 SKU 的建议。
- * 没用 useQuery 是因为这个调用是用户显式触发（点"刷新 AI 建议"按钮），不是
- * 数据维度的 query。返回 mutation，调用方用 `mutateAsync` 拿结果即可。
- */
-export function useDiagnoseSkus() {
-  return useMutation({
-    mutationFn: (
-      skus: Array<{
-        skuCode: string;
-        currentPrice: number;
-        wholesalePrice?: number;
-        salesQty30d?: number;
-        grossMargin30d?: number;
-      }>,
-    ) => pricesApi.diagnose(skus),
-  });
-}
-
 // ============================================================================
 // 模块 7 海报
 // ============================================================================
 
-export function usePosters(params?: {
+// ---- 任务 / 生成分离模型 hooks ---------------------------------------------
+
+export function usePosterTasks(params?: {
   scope?: 'mine' | 'current' | 'all';
+  status?: 'active' | 'done' | 'failed';
+  batchId?: string;
   storeId?: string;
   limit?: number;
 }) {
   return useQuery({
     queryKey: [
       'posters',
-      'list',
+      'tasks',
       params?.scope ?? 'mine',
+      params?.status ?? 'all',
+      params?.batchId ?? '',
       params?.storeId ?? '',
-      params?.limit ?? 50,
+      params?.limit ?? 100,
     ] as const,
-    queryFn: () => postersApi.list(params),
+    queryFn: () => postersApi.listTasks(params),
     staleTime: 30_000,
   });
 }
 
-export function useGeneratePoster() {
+export function usePosterTaskDetail(taskId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['posters', 'task', taskId] as const,
+    queryFn: () => postersApi.getTask(taskId!),
+    enabled: !!taskId,
+    staleTime: 30_000,
+  });
+}
+
+export function useCreatePosterTasks() {
+  const qc = useQueryClient();
+  return useMutation<CreatePosterTasksResponse, Error, CreatePosterTasksRequest>({
+    mutationFn: (body) => postersApi.createTasks(body),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['posters', 'tasks'] });
+      await qc.invalidateQueries({ queryKey: ['posters', 'today-count'] });
+    },
+  });
+}
+
+export function useCancelPosterBatch() {
+  const qc = useQueryClient();
+  return useMutation<{ canceled: number }, Error, string>({
+    mutationFn: (batchId) => postersApi.cancelBatch(batchId),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['posters', 'tasks'] });
+    },
+  });
+}
+
+export function useRegeneratePosterTask() {
+  const qc = useQueryClient();
+  return useMutation<{ generation: import('@myj/shared').PosterGeneration }, Error, string>({
+    mutationFn: (taskId) => postersApi.regenerate(taskId),
+    onSuccess: async (_d, taskId) => {
+      await qc.invalidateQueries({ queryKey: ['posters', 'tasks'] });
+      await qc.invalidateQueries({ queryKey: ['posters', 'task', taskId] });
+    },
+  });
+}
+
+export function useAdoptPoster() {
+  const qc = useQueryClient();
+  return useMutation<AdoptPosterGenerationResponse, Error, string>({
+    mutationFn: (generationId) => postersApi.adopt(generationId),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['posters'] });
+    },
+  });
+}
+
+export function useDownloadPoster() {
+  return useMutation<PosterDownloadResponse, Error, string>({
+    mutationFn: (generationId) => postersApi.download(generationId),
+  });
+}
+
+export function usePosterGallery(params?: {
+  scope?: 'mine' | 'current' | 'all';
+  adopted?: boolean;
+  storeId?: string;
+  limit?: number;
+}) {
+  return useQuery({
+    queryKey: [
+      'posters',
+      'gallery',
+      params?.scope ?? 'mine',
+      params?.adopted ?? null,
+      params?.storeId ?? '',
+      params?.limit ?? 30,
+    ] as const,
+    queryFn: () => postersApi.gallery(params),
+    staleTime: 30_000,
+  });
+}
+
+export function usePosterTodayCount() {
+  return useQuery({
+    queryKey: ['posters', 'today-count'] as const,
+    queryFn: () => postersApi.todayCount(),
+    staleTime: 60_000,
+  });
+}
+
+export function usePosterAssets(kind?: 'background' | 'product_photo') {
+  return useQuery({
+    queryKey: ['posters', 'assets', kind ?? 'all'] as const,
+    queryFn: () => postersApi.listAssets(kind),
+    staleTime: 60_000,
+  });
+}
+
+export function useUploadPosterAsset() {
   const qc = useQueryClient();
   return useMutation<
-    PosterGenerateResponse,
+    PosterAssetUploadResponse,
     Error,
-    PosterGenerateRequest & { storeId?: string }
+    { kind: 'background' | 'product_photo'; file: File | Blob; filename?: string }
   >({
-    mutationFn: ({ storeId: _ignored, ...body }) => postersApi.generate(body),
+    mutationFn: (args) => uploadPosterAsset(args),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['posters', 'list'] });
+      await qc.invalidateQueries({ queryKey: ['posters', 'assets'] });
     },
+  });
+}
+
+export function useDeletePosterAsset() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (assetId) => postersApi.deleteAsset(assetId),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['posters', 'assets'] });
+    },
+  });
+}
+
+export function usePosterSalesTracking(days?: number) {
+  return useQuery({
+    queryKey: ['posters', 'sales-tracking', days ?? 30] as const,
+    queryFn: () => postersApi.salesTracking({ days }),
+    staleTime: 5 * 60_000,
   });
 }
 

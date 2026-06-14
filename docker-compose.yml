@@ -104,6 +104,10 @@ services:
       https_proxy: ''
       NO_PROXY: 'localhost,127.0.0.1,postgres,api,web,nginx,.local,.internal'
       no_proxy: 'localhost,127.0.0.1,postgres,api,web,nginx,.local,.internal'
+      # 覆盖 .env 里的 host 视角 URL：容器内 vite proxy 必须走容器名 api，
+      # 不能用 localhost（容器里 localhost:8787 拒连，导致 /api/v1/* 全部 500，
+      # 海报 Result 屏 <img> 加载失败显示纯黑、下载链路同源失败）
+      VITE_API_BASE_URL: 'http://api:8787'
     ports:
       - '5173:5173'
     volumes:

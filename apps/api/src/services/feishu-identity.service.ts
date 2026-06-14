@@ -341,15 +341,15 @@ async function syncRoles(
 ): Promise<void> {
   if (shouldBeSuperAdmin) {
     await client.query(
-      `INSERT INTO user_roles (user_id, role) VALUES ($1, 'super_admin')
-       ON CONFLICT (user_id, role) DO NOTHING`,
+      `INSERT INTO user_roles (user_id, system_role) VALUES ($1, 'super_admin')
+       ON CONFLICT (user_id, system_role) DO NOTHING`,
       [userId],
     );
   }
   if (shouldBeStoreOwner) {
     await client.query(
-      `INSERT INTO user_roles (user_id, role) VALUES ($1, 'store_owner')
-       ON CONFLICT (user_id, role) DO NOTHING`,
+      `INSERT INTO user_roles (user_id, system_role) VALUES ($1, 'store_owner')
+       ON CONFLICT (user_id, system_role) DO NOTHING`,
       [userId],
     );
   }
@@ -389,8 +389,8 @@ async function syncStoreBindings(
     // 如果尚未有人 primary 且这是当前循环的第一条，就标 primary
     const isPrimary = !primaryAssigned;
     await client.query(
-      `INSERT INTO user_stores (user_id, store_id, role, is_primary)
-       VALUES ($1, $2, 'manager', $3)
+      `INSERT INTO user_stores (user_id, store_id, is_primary)
+       VALUES ($1, $2, $3)
        ON CONFLICT (user_id, store_id) DO NOTHING`,
       [userId, store.id, isPrimary],
     );

@@ -33,7 +33,7 @@ export async function login(_input: ServerFnInput<LoginInput>): Promise<LoginRes
   throw new Error('请在统一应用的 /login 页面登录');
 }
 
-// ── recordLogin：no-op（host 已经在 audit_events 写过 user_login） ────────────
+// ── recordLogin：no-op（host 已经在 sys_audit_events 写过 user_login） ────────────
 export async function recordLogin(_input?: ServerFnInput<{ storeId?: string | null }>): Promise<{ ok: true }> {
   return { ok: true };
 }

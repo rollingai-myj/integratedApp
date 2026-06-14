@@ -1,8 +1,8 @@
 /**
  * 价盘 · 场景选择落地页
  *
- * 场景列表从 /api/v1/scenes 读，与选品 PositionPage 同源——这样运维只要改
- * plan_position_mapping 一处，两个模块自动同步。emoji 派生走 lib/scenes.ts
+ * 场景列表从 /api/v1/scenes 读，与选品同源——运维只要在 hq_categories（场景
+ * 顶层 level=0 + 子类目）改一处，两个模块自动同步。emoji 派生走 lib/scenes.ts
  * 的 emojiForScene。
  *
  * 当前只有 "冷藏" 场景接入了真实价盘数据 → 链到 /prices/cold；其它场景灰显，
@@ -35,9 +35,14 @@ export const Route = createFileRoute('/prices/')({
   }),
 });
 
-/** position_name → 已接入的子路由路径；不在表里的场景灰显 */
-const ENABLED_LINKS: Record<string, '/prices/cold'> = {
-  '冷藏': '/prices/cold',
+/**
+ * 已接入价盘的场景名 → 跳转 search 参数。
+ * cold 页一个组件吃两类数据，靠 ?scene= 区分（缺省 = 冷藏，向下兼容旧 URL）。
+ * 不在表里的场景灰显。
+ */
+const ENABLED_SCENES: Record<string, { scene?: string }> = {
+  '冷藏': {},
+  '面包架【烘焙】': { scene: '面包架【烘焙】' },
 };
 
 function PricesHomePage() {
@@ -68,18 +73,19 @@ function PricesHomePage() {
           <TooltipProvider delayDuration={150}>
             <div className="mt-5 grid grid-cols-2 gap-3">
               {scenes.map((s) => {
-                const key = `${s.positionCode}-${s.positionName}`;
-                const to = ENABLED_LINKS[s.positionName];
-                const emoji = emojiForScene(s.positionName);
-                if (to) {
+                const key = `${s.scene}-${s.name}`;
+                const enabledSearch = ENABLED_SCENES[s.name];
+                const emoji = emojiForScene(s.name);
+                if (enabledSearch) {
                   return (
                     <Link
                       key={key}
-                      to={to}
+                      to="/prices/cold"
+                      search={enabledSearch}
                       className="group rounded-xl border bg-card p-4 shadow-sm transition active:scale-[0.98]"
                     >
                       <div className="text-3xl">{emoji}</div>
-                      <div className="mt-3 text-base font-medium text-foreground">{s.positionName}</div>
+                      <div className="mt-3 text-base font-medium text-foreground">{s.name}</div>
                       <div className="mt-0.5 text-xs text-muted-foreground">
                         <span className="num font-semibold text-brand">{skuCount || 73}</span> 个商品
                       </div>
@@ -95,7 +101,7 @@ function PricesHomePage() {
                         className="cursor-not-allowed rounded-xl border bg-card p-4 opacity-40"
                       >
                         <div className="text-3xl">{emoji}</div>
-                        <div className="mt-3 text-base font-medium text-foreground">{s.positionName}</div>
+                        <div className="mt-3 text-base font-medium text-foreground">{s.name}</div>
                         <div className="mt-0.5 text-xs text-muted-foreground">敬请期待</div>
                       </div>
                     </TooltipTrigger>

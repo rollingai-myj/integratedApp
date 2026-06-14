@@ -3,7 +3,7 @@
  *
  * 设计：
  *   - 用 OPENROUTER_API_KEY 调 https://openrouter.ai/api/v1/chat/completions
- *   - 模型从 app_settings.image_model 读取（默认 google/gemini-3.1-flash-image-preview，
+ *   - 模型从 sys_settings.poster_image_model 读取（默认 google/gemini-2.5-flash-image，
  *     即 nano-banana 文生图 / 图编辑模型）
  *   - prompt 由 buildPosterPrompt 按 mode + 模板拼装
  *   - photo_compose / official_bg_only / multi_product 三种 mode 通过 messages
@@ -23,7 +23,7 @@ export interface PosterGenerateInput {
   copyText: string;
   sourcePhotoUrl?: string;
   productImageUrl?: string;
-  officialImageUrls?: string[];
+  productImageUrls?: string[];
   customStyleDescription?: string;
   skuCode?: string;
   categoryName?: string;
@@ -73,11 +73,16 @@ export function buildPosterPrompt(input: PosterGenerateInput): string {
   return parts.join('\n');
 }
 
-const DEFAULT_IMAGE_MODEL = 'google/gemini-3.1-flash-image-preview';
+// 与 admin-stats.service 同源（同 key + 同默认）；切模型从 PUT /admin/settings/image-model 走。
+// OpenRouter 上 google 系图像输出模型实际可用 id：
+//   google/gemini-2.5-flash-image           ← 默认（稳定 GA）
+//   google/gemini-3.1-flash-image-preview   ← preview
+//   google/gemini-3-pro-image-preview       ← pro preview
+const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
 
 async function getCurrentImageModel(): Promise<string> {
   const res = await query<{ value: string }>(
-    `SELECT value FROM app_settings WHERE key = 'image_model' LIMIT 1`,
+    `SELECT value FROM sys_settings WHERE key = 'poster_image_model' LIMIT 1`,
   );
   return res.rows[0]?.value ?? DEFAULT_IMAGE_MODEL;
 }
@@ -91,8 +96,8 @@ function buildMessageContent(
   prompt: string,
 ): string | ContentPart[] {
   const images: string[] = [];
-  if (input.mode === 'multi_product' && input.officialImageUrls?.length) {
-    images.push(...input.officialImageUrls);
+  if (input.mode === 'multi_product' && input.productImageUrls?.length) {
+    images.push(...input.productImageUrls);
   }
   if (input.mode === 'official_bg_only' && input.productImageUrl) {
     images.push(input.productImageUrl);

@@ -1,27 +1,29 @@
 /**
  * 审计事件写入业务层
  *
- * 各业务模块（选品 / 价盘 / 海报）的关键操作都通过这一层写 audit_events。
+ * 各业务模块（选品 / 价盘 / 海报）的关键操作都通过这一层写 sys_audit_events。
  * 决策 D7 / D11：AI 关键调用 + 状态变更必须落审计；前端非关键交互可选。
  */
 import { query } from '../db/index.js';
 
-/** 与 V002__enum_types.sql 的 audit_event_kind 必须一致 */
+/** 与迁移 V001__extensions_and_enums.sql 的 audit_event_kind（48 种）必须一致 */
 export type AuditEventKind =
   | 'user_login' | 'user_logout' | 'user_session_refresh'
   | 'feishu_oauth_success' | 'feishu_oauth_fail'
   | 'user_create' | 'user_update' | 'user_disable' | 'user_delete'
   | 'user_password_reset' | 'user_role_change' | 'user_store_bind' | 'user_store_unbind'
-  | 'store_create' | 'store_update' | 'store_insight_update'
-  | 'sku_import' | 'competitor_price_import'
-  | 'shelf_config_change' | 'shelf_photo_upload' | 'shelf_detect'
-  | 'shelf_survey_submit' | 'shelf_assortment_apply'
-  | 'shelf_virtual_generate' | 'shelf_ai_diagnose' | 'shelf_ai_selection'
-  | 'sku_correction_submit'
-  | 'price_change' | 'price_ai_diagnose'
-  | 'poster_generate_sync' | 'poster_batch_submit'
-  | 'poster_job_complete' | 'poster_job_fail'
+  | 'store_create' | 'store_update' | 'sku_import'
   | 'promotion_batch_upload' | 'promotion_batch_activate' | 'promotion_batch_delete'
+  | 'scene_config_change' | 'scene_photo_upload' | 'scene_detect'
+  | 'scene_qa_submit' | 'scene_env_update'
+  | 'scene_ai_diagnose' | 'scene_ai_strategy'
+  | 'scene_assortment_apply' | 'scene_virtual_generate'
+  | 'sku_correction_submit'
+  | 'survey_submit' | 'insight_generate' | 'store_insight_update'
+  | 'price_change'
+  | 'poster_task_submit' | 'poster_generation_complete' | 'poster_generation_fail'
+  | 'poster_adopt' | 'poster_download' | 'poster_asset_upload' | 'poster_asset_delete'
+  | 'competitor_update' | 'competitor_product_update' | 'competitor_price_collect'
   | 'super_admin_action' | 'app_setting_change' | 'ai_model_switch' | 'ai_stress_test';
 
 export interface WriteAuditEventInput {
@@ -50,14 +52,14 @@ export interface WriteAuditEventInput {
 
 export async function writeAuditEvent(input: WriteAuditEventInput): Promise<{ id: string }> {
   const res = await query<{ id: string }>(
-    `INSERT INTO audit_events
+    `INSERT INTO sys_audit_events
        (event_kind, actor_user_id, actor_role, actor_display_name,
         target_store_id, target_store_label, target_type, target_id,
         summary, payload,
         is_ai_call, ai_workflow, ai_model, ai_input_tokens, ai_output_tokens,
         ai_latency_ms, ai_status, ai_error,
         ip, user_agent, request_id)
-     VALUES ($1::audit_event_kind, $2, $3::app_role, $4,
+     VALUES ($1::audit_event_kind, $2, $3, $4,
              $5, $6, $7, $8,
              $9, $10::jsonb,
              $11, $12, $13, $14, $15,
@@ -96,14 +98,14 @@ export async function writeAuditEvent(input: WriteAuditEventInput): Promise<{ id
  * 见 V028__audit_shelf_extras.sql 的设计说明。
  */
 const SHELVES_ACTION_TO_KIND: Record<string, AuditEventKind> = {
-  diagnose: 'shelf_ai_diagnose',
-  re_diagnose: 'shelf_ai_diagnose',
-  reupload: 'shelf_photo_upload',
-  upload_photo: 'shelf_photo_upload',
-  optimize_selection: 'shelf_ai_selection',
-  apply_strategy: 'shelf_assortment_apply',
-  generate_layout: 'shelf_virtual_generate',
-  re_generate_layout: 'shelf_virtual_generate',
+  diagnose: 'scene_ai_diagnose',
+  re_diagnose: 'scene_ai_diagnose',
+  reupload: 'scene_photo_upload',
+  upload_photo: 'scene_photo_upload',
+  optimize_selection: 'scene_ai_strategy',
+  apply_strategy: 'scene_assortment_apply',
+  generate_layout: 'scene_virtual_generate',
+  re_generate_layout: 'scene_virtual_generate',
 };
 
 export function shelvesActionToEventKind(actionType: string): AuditEventKind | null {
