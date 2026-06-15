@@ -15,6 +15,8 @@ import type {
   ActivePromotionsResponse,
   ProductPromotion,
   ProductPromotionDealOption,
+  PromotionGroupRow,
+  RecommendPromotionsResponse,
 } from '@myj/shared';
 import { mapCategoryToGroup } from '@/lib/categoryGroups';
 
@@ -38,6 +40,10 @@ interface CategoryItem {
   /** poster-app 的 deriveBest 需要这个 fallback；shim 必须从 API 透传过去 */
   all_options?: ProductPromotionDealOption[] | null;
   is_group?: boolean;
+  group_id?: string;
+  brand_label?: string | null;
+  group_members?: Array<{ sku: string; productName: string }> | null;
+  best_applies_to_skus?: string[] | null;
 }
 
 export interface PersonalizedPromotionsResult {
@@ -108,12 +114,14 @@ export async function getPersonalizedPromotions(): Promise<PersonalizedPromotion
   try {
     // 优先走 /promotions/recommend（按个性化排序）；空 → fallback /promotions/active
     let products: ProductPromotion[] = [];
+    let groups: PromotionGroupRow[] = [];
     let upload: { id: string; filename: string; created_at: string } | null = null;
 
     const recoRes = await fetch(`${BASE}/promotions/recommend`, { credentials: 'include' });
     if (recoRes.ok) {
-      const body = (await recoRes.json()) as { products?: ProductPromotion[]; upload?: { id: string; fileName: string; createdAt: string } };
+      const body = (await recoRes.json()) as RecommendPromotionsResponse;
       products = body.products ?? [];
+      groups = body.groups ?? [];
       if (body.upload) {
         upload = { id: body.upload.id, filename: body.upload.fileName, created_at: body.upload.createdAt };
       }
@@ -123,19 +131,69 @@ export async function getPersonalizedPromotions(): Promise<PersonalizedPromotion
       if (actRes.ok) {
         const body = (await actRes.json()) as ActivePromotionsResponse;
         products = body.products ?? [];
+        groups = body.groups ?? [];
         if (body.upload) {
           upload = { id: body.upload.id, filename: body.upload.fileName, created_at: body.upload.createdAt };
         }
       }
     }
 
-    // 按品类分组（mapCategoryToGroup 沿用老 repo 的归类规则）
+    // 收集 group 成员 SKU，用作单品去重
+    const skusInGroup = new Set<string>();
+    for (const g of groups) {
+      for (const sku of (g.skuCodes ?? [])) skusInGroup.add(sku);
+    }
+
+    // SKU → product 反查表（折叠 group 时用）
+    const skuToProduct = new Map<string, ProductPromotion>();
+    for (const p of products) skuToProduct.set(p.skuCode, p);
+
     const byCategory = new Map<string, CategoryItem[]>();
-    for (const p of products) {
-      const item = rowToCategoryItem(p);
-      const groupName = mapCategoryToGroup(item.category ?? '');
+    const pushTo = (groupName: string, item: CategoryItem) => {
       if (!byCategory.has(groupName)) byCategory.set(groupName, []);
       byCategory.get(groupName)!.push(item);
+    };
+
+    // 1) 先入 groups（让它们排在每个 category 的最前面）
+    for (const g of groups) {
+      const groupName = mapCategoryToGroup(g.categoryName ?? '');
+      const members = (g.skuCodes ?? []).map((sku) => skuToProduct.get(sku));
+      const firstMember = members.find((m): m is ProductPromotion => m != null);
+      const origSum = members.reduce((s, m) => s + (toNum(m?.originalPrice) ?? 0), 0);
+      const total = toNum(g.bestTotalPrice);
+      const item: CategoryItem = {
+        sku: `group:${g.id}`,
+        product_name: g.displayName ?? '凑单组',
+        unit: firstMember?.unit ?? null,
+        original_price: origSum > 0 ? origSum : null,
+        category: g.categoryName,
+        best_label: g.bestLabel,
+        best_qty: g.productCount,
+        best_total: total,
+        best_effective_price: total != null && g.productCount > 0 ? total / g.productCount : null,
+        best_saving_percent: toNum(g.bestSavingPercent),
+        display_text: null,
+        best_valid_from: null,
+        best_valid_to: null,
+        best_valid_dates: null,
+        all_options: null,
+        is_group: true,
+        group_id: g.id,
+        brand_label: g.displayName,
+        group_members: (g.skuCodes ?? []).map((sku) => ({
+          sku,
+          productName: skuToProduct.get(sku)?.productName ?? sku,
+        })),
+        best_applies_to_skus: null,
+      };
+      pushTo(groupName, item);
+    }
+
+    // 2) 再入剩余单品（被 group 收编的过滤掉）
+    for (const p of products) {
+      if (skusInGroup.has(p.skuCode)) continue;
+      const item = rowToCategoryItem(p);
+      pushTo(mapCategoryToGroup(item.category ?? ''), item);
     }
 
     const categories = Array.from(byCategory.entries()).map(([name, items]) => ({
