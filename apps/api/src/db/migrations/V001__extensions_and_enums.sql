@@ -58,14 +58,15 @@ CREATE TYPE promotion_scope AS ENUM ('all_stores', 'city', 'store_list');
 CREATE TYPE scene_state_status AS ENUM ('empty', 'photo_uploaded', 'detected', 'reviewing', 'confirmed');
 CREATE TYPE scene_virtual_status AS ENUM ('idle', 'processing', 'completed', 'failed');
 
--- 调改动作：仅 add/remove（"保留观察"只在方案展示，不入记录；2026-06-12 确认）
+-- 调改动作：仅 add/remove
 CREATE TYPE assortment_action AS ENUM ('add', 'remove');
 CREATE TYPE assortment_reason AS ENUM (
   'ai_recommend_core', 'ai_recommend_innovation', 'low_sales',
   'competitor_replace', 'shelf_space_limit', 'manual_keep', 'manual_remove', 'other'
 );
 
--- 勘误：observe = 跳过"保留观察"建议（2026-06-12 确认）；原因码用 TEXT 不做 ENUM
+-- 勘误：'observe' 历史枚举值已废弃（保留观察选项 2026-06-15 移除），保留在 ENUM 中只为不破坏既有数据；
+-- 应用层 zod / KIND_BY_SCOPE 已不再接受 'observe'。
 CREATE TYPE sku_correction_kind AS ENUM ('missed', 'false_positive', 'remove', 'add', 'observe');
 CREATE TYPE sku_correction_scope AS ENUM ('detection', 'decision');
 

@@ -24,7 +24,7 @@ CREATE TABLE store_scene_adjustments (
 CREATE INDEX store_scene_adjustments_scene_idx
   ON store_scene_adjustments (store_id, scene, triggered_at DESC);
 
-COMMENT ON TABLE store_scene_adjustments IS '调改批次摘要：每次"应用调改"一条；"保留观察"不入记录（2026-06-12 确认）';
+COMMENT ON TABLE store_scene_adjustments IS '调改批次摘要：每次"应用调改"一条；仅 add/remove 入记录';
 
 CREATE TABLE store_assortment_changes (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -102,7 +102,8 @@ CREATE TABLE store_sku_corrections (
   resolution_note TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  -- 约束 #5：kind × scope 配对（decision ↔ remove/add/observe）
+  -- 约束 #5：kind × scope 配对（decision ↔ remove/add；
+  --        observe 历史值仅为兼容旧数据保留在 CHECK 中，应用层 zod 已不再接受）
   CONSTRAINT store_sku_corrections_kind_scope_chk CHECK (
     (correction_scope = 'detection' AND correction_kind IN ('missed', 'false_positive')) OR
     (correction_scope = 'decision'  AND correction_kind IN ('remove', 'add', 'observe'))
