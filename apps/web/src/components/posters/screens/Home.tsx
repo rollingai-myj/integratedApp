@@ -411,6 +411,9 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
     const pickPerCategory = (items: CategoryItem[]) => {
       const arr = items.map(it => ({ it, best: bestMap.get(it.sku) ?? null }));
       arr.sort((a, b) => {
+        const ag = a.it.is_group ? 1 : 0;
+        const bg = b.it.is_group ? 1 : 0;
+        if (bg !== ag) return bg - ag;          // 凑单组永远排前
         const ap = a.best?.savingPercent ?? -Infinity;
         const bp = b.best?.savingPercent ?? -Infinity;
         if (bp !== ap) return bp - ap;
