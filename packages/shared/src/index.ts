@@ -496,6 +496,7 @@ export interface ActivePromotionsResponse {
 export interface RecommendPromotionsResponse {
   upload: PromotionUpload | null;
   products: ProductPromotion[];
+  groups: PromotionGroupRow[];
 }
 
 // ============================================================================
