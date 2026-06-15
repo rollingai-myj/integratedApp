@@ -404,9 +404,10 @@ function mapGroup(r: PromotionGroupDb): PromotionGroupRow {
 export async function recommendForUser(userId: string): Promise<{
   upload: PromotionUpload | null;
   products: ProductPromotion[];
+  groups: PromotionGroupRow[];
 }> {
   const active = await listActivePromotions();
-  if (!active.upload) return { upload: null, products: [] };
+  if (!active.upload) return { upload: null, products: [], groups: [] };
 
   // 把用户近 30 天海报 task 关联的商品 → 品类 → 次数 排序
   const usedRes = await query<{ category_name: string; cnt: number }>(
@@ -431,7 +432,7 @@ export async function recommendForUser(userId: string): Promise<{
     return (b.bestSavingPercent ?? 0) - (a.bestSavingPercent ?? 0);
   });
 
-  return { upload: active.upload, products: sorted };
+  return { upload: active.upload, products: sorted, groups: active.groups };
 }
 
 // ---- 删除 / 切换激活（PO-E5 / PO-E6） ----------------------------------
