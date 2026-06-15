@@ -187,6 +187,11 @@ d('Phase 5 · promotions (integration)', () => {
     expect(r.status).toBe(200);
     expect(r.json.upload?.id).toBe(secondBatchId);
     expect(r.json.products).toHaveLength(1);
+    expect(r.json.groups).toBeDefined();
+    expect(Array.isArray(r.json.groups)).toBe(true);
+    // recommend 透传 active 的 groups（V020 后 VIEW 派生，含 mix_group_code 的 batch_items 即贡献一组）
+    const active = await call('GET', '/api/v1/promotions/active', { ctx: opsCtx });
+    expect(r.json.groups.length).toBe(active.json.groups.length);
   });
 
   it('删除第二批次 → /active 为空', async () => {
