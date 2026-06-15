@@ -62,9 +62,15 @@ function HomePage() {
       void navigate({ to: '/login' });
       return;
     }
-    // 没有 currentStore + 有可选门店 → 强制走选店页
+    // 没有 currentStore + 多店 → 强制走选店页
     // 覆盖：超管首登、飞书/legacy 多店账号（auth.service 故意把 active_store_id 留 null）
-    if (!me?.currentStore && (me?.stores.length ?? 0) > 0) {
+    //
+    // 必须 > 1：
+    //   - 0 店（飞书部门未匹配/无权限）→ 留首页，看 notice
+    //   - 1 店（auth.service 已自动落到唯一一家）→ 不需要再选
+    // 之前 > 0 会把这两种情况扔去 /select-store，对方 useEffect 立刻又弹回 /，
+    // 用户能看到一瞬间的选店页。
+    if (!me?.currentStore && (me?.stores.length ?? 0) > 1) {
       void navigate({ to: '/select-store' });
     }
   }, [meQuery.isSuccess, meQuery.data, navigate]);

@@ -15,14 +15,19 @@ export function ShelvesAppShell({ children }: { children: ReactNode }) {
   const me = meQuery.data;
 
   useEffect(() => {
-    if (meQuery.isSuccess && !me?.user) {
+    if (!meQuery.isSuccess) return;
+    if (!me?.user) {
       void navigate({ to: '/login' });
       return;
     }
-    if (meQuery.isSuccess && me?.user && !me.currentStore) {
-      void navigate({ to: '/select-store' });
+    if (!me.currentStore) {
+      // 0 店（无门店权限）→ 没东西可选，回首页（首页会显示 notice）
+      // 多店但未选 → 才去 /select-store
+      // 单店 auth.service 已自动落到唯一一家，正常不会进这分支
+      if (me.stores.length > 1) void navigate({ to: '/select-store' });
+      else void navigate({ to: '/' });
     }
-  }, [meQuery.isSuccess, me?.user, me?.currentStore, navigate]);
+  }, [meQuery.isSuccess, me?.user, me?.currentStore, me?.stores.length, navigate]);
 
   if (meQuery.isLoading) {
     return (

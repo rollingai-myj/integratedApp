@@ -9,7 +9,7 @@
  * 视觉沿用门户 demo 的渐变 hero + 卡片样式。
  */
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { IOSDevice } from '@/components/IOSDevice';
 import { BrandMark } from '@/components/BrandMark';
@@ -67,9 +67,15 @@ function LoginPage() {
   }, [meQuery.isSuccess, meQuery.data, navigate]);
 
   // 飞书回跳：URL 有 code 时自动兑换
+  //
+  // 用 ref 锁住"已处理过的 code"，避免 StrictMode / rapid re-render
+  // 触发第二次 mutate —— 第二次会带同一个一次性 code 命中飞书的
+  // "code has been used"，在跳首页前闪现一下错误。
+  const exchangedCodeRef = useRef<string | null>(null);
   useEffect(() => {
     if (!search.code) return;
-    if (feishuExchange.isPending || feishuExchange.isSuccess) return;
+    if (exchangedCodeRef.current === search.code) return;
+    exchangedCodeRef.current = search.code;
     feishuExchange.mutate(
       { code: search.code, state: search.state },
       {
@@ -224,10 +230,6 @@ function LoginPage() {
                   {errMsg}
                 </div>
               )}
-
-              <div className="mt-5 text-[11.5px] text-ink-muted leading-relaxed tracking-wide">
-                飞书登录是主路径；账号密码是过渡期兜底（飞书全量上线后会下线）。
-              </div>
             </>
           ) : (
             <>
