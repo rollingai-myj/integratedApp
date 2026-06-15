@@ -16,16 +16,15 @@ import { Route as ShelvesIndexRouteImport } from './routes/shelves.index'
 import { Route as PricesIndexRouteImport } from './routes/prices.index'
 import { Route as PostersIndexRouteImport } from './routes/posters.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
-import { Route as ShelvesPositionRouteImport } from './routes/shelves.position'
+import { Route as ShelvesSceneRouteImport } from './routes/shelves.scene'
 import { Route as PricesColdRouteImport } from './routes/prices.cold'
-import { Route as ShelvesPositionIndexRouteImport } from './routes/shelves.position.index'
-import { Route as ShelvesPositionCodeIndexRouteImport } from './routes/shelves.position.$code.index'
-import { Route as ShelvesPositionCodeVirtualRouteImport } from './routes/shelves.position.$code.virtual'
-import { Route as ShelvesPositionCodeSurveyRouteImport } from './routes/shelves.position.$code.survey'
-import { Route as ShelvesPositionCodeRecordRouteImport } from './routes/shelves.position.$code.record'
-import { Route as ShelvesPositionCodePhotoRouteImport } from './routes/shelves.position.$code.photo'
-import { Route as ShelvesPositionCodeLastRouteImport } from './routes/shelves.position.$code.last'
-import { Route as ShelvesPositionCodeInfoRouteImport } from './routes/shelves.position.$code.info'
+import { Route as ShelvesSceneSceneIndexRouteImport } from './routes/shelves.scene.$scene.index'
+import { Route as ShelvesSceneSceneSetupRouteImport } from './routes/shelves.scene.$scene.setup'
+import { Route as ShelvesSceneSceneRecordsRouteImport } from './routes/shelves.scene.$scene.records'
+import { Route as ShelvesSceneSceneQaRouteImport } from './routes/shelves.scene.$scene.qa'
+import { Route as ShelvesSceneSceneLastRouteImport } from './routes/shelves.scene.$scene.last'
+import { Route as ShelvesSceneSceneInfoRouteImport } from './routes/shelves.scene.$scene.info'
+import { Route as ShelvesSceneSceneFlowRouteImport } from './routes/shelves.scene.$scene.flow'
 
 const SelectStoreRoute = SelectStoreRouteImport.update({
   id: '/select-store',
@@ -62,9 +61,9 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/admin/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ShelvesPositionRoute = ShelvesPositionRouteImport.update({
-  id: '/shelves/position',
-  path: '/shelves/position',
+const ShelvesSceneRoute = ShelvesSceneRouteImport.update({
+  id: '/shelves/scene',
+  path: '/shelves/scene',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PricesColdRoute = PricesColdRouteImport.update({
@@ -72,50 +71,41 @@ const PricesColdRoute = PricesColdRouteImport.update({
   path: '/prices/cold',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ShelvesPositionIndexRoute = ShelvesPositionIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => ShelvesPositionRoute,
+const ShelvesSceneSceneIndexRoute = ShelvesSceneSceneIndexRouteImport.update({
+  id: '/$scene/',
+  path: '/$scene/',
+  getParentRoute: () => ShelvesSceneRoute,
 } as any)
-const ShelvesPositionCodeIndexRoute =
-  ShelvesPositionCodeIndexRouteImport.update({
-    id: '/$code/',
-    path: '/$code/',
-    getParentRoute: () => ShelvesPositionRoute,
-  } as any)
-const ShelvesPositionCodeVirtualRoute =
-  ShelvesPositionCodeVirtualRouteImport.update({
-    id: '/$code/virtual',
-    path: '/$code/virtual',
-    getParentRoute: () => ShelvesPositionRoute,
-  } as any)
-const ShelvesPositionCodeSurveyRoute =
-  ShelvesPositionCodeSurveyRouteImport.update({
-    id: '/$code/survey',
-    path: '/$code/survey',
-    getParentRoute: () => ShelvesPositionRoute,
-  } as any)
-const ShelvesPositionCodeRecordRoute =
-  ShelvesPositionCodeRecordRouteImport.update({
-    id: '/$code/record',
-    path: '/$code/record',
-    getParentRoute: () => ShelvesPositionRoute,
-  } as any)
-const ShelvesPositionCodePhotoRoute =
-  ShelvesPositionCodePhotoRouteImport.update({
-    id: '/$code/photo',
-    path: '/$code/photo',
-    getParentRoute: () => ShelvesPositionRoute,
-  } as any)
-const ShelvesPositionCodeLastRoute = ShelvesPositionCodeLastRouteImport.update({
-  id: '/$code/last',
-  path: '/$code/last',
-  getParentRoute: () => ShelvesPositionRoute,
+const ShelvesSceneSceneSetupRoute = ShelvesSceneSceneSetupRouteImport.update({
+  id: '/$scene/setup',
+  path: '/$scene/setup',
+  getParentRoute: () => ShelvesSceneRoute,
 } as any)
-const ShelvesPositionCodeInfoRoute = ShelvesPositionCodeInfoRouteImport.update({
-  id: '/$code/info',
-  path: '/$code/info',
-  getParentRoute: () => ShelvesPositionRoute,
+const ShelvesSceneSceneRecordsRoute =
+  ShelvesSceneSceneRecordsRouteImport.update({
+    id: '/$scene/records',
+    path: '/$scene/records',
+    getParentRoute: () => ShelvesSceneRoute,
+  } as any)
+const ShelvesSceneSceneQaRoute = ShelvesSceneSceneQaRouteImport.update({
+  id: '/$scene/qa',
+  path: '/$scene/qa',
+  getParentRoute: () => ShelvesSceneRoute,
+} as any)
+const ShelvesSceneSceneLastRoute = ShelvesSceneSceneLastRouteImport.update({
+  id: '/$scene/last',
+  path: '/$scene/last',
+  getParentRoute: () => ShelvesSceneRoute,
+} as any)
+const ShelvesSceneSceneInfoRoute = ShelvesSceneSceneInfoRouteImport.update({
+  id: '/$scene/info',
+  path: '/$scene/info',
+  getParentRoute: () => ShelvesSceneRoute,
+} as any)
+const ShelvesSceneSceneFlowRoute = ShelvesSceneSceneFlowRouteImport.update({
+  id: '/$scene/flow',
+  path: '/$scene/flow',
+  getParentRoute: () => ShelvesSceneRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -123,37 +113,36 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
-  '/shelves/position': typeof ShelvesPositionRouteWithChildren
+  '/shelves/scene': typeof ShelvesSceneRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
-  '/shelves/position/': typeof ShelvesPositionIndexRoute
-  '/shelves/position/$code/info': typeof ShelvesPositionCodeInfoRoute
-  '/shelves/position/$code/last': typeof ShelvesPositionCodeLastRoute
-  '/shelves/position/$code/photo': typeof ShelvesPositionCodePhotoRoute
-  '/shelves/position/$code/record': typeof ShelvesPositionCodeRecordRoute
-  '/shelves/position/$code/survey': typeof ShelvesPositionCodeSurveyRoute
-  '/shelves/position/$code/virtual': typeof ShelvesPositionCodeVirtualRoute
-  '/shelves/position/$code/': typeof ShelvesPositionCodeIndexRoute
+  '/shelves/scene/$scene/flow': typeof ShelvesSceneSceneFlowRoute
+  '/shelves/scene/$scene/info': typeof ShelvesSceneSceneInfoRoute
+  '/shelves/scene/$scene/last': typeof ShelvesSceneSceneLastRoute
+  '/shelves/scene/$scene/qa': typeof ShelvesSceneSceneQaRoute
+  '/shelves/scene/$scene/records': typeof ShelvesSceneSceneRecordsRoute
+  '/shelves/scene/$scene/setup': typeof ShelvesSceneSceneSetupRoute
+  '/shelves/scene/$scene/': typeof ShelvesSceneSceneIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
+  '/shelves/scene': typeof ShelvesSceneRouteWithChildren
   '/admin': typeof AdminIndexRoute
   '/posters': typeof PostersIndexRoute
   '/prices': typeof PricesIndexRoute
   '/shelves': typeof ShelvesIndexRoute
-  '/shelves/position': typeof ShelvesPositionIndexRoute
-  '/shelves/position/$code/info': typeof ShelvesPositionCodeInfoRoute
-  '/shelves/position/$code/last': typeof ShelvesPositionCodeLastRoute
-  '/shelves/position/$code/photo': typeof ShelvesPositionCodePhotoRoute
-  '/shelves/position/$code/record': typeof ShelvesPositionCodeRecordRoute
-  '/shelves/position/$code/survey': typeof ShelvesPositionCodeSurveyRoute
-  '/shelves/position/$code/virtual': typeof ShelvesPositionCodeVirtualRoute
-  '/shelves/position/$code': typeof ShelvesPositionCodeIndexRoute
+  '/shelves/scene/$scene/flow': typeof ShelvesSceneSceneFlowRoute
+  '/shelves/scene/$scene/info': typeof ShelvesSceneSceneInfoRoute
+  '/shelves/scene/$scene/last': typeof ShelvesSceneSceneLastRoute
+  '/shelves/scene/$scene/qa': typeof ShelvesSceneSceneQaRoute
+  '/shelves/scene/$scene/records': typeof ShelvesSceneSceneRecordsRoute
+  '/shelves/scene/$scene/setup': typeof ShelvesSceneSceneSetupRoute
+  '/shelves/scene/$scene': typeof ShelvesSceneSceneIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -161,19 +150,18 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
   '/prices/cold': typeof PricesColdRoute
-  '/shelves/position': typeof ShelvesPositionRouteWithChildren
+  '/shelves/scene': typeof ShelvesSceneRouteWithChildren
   '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
-  '/shelves/position/': typeof ShelvesPositionIndexRoute
-  '/shelves/position/$code/info': typeof ShelvesPositionCodeInfoRoute
-  '/shelves/position/$code/last': typeof ShelvesPositionCodeLastRoute
-  '/shelves/position/$code/photo': typeof ShelvesPositionCodePhotoRoute
-  '/shelves/position/$code/record': typeof ShelvesPositionCodeRecordRoute
-  '/shelves/position/$code/survey': typeof ShelvesPositionCodeSurveyRoute
-  '/shelves/position/$code/virtual': typeof ShelvesPositionCodeVirtualRoute
-  '/shelves/position/$code/': typeof ShelvesPositionCodeIndexRoute
+  '/shelves/scene/$scene/flow': typeof ShelvesSceneSceneFlowRoute
+  '/shelves/scene/$scene/info': typeof ShelvesSceneSceneInfoRoute
+  '/shelves/scene/$scene/last': typeof ShelvesSceneSceneLastRoute
+  '/shelves/scene/$scene/qa': typeof ShelvesSceneSceneQaRoute
+  '/shelves/scene/$scene/records': typeof ShelvesSceneSceneRecordsRoute
+  '/shelves/scene/$scene/setup': typeof ShelvesSceneSceneSetupRoute
+  '/shelves/scene/$scene/': typeof ShelvesSceneSceneIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -182,56 +170,54 @@ export interface FileRouteTypes {
     | '/login'
     | '/select-store'
     | '/prices/cold'
-    | '/shelves/position'
+    | '/shelves/scene'
     | '/admin/'
     | '/posters/'
     | '/prices/'
     | '/shelves/'
-    | '/shelves/position/'
-    | '/shelves/position/$code/info'
-    | '/shelves/position/$code/last'
-    | '/shelves/position/$code/photo'
-    | '/shelves/position/$code/record'
-    | '/shelves/position/$code/survey'
-    | '/shelves/position/$code/virtual'
-    | '/shelves/position/$code/'
+    | '/shelves/scene/$scene/flow'
+    | '/shelves/scene/$scene/info'
+    | '/shelves/scene/$scene/last'
+    | '/shelves/scene/$scene/qa'
+    | '/shelves/scene/$scene/records'
+    | '/shelves/scene/$scene/setup'
+    | '/shelves/scene/$scene/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
     | '/select-store'
     | '/prices/cold'
+    | '/shelves/scene'
     | '/admin'
     | '/posters'
     | '/prices'
     | '/shelves'
-    | '/shelves/position'
-    | '/shelves/position/$code/info'
-    | '/shelves/position/$code/last'
-    | '/shelves/position/$code/photo'
-    | '/shelves/position/$code/record'
-    | '/shelves/position/$code/survey'
-    | '/shelves/position/$code/virtual'
-    | '/shelves/position/$code'
+    | '/shelves/scene/$scene/flow'
+    | '/shelves/scene/$scene/info'
+    | '/shelves/scene/$scene/last'
+    | '/shelves/scene/$scene/qa'
+    | '/shelves/scene/$scene/records'
+    | '/shelves/scene/$scene/setup'
+    | '/shelves/scene/$scene'
   id:
     | '__root__'
     | '/'
     | '/login'
     | '/select-store'
     | '/prices/cold'
-    | '/shelves/position'
+    | '/shelves/scene'
     | '/admin/'
     | '/posters/'
     | '/prices/'
     | '/shelves/'
-    | '/shelves/position/'
-    | '/shelves/position/$code/info'
-    | '/shelves/position/$code/last'
-    | '/shelves/position/$code/photo'
-    | '/shelves/position/$code/record'
-    | '/shelves/position/$code/survey'
-    | '/shelves/position/$code/virtual'
-    | '/shelves/position/$code/'
+    | '/shelves/scene/$scene/flow'
+    | '/shelves/scene/$scene/info'
+    | '/shelves/scene/$scene/last'
+    | '/shelves/scene/$scene/qa'
+    | '/shelves/scene/$scene/records'
+    | '/shelves/scene/$scene/setup'
+    | '/shelves/scene/$scene/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -239,7 +225,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SelectStoreRoute: typeof SelectStoreRoute
   PricesColdRoute: typeof PricesColdRoute
-  ShelvesPositionRoute: typeof ShelvesPositionRouteWithChildren
+  ShelvesSceneRoute: typeof ShelvesSceneRouteWithChildren
   AdminIndexRoute: typeof AdminIndexRoute
   PostersIndexRoute: typeof PostersIndexRoute
   PricesIndexRoute: typeof PricesIndexRoute
@@ -297,11 +283,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/shelves/position': {
-      id: '/shelves/position'
-      path: '/shelves/position'
-      fullPath: '/shelves/position'
-      preLoaderRoute: typeof ShelvesPositionRouteImport
+    '/shelves/scene': {
+      id: '/shelves/scene'
+      path: '/shelves/scene'
+      fullPath: '/shelves/scene'
+      preLoaderRoute: typeof ShelvesSceneRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/prices/cold': {
@@ -311,89 +297,80 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PricesColdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/shelves/position/': {
-      id: '/shelves/position/'
-      path: '/'
-      fullPath: '/shelves/position/'
-      preLoaderRoute: typeof ShelvesPositionIndexRouteImport
-      parentRoute: typeof ShelvesPositionRoute
+    '/shelves/scene/$scene/': {
+      id: '/shelves/scene/$scene/'
+      path: '/$scene'
+      fullPath: '/shelves/scene/$scene/'
+      preLoaderRoute: typeof ShelvesSceneSceneIndexRouteImport
+      parentRoute: typeof ShelvesSceneRoute
     }
-    '/shelves/position/$code/': {
-      id: '/shelves/position/$code/'
-      path: '/$code'
-      fullPath: '/shelves/position/$code/'
-      preLoaderRoute: typeof ShelvesPositionCodeIndexRouteImport
-      parentRoute: typeof ShelvesPositionRoute
+    '/shelves/scene/$scene/setup': {
+      id: '/shelves/scene/$scene/setup'
+      path: '/$scene/setup'
+      fullPath: '/shelves/scene/$scene/setup'
+      preLoaderRoute: typeof ShelvesSceneSceneSetupRouteImport
+      parentRoute: typeof ShelvesSceneRoute
     }
-    '/shelves/position/$code/virtual': {
-      id: '/shelves/position/$code/virtual'
-      path: '/$code/virtual'
-      fullPath: '/shelves/position/$code/virtual'
-      preLoaderRoute: typeof ShelvesPositionCodeVirtualRouteImport
-      parentRoute: typeof ShelvesPositionRoute
+    '/shelves/scene/$scene/records': {
+      id: '/shelves/scene/$scene/records'
+      path: '/$scene/records'
+      fullPath: '/shelves/scene/$scene/records'
+      preLoaderRoute: typeof ShelvesSceneSceneRecordsRouteImport
+      parentRoute: typeof ShelvesSceneRoute
     }
-    '/shelves/position/$code/survey': {
-      id: '/shelves/position/$code/survey'
-      path: '/$code/survey'
-      fullPath: '/shelves/position/$code/survey'
-      preLoaderRoute: typeof ShelvesPositionCodeSurveyRouteImport
-      parentRoute: typeof ShelvesPositionRoute
+    '/shelves/scene/$scene/qa': {
+      id: '/shelves/scene/$scene/qa'
+      path: '/$scene/qa'
+      fullPath: '/shelves/scene/$scene/qa'
+      preLoaderRoute: typeof ShelvesSceneSceneQaRouteImport
+      parentRoute: typeof ShelvesSceneRoute
     }
-    '/shelves/position/$code/record': {
-      id: '/shelves/position/$code/record'
-      path: '/$code/record'
-      fullPath: '/shelves/position/$code/record'
-      preLoaderRoute: typeof ShelvesPositionCodeRecordRouteImport
-      parentRoute: typeof ShelvesPositionRoute
+    '/shelves/scene/$scene/last': {
+      id: '/shelves/scene/$scene/last'
+      path: '/$scene/last'
+      fullPath: '/shelves/scene/$scene/last'
+      preLoaderRoute: typeof ShelvesSceneSceneLastRouteImport
+      parentRoute: typeof ShelvesSceneRoute
     }
-    '/shelves/position/$code/photo': {
-      id: '/shelves/position/$code/photo'
-      path: '/$code/photo'
-      fullPath: '/shelves/position/$code/photo'
-      preLoaderRoute: typeof ShelvesPositionCodePhotoRouteImport
-      parentRoute: typeof ShelvesPositionRoute
+    '/shelves/scene/$scene/info': {
+      id: '/shelves/scene/$scene/info'
+      path: '/$scene/info'
+      fullPath: '/shelves/scene/$scene/info'
+      preLoaderRoute: typeof ShelvesSceneSceneInfoRouteImport
+      parentRoute: typeof ShelvesSceneRoute
     }
-    '/shelves/position/$code/last': {
-      id: '/shelves/position/$code/last'
-      path: '/$code/last'
-      fullPath: '/shelves/position/$code/last'
-      preLoaderRoute: typeof ShelvesPositionCodeLastRouteImport
-      parentRoute: typeof ShelvesPositionRoute
-    }
-    '/shelves/position/$code/info': {
-      id: '/shelves/position/$code/info'
-      path: '/$code/info'
-      fullPath: '/shelves/position/$code/info'
-      preLoaderRoute: typeof ShelvesPositionCodeInfoRouteImport
-      parentRoute: typeof ShelvesPositionRoute
+    '/shelves/scene/$scene/flow': {
+      id: '/shelves/scene/$scene/flow'
+      path: '/$scene/flow'
+      fullPath: '/shelves/scene/$scene/flow'
+      preLoaderRoute: typeof ShelvesSceneSceneFlowRouteImport
+      parentRoute: typeof ShelvesSceneRoute
     }
   }
 }
 
-interface ShelvesPositionRouteChildren {
-  ShelvesPositionIndexRoute: typeof ShelvesPositionIndexRoute
-  ShelvesPositionCodeInfoRoute: typeof ShelvesPositionCodeInfoRoute
-  ShelvesPositionCodeLastRoute: typeof ShelvesPositionCodeLastRoute
-  ShelvesPositionCodePhotoRoute: typeof ShelvesPositionCodePhotoRoute
-  ShelvesPositionCodeRecordRoute: typeof ShelvesPositionCodeRecordRoute
-  ShelvesPositionCodeSurveyRoute: typeof ShelvesPositionCodeSurveyRoute
-  ShelvesPositionCodeVirtualRoute: typeof ShelvesPositionCodeVirtualRoute
-  ShelvesPositionCodeIndexRoute: typeof ShelvesPositionCodeIndexRoute
+interface ShelvesSceneRouteChildren {
+  ShelvesSceneSceneFlowRoute: typeof ShelvesSceneSceneFlowRoute
+  ShelvesSceneSceneInfoRoute: typeof ShelvesSceneSceneInfoRoute
+  ShelvesSceneSceneLastRoute: typeof ShelvesSceneSceneLastRoute
+  ShelvesSceneSceneQaRoute: typeof ShelvesSceneSceneQaRoute
+  ShelvesSceneSceneRecordsRoute: typeof ShelvesSceneSceneRecordsRoute
+  ShelvesSceneSceneSetupRoute: typeof ShelvesSceneSceneSetupRoute
+  ShelvesSceneSceneIndexRoute: typeof ShelvesSceneSceneIndexRoute
 }
 
-const ShelvesPositionRouteChildren: ShelvesPositionRouteChildren = {
-  ShelvesPositionIndexRoute: ShelvesPositionIndexRoute,
-  ShelvesPositionCodeInfoRoute: ShelvesPositionCodeInfoRoute,
-  ShelvesPositionCodeLastRoute: ShelvesPositionCodeLastRoute,
-  ShelvesPositionCodePhotoRoute: ShelvesPositionCodePhotoRoute,
-  ShelvesPositionCodeRecordRoute: ShelvesPositionCodeRecordRoute,
-  ShelvesPositionCodeSurveyRoute: ShelvesPositionCodeSurveyRoute,
-  ShelvesPositionCodeVirtualRoute: ShelvesPositionCodeVirtualRoute,
-  ShelvesPositionCodeIndexRoute: ShelvesPositionCodeIndexRoute,
+const ShelvesSceneRouteChildren: ShelvesSceneRouteChildren = {
+  ShelvesSceneSceneFlowRoute: ShelvesSceneSceneFlowRoute,
+  ShelvesSceneSceneInfoRoute: ShelvesSceneSceneInfoRoute,
+  ShelvesSceneSceneLastRoute: ShelvesSceneSceneLastRoute,
+  ShelvesSceneSceneQaRoute: ShelvesSceneSceneQaRoute,
+  ShelvesSceneSceneRecordsRoute: ShelvesSceneSceneRecordsRoute,
+  ShelvesSceneSceneSetupRoute: ShelvesSceneSceneSetupRoute,
+  ShelvesSceneSceneIndexRoute: ShelvesSceneSceneIndexRoute,
 }
 
-const ShelvesPositionRouteWithChildren = ShelvesPositionRoute._addFileChildren(
-  ShelvesPositionRouteChildren,
+const ShelvesSceneRouteWithChildren = ShelvesSceneRoute._addFileChildren(
+  ShelvesSceneRouteChildren,
 )
 
 const rootRouteChildren: RootRouteChildren = {
@@ -401,7 +378,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SelectStoreRoute: SelectStoreRoute,
   PricesColdRoute: PricesColdRoute,
-  ShelvesPositionRoute: ShelvesPositionRouteWithChildren,
+  ShelvesSceneRoute: ShelvesSceneRouteWithChildren,
   AdminIndexRoute: AdminIndexRoute,
   PostersIndexRoute: PostersIndexRoute,
   PricesIndexRoute: PricesIndexRoute,

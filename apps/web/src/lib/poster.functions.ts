@@ -1,14 +1,19 @@
 /**
  * Shim：兼容原 poster repo 引用的 @/lib/poster.functions
  *
- * 老 repo 的 generatePoster 是 createServerFn，直接调 OpenRouter Vision 模型。
- * 整合后由统一后端 /api/v1/posters/generate 代理（密钥在后端 .env，
- * 浏览器看不到，决策 D11 也在那一层落 audit_events.is_ai_call=TRUE）。
- *
- * 这里把老的 PosterStyleId → 后端 PosterTemplate、PosterMode 适配一下，
- * 把后端的 PosterRecord 适配成老的 PosterResult，让 poster-app 子树零修改。
+ * Phase 5 数据层切换：
+ * 旧的 /posters/generate（同步生成端点）已下线；统一后端走 task/generation 异步模型。
+ * 这里做"同步外壳"——
+ *   1) POST /posters/tasks 建一个 1-element 批次，拿到 task + generation #1 (queued)
+ *   2) POST /posters/generations:claim { generationId } 精确认领并同步执行
+ *   3) 等返回 succeeded/failed，适配成老的 PosterResult shape
+ * 上层 poster-app 子树（components/posters/screens/*）零修改。
  */
-import type { PosterGenerateRequest, PosterGenerateResponse } from '@myj/shared';
+import type {
+  CreatePosterTasksRequest,
+  CreatePosterTasksResponse,
+  PosterGeneration,
+} from '@myj/shared';
 
 export type PosterStyleId = 'vibrant' | 'premium' | 'minimal' | 'custom';
 
@@ -36,32 +41,12 @@ export interface GeneratePosterInput {
 
 const BASE = '/api/v1';
 
-export async function generatePoster(
-  input: ServerFnInput<GeneratePosterInput>,
-): Promise<PosterResult> {
-  const d = input.data;
-
-  // 老的 mode → 新后端 PosterMode 枚举
-  const backendMode = d.mode === 'bg_only' ? 'official_bg_only' : 'photo_compose';
-
-  const body: PosterGenerateRequest = {
-    template: d.styleId,
-    mode: backendMode,
-    copyText: d.copy,
-    sourcePhotoUrl: d.photo,                                  // data URL 直接透传
-    productImageUrl: d.productImageUrl ?? undefined,
-    customStyleDescription: d.customStyle ?? undefined,
-    skuCode: d.sku ?? undefined,
-    categoryName: d.category ?? undefined,
-  };
-
-  const res = await fetch(`${BASE}/posters/generate`, {
-    method: 'POST',
+async function jsonFetch<T>(path: string, init: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
   });
-
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
@@ -70,11 +55,58 @@ export async function generatePoster(
     } catch { /* keep msg */ }
     throw new Error(msg);
   }
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
 
-  const body2 = (await res.json()) as PosterGenerateResponse;
+export async function generatePoster(
+  input: ServerFnInput<GeneratePosterInput>,
+): Promise<PosterResult> {
+  const d = input.data;
+  const backendMode = d.mode === 'bg_only' ? 'official_bg_only' : 'photo_compose';
+
+  // 1) 建任务（自动 generation #1 = queued）
+  const createBody: CreatePosterTasksRequest = {
+    tasks: [
+      {
+        template: d.styleId,
+        mode: backendMode,
+        copyText: d.copy,
+        sourcePhotoUrl: d.photo,                           // data URL 直接透传
+        productImageUrl: d.productImageUrl ?? undefined,
+        customStyleDescription: d.customStyle ?? undefined,
+        skuCode: d.sku ?? undefined,
+        categoryName: d.category ?? undefined,
+      },
+    ],
+  };
+  const create = await jsonFetch<CreatePosterTasksResponse>('/posters/tasks', {
+    method: 'POST',
+    body: JSON.stringify(createBody),
+  });
+  const task = create.tasks[0];
+  const generationId = task?.latestGeneration?.id;
+  if (!generationId) {
+    throw new Error('建任务后未返回 generation id');
+  }
+
+  // 2) 精确认领并同步执行（claim 路由内部直接调 openRouter）
+  const claim = await jsonFetch<{ generation: PosterGeneration } | undefined>(
+    '/posters/generations:claim',
+    { method: 'POST', body: JSON.stringify({ generationId }) },
+  );
+  if (!claim?.generation) {
+    throw new Error('生成失败：未能认领刚建的任务');
+  }
+  const gen = claim.generation;
+
+  if (gen.status !== 'succeeded' || !gen.posterImageUrl) {
+    throw new Error(gen.errorMessage ?? `生成失败：${gen.status}`);
+  }
+
   return {
-    imageUrl: body2.poster.posterImageUrl,
-    modelUsed: body2.poster.aiModel ?? '',
+    imageUrl: gen.posterImageUrl,
+    modelUsed: gen.aiModel ?? '',
     promptUsed: '',   // 后端不暴露具体 prompt 给前端（决策 D11 留痕只在 audit/job 表）
   };
 }

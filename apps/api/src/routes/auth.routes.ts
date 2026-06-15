@@ -9,7 +9,7 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { NotImplementedError, AppError, ErrorCodes } from '../lib/errors.js';
+import { AppError, ErrorCodes } from '../lib/errors.js';
 import { requireAuth, optionalAuth, extractToken } from '../middleware/auth.js';
 import {
   loginWithPassword,
@@ -24,9 +24,36 @@ import {
   clearCookieOptions,
 } from '../lib/session.js';
 import { config } from '../config/env.js';
+import { writeAuditEvent } from '../services/audit.service.js';
 import type { LoginResponse } from '../types/api.js';
+import type { AuthenticatedUser } from '../types/api.js';
 
 export const authRouter = Router();
+
+/** 登录类审计（约束 #12）：失败不影响主流程 */
+function auditAuth(
+  req: Request,
+  res: Response,
+  kind: 'user_login' | 'user_logout' | 'feishu_oauth_success' | 'feishu_oauth_fail',
+  user: Pick<AuthenticatedUser, 'id' | 'name' | 'roles'> | null,
+  payload: Record<string, unknown> = {},
+): void {
+  void writeAuditEvent({
+    eventKind: kind,
+    actorUserId: user?.id ?? null,
+    actorRole: user?.roles?.[0] ?? null,
+    actorDisplayName: user?.name ?? null,
+    summary:
+      kind === 'user_login' ? '账密登录'
+      : kind === 'user_logout' ? '退出登录'
+      : kind === 'feishu_oauth_success' ? '飞书登录成功'
+      : '飞书登录失败',
+    payload,
+    ipAddress: extractClientIp(req),
+    userAgent: req.get('user-agent') ?? null,
+    requestId: (res.locals.requestId as string | undefined) ?? null,
+  }).catch(() => { /* 审计失败静默 */ });
+}
 
 // 模块 1 ------------------------------------------------------------------
 
@@ -65,6 +92,8 @@ authRouter.post('/auth/login', (req: Request, res: Response, next: NextFunction)
 
       const maxAge = config.SESSION_TTL_SECONDS * 1000;
       res.cookie(COOKIE_NAME, result.token, sessionCookieOptions(maxAge));
+
+      auditAuth(req, res, 'user_login', result.user, { method: 'legacy_password' });
 
       const body: LoginResponse = {
         user: result.user,
@@ -160,15 +189,26 @@ authRouter.post(
           res.clearCookie('feishu_oauth_state', { path: '/' });
         }
 
-        const result = await loginWithFeishu({
-          code,
-          clientType: client,
-          userAgent: req.get('user-agent') ?? null,
-          ip: extractClientIp(req),
-        });
+        let result;
+        try {
+          result = await loginWithFeishu({
+            code,
+            clientType: client,
+            userAgent: req.get('user-agent') ?? null,
+            ip: extractClientIp(req),
+          });
+        } catch (err) {
+          auditAuth(req, res, 'feishu_oauth_fail', null, {
+            client,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          throw err;
+        }
 
         const maxAge = config.SESSION_TTL_SECONDS * 1000;
         res.cookie(COOKIE_NAME, result.token, sessionCookieOptions(maxAge));
+
+        auditAuth(req, res, 'feishu_oauth_success', result.user, { client });
 
         const body: LoginResponse = {
           user: result.user,
@@ -269,28 +309,13 @@ authRouter.post(
     void (async () => {
       try {
         await logoutByToken(req.sessionToken ?? null);
+        auditAuth(req, res, 'user_logout', req.user ?? null);
         res.clearCookie(COOKIE_NAME, clearCookieOptions());
         res.status(204).end();
       } catch (err) {
         next(err);
       }
     })();
-  },
-);
-
-// 模块 2 中的设备 -----------------------------------------------------------
-
-/** 查询设备已绑定门店（PO-B1） */
-authRouter.get('/devices/:deviceId/store', (_req, _res, next) => {
-  next(new NotImplementedError('M1-PR3 实现设备绑定门店查询'));
-});
-
-/** 绑定设备到门店（PO-B2） */
-authRouter.put(
-  '/devices/:deviceId/store',
-  requireAuth,
-  (_req, _res, next) => {
-    next(new NotImplementedError('M1-PR3 实现设备绑定门店写入'));
   },
 );
 

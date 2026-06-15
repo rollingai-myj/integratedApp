@@ -1,11 +1,13 @@
 import * as React from 'react';
 
 export function productImageUrl(sku: string, displaySize?: number) {
-  const base = `https://rollingai-meiyijia.oss-cn-shanghai.aliyuncs.com/product_pic/${sku}.png`;
+  // 走后端 302 重定向：后端按 SKU_IMAGE_BASE/{paddedSkuCode}.png 拼接到 OSS。
+  // 走后端的好处：图片基址改动不需要前端发版；nginx 层有缓存，间歇性 OSS 抖动也能被吸收。
+  const base = `/api/v1/hq/products/${encodeURIComponent(sku)}/official-image`;
   if (!displaySize) return base;
-  // OSS 原生图片处理：缩放到 2x 显示宽度，转 webp，质量 80
   const w = Math.round(displaySize * 2);
-  return `${base}?x-oss-process=image/resize,w_${w}/format,webp/quality,q_80`;
+  // OSS 图片处理参数透传给后端 → 重定向时会拼接到目标 URL 上
+  return `${base}?w=${w}`;
 }
 
 export function ProductImg({

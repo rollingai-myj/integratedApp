@@ -61,3 +61,13 @@ postgres_data/
 .tmp/
 tmp/
 *.local
+
+# ========== 数据备份与设计稿原件（体积大，不入库） ==========
+dumps/
+myjadviser.zip
+
+# ========== 主数据 Excel 源（一次性导入，结果已固化到 V019/V022/seed） ==========
+*.xlsx
+
+# ========== DB 全量 dump（含 user_feishu_identities open_id 等敏感字段，不入库） ==========
+scripts/data/snapshots/

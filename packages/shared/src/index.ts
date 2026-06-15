@@ -163,15 +163,15 @@ export interface StoreDetail {
   id: string;
   code: string;
   name: string;
-  ownership: 'direct' | 'franchise';
   province: string | null;
   city: string | null;
-  district: string | null;
   address: string | null;
   latitude: number | null;
   longitude: number | null;
   openedAt: string | null;
   status: 'active' | 'disabled';
+  storeAreaSqm: number | null;
+  poiCategory: string | null;
 }
 
 export interface ProductRow {
@@ -182,11 +182,11 @@ export interface ProductRow {
   spec: string | null;
   unit: string | null;
   shelfLifeDays: number | null;
-  lengthMm: number | null;
-  widthMm: number | null;
-  heightMm: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
   categoryId: string | null;
-  /** dim_category 树递归算出的 "L1[/L2[/L3]]"；后端 fn_category_path() 实时计算 */
+  /** hq_categories 树递归算出的 "L1[/L2[/L3]]"；后端 fn_category_path() 实时计算 */
   categoryPath: string | null;
   /** 商品所属系列（如"经典系列"）；当前不参与业务逻辑，仅占位 */
   series: string | null;
@@ -195,14 +195,12 @@ export interface ProductRow {
   wholesalePrice: number | null;
   suggestedRetailPrice: number | null;
   introducedAt: string | null;
-  officialImageUrl: string | null;
   status: 'active' | 'delisted';
 }
 
 export interface StoreSkuRow extends ProductRow {
   retailPrice: number | null;
   originalPrice: number | null;
-  hasPriceChange: boolean;
   salesQty30d: number | null;
   salesAmount30d: number | null;
   salesQty90d: number | null;
@@ -211,6 +209,8 @@ export interface StoreSkuRow extends ProductRow {
   stockQty: number | null;
   lastDeliveryAt: string | null;
   snapshotDate: string | null;
+  /** 本店该 SKU 最后一次调价的时刻（ISO 8601）；null = 从未调过价；价盘"最近调整"排序按它倒序 */
+  lastPriceChangeAt: string | null;
 }
 
 export interface ListStoresResponse {
@@ -256,7 +256,7 @@ export interface PriceChangeRecord {
   skuCode: string;
   oldPrice: number | null;
   newPrice: number;
-  source: 'manual' | 'ai_suggest' | 'rule_engine';
+  source: 'manual' | 'rule_engine';
   effectiveDate: string;
   createdAt: string;
 }
@@ -265,7 +265,7 @@ export interface SubmitPriceChangeRequest {
   skuCode: string;
   newPrice: number;
   oldPrice?: number;
-  source?: 'manual' | 'ai_suggest' | 'rule_engine';
+  source?: 'manual' | 'rule_engine';
   note?: string;
 }
 
@@ -277,19 +277,6 @@ export interface ListPriceChangesResponse {
   changes: PriceChangeRecord[];
 }
 
-export interface DiagnoseSkuResult {
-  skuCode: string;
-  suggestion: 'up' | 'down' | 'hold' | 'unknown';
-  suggestedPrice: number | null;
-  reasoning: string;
-  confidence: number;
-  source: string;
-}
-
-export interface DiagnoseBatchResponse {
-  results: DiagnoseSkuResult[];
-}
-
 // ============================================================================
 // 模块 7 · 海报 (Posters)
 // ============================================================================
@@ -297,42 +284,138 @@ export interface DiagnoseBatchResponse {
 export type PosterTemplate = 'vibrant' | 'premium' | 'minimal' | 'custom';
 export type PosterMode = 'photo_compose' | 'official_bg_only' | 'multi_product';
 
-export interface PosterGenerateRequest {
-  template: PosterTemplate;
-  mode: PosterMode;
-  copyText: string;
-  sourcePhotoUrl?: string;
-  productImageUrl?: string;
-  officialImageUrls?: string[];
-  customStyleDescription?: string;
-  skuCode?: string;
-  categoryName?: string;
+// ---- 任务 / 生成分离模型 ----
+
+export type PosterGenerationStatus =
+  | 'queued'
+  | 'claimed'
+  | 'processing'
+  | 'succeeded'
+  | 'failed'
+  | 'canceled';
+
+export interface PosterTaskProduct {
+  productId: string;
+  skuCode: string;
+  displayOrder: number;
 }
 
-export interface PosterRecord {
+export interface PosterTask {
   id: string;
-  jobId: string | null;
+  batchId: string;
   userId: string;
-  storeId: string | null;
-  template: PosterTemplate;
+  storeId: string;
   mode: PosterMode;
+  template: PosterTemplate;
   copyText: string;
-  skuCode: string | null;
-  categoryName: string | null;
-  posterImageUrl: string;
+  sourcePhotoUrl: string | null;
+  productImageUrl: string | null;
+  customStyleDescription: string | null;
+  products: PosterTaskProduct[];
+  createdAt: string;
+  updatedAt: string;
+  latestGeneration?: PosterGeneration | null;
+}
+
+export interface PosterGeneration {
+  id: string;
+  taskId: string;
+  attemptNo: number;
+  status: PosterGenerationStatus;
+  posterImageUrl: string | null;
   thumbnailUrl: string | null;
   aiModel: string | null;
-  aiPrompt: string | null;
   generationMs: number | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  isAdopted: boolean;
+  adoptedAt: string | null;
+  downloadCount: number;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+export interface PosterAsset {
+  id: string;
+  storeId: string;
+  kind: 'background' | 'product_photo';
+  imageUrl: string;
+  uploadedBy: string | null;
   createdAt: string;
 }
 
-export interface PosterGenerateResponse {
-  poster: PosterRecord;
+export interface PosterSalesTrackingItem {
+  taskId: string;
+  generationId: string;
+  productId: string;
+  skuCode: string;
+  adoptedAt: string;
+  beforeSnapshotDate: string | null;
+  beforeSalesQty30d: number | null;
+  afterSnapshotDate: string | null;
+  afterSalesQty30d: number | null;
+  qtyDeltaPercent: number | null;
 }
 
-export interface PosterListResponse {
-  posters: PosterRecord[];
+export interface PosterTaskCreate {
+  mode: PosterMode;
+  template: PosterTemplate;
+  copyText: string;
+  sourcePhotoUrl?: string;
+  productImageUrl?: string;
+  customStyleDescription?: string;
+  skuCode?: string;
+  products?: Array<{ skuCode: string; displayOrder?: number }>;
+  categoryName?: string;
+  extras?: Record<string, unknown>;
+}
+
+export interface CreatePosterTasksRequest {
+  tasks: PosterTaskCreate[];
+}
+
+export interface CreatePosterTasksResponse {
+  batchId: string;
+  tasks: PosterTask[];
+}
+
+export interface ListPosterTasksResponse {
+  tasks: PosterTask[];
+}
+
+export interface GetPosterTaskResponse {
+  task: PosterTask;
+  generations: PosterGeneration[];
+}
+
+export interface AdoptPosterGenerationResponse {
+  generation: PosterGeneration;
+}
+
+export interface PosterDownloadResponse {
+  url: string;
+  count: number;
+}
+
+export interface PosterGalleryResponse {
+  generations: PosterGeneration[];
+}
+
+export interface PosterTodayCountResponse {
+  count: number;
+}
+
+export interface PosterAssetUploadResponse {
+  asset: PosterAsset;
+}
+
+export interface ListPosterAssetsResponse {
+  assets: PosterAsset[];
+}
+
+export interface PosterSalesTrackingResponse {
+  items: PosterSalesTrackingItem[];
 }
 
 // ============================================================================
@@ -414,6 +497,7 @@ export interface ActivePromotionsResponse {
 export interface RecommendPromotionsResponse {
   upload: PromotionUpload | null;
   products: ProductPromotion[];
+  groups: PromotionGroupRow[];
 }
 
 // ============================================================================
@@ -439,9 +523,9 @@ export interface ListShelfConfigsResponse {
 }
 
 export interface SceneDefinition {
-  positionCode: number;
-  positionName: string;
-  categories: Array<{ name: string; code: string | null; displayOrder: number }>;
+  scene: number;
+  name: string;
+  categories: Array<{ code: string; name: string }>;
 }
 
 export interface SceneAdjustmentCount {

@@ -64,13 +64,25 @@ const envSchema = z.object({
   DIFY_KEY_INSIGHT: z.string().optional().default(''),
   DIFY_KEY_QUESTIONS: z.string().optional().default(''),
   DIFY_KEY_VIRTUAL_SHELF: z.string().optional().default(''),
-  DIFY_KEY_PRICE_DIAGNOSE: z.string().optional().default(''),
 
   // OpenRouter（M4 用）
   OPENROUTER_API_KEY: z.string().optional().default(''),
 
-  // Detect Service（M2 用）
-  DETECT_SERVICE_URL: z.string().optional().default('http://localhost:8000'),
+  // Detect Service：商品识别 GPU 服务。空 = 走 detect.routes 的 mock fixture
+  DETECT_SERVICE_URL: z.string().optional().default(''),
+
+  // 高德地图（P3 起从前端硬编码迁到后端代理）
+  AMAP_KEY: z.string().optional().default(''),
+
+  // 商品图 / 条码图（OSS 公开桶）
+  SKU_IMAGE_BASE: z
+    .string()
+    .optional()
+    .default('https://rollingai-meiyijia.oss-cn-shanghai.aliyuncs.com/product_pic'),
+  SKU_BARCODE_BASE: z
+    .string()
+    .optional()
+    .default('https://rollingai-meiyijia.oss-cn-shanghai.aliyuncs.com/SKU_bar_code'),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

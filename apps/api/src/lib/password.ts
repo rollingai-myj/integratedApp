@@ -14,9 +14,16 @@ import { createRequire } from 'node:module';
 // bcryptjs 仍是 CJS 包，在 NodeNext ESM 下命名导入会失败；
 // 用 createRequire 拿到 CJS 模块对象后解构最稳。
 const require = createRequire(import.meta.url);
-const bcryptCompare = (
-  require('bcryptjs') as { compare: (plain: string, hash: string) => Promise<boolean> }
-).compare;
+const bcryptjs = require('bcryptjs') as {
+  compare: (plain: string, hash: string) => Promise<boolean>;
+  hash: (plain: string, rounds: number) => Promise<string>;
+};
+const bcryptCompare = bcryptjs.compare;
+
+/** 生成密码哈希（bcrypt cost=10）——后台账号管理建号/重置密码用 */
+export async function hashPassword(plaintext: string): Promise<string> {
+  return bcryptjs.hash(plaintext, 10);
+}
 
 const BCRYPT_PREFIX = /^\$2[aby]\$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/i;

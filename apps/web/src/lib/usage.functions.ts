@@ -2,9 +2,8 @@
  * Shim：兼容原 poster repo 引用的 @/lib/usage.functions
  *
  * 老 repo 用 usage_sessions 表 + 30s 心跳统计"店长在线时长"。
- * 整合后这部分会由 host 统一做（计划放在 admin 模块）。
- * 当前 shim 直接打 host 的 /usage/sessions:start + /usage/sessions/:id/heartbeat，
- * 失败也不阻塞 UI（fire-and-forget）。
+ * 整合后 host 用 sys_usage_sessions 表统一做，shim 打 /portal/usage:start +
+ * /portal/usage/:id/heartbeat，失败也不阻塞 UI（fire-and-forget）。
  */
 
 interface ServerFnInput<T> {
@@ -14,18 +13,20 @@ interface ServerFnInput<T> {
 const BASE = '/api/v1';
 
 export async function startSession(
-  _input?: ServerFnInput<{ deviceId?: string; storeId?: string | null }>,
+  input?: ServerFnInput<{ deviceId?: string; storeId?: string | null }>,
 ): Promise<{ id: string | null }> {
   try {
-    const res = await fetch(`${BASE}/sessions/start`, {
+    const res = await fetch(`${BASE}/portal/usage:start`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify(
+        input?.data?.deviceId ? { deviceId: input.data.deviceId } : {},
+      ),
     });
     if (!res.ok) return { id: null };
-    const body = (await res.json()) as { sessionId?: string };
-    return { id: body.sessionId ?? null };
+    const body = (await res.json()) as { id?: string };
+    return { id: body.id ?? null };
   } catch {
     return { id: null };
   }
@@ -35,12 +36,10 @@ export async function heartbeat(
   input: ServerFnInput<{ sessionId: string }>,
 ): Promise<{ ok: boolean }> {
   try {
-    const res = await fetch(`${BASE}/sessions/heartbeat`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: input.data.sessionId }),
-    });
+    const res = await fetch(
+      `${BASE}/portal/usage/${encodeURIComponent(input.data.sessionId)}/heartbeat`,
+      { method: 'POST', credentials: 'include' },
+    );
     return { ok: res.ok };
   } catch {
     return { ok: false };

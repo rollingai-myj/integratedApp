@@ -1,27 +1,35 @@
 /**
- * 价盘管理业务层（决策 D3 落地：调价时同时写 ops_store_price_change + fact_store_sku_weekly）
+ * 价盘业务层
  *
- * 表：
- *   ops_store_price_change   调价流水（每次调价 1 行）
- *   fact_store_sku_weekly    销售/价格快照（D3：调价时插一行 source='price_change'）
+ * 表归属（refactor 后）：
+ *   store_price_changes      调价流水（**调价数据唯一归属**）
+ *   store_sku_snapshots      门店周快照（只接受 erp_sync / manual 导入，调价绝不写）
+ *   hq_products              商品主数据
  *
- * 注：商品列表（含价格）和竞品价已在 master.service.ts 实现（合并 SK-C1+PR-A1、SK-C3+PR-A3）。
+ * 关键决策（refactor-plan）：调价**只写流水，不写快照**。
+ *   - 销量/销售额"效果"= 前后两期 snapshot 对比（time-series 真实变化）
+ *   - 价格曲线 = snapshots 取价格点 + price_changes 取调价点，前端合并去重
  */
 import { query, withTransaction } from '../db/index.js';
 import { AppError, ErrorCodes } from '../lib/errors.js';
-import { difyService } from './dify.service.js';
 
 // ---- 价格曲线 ------------------------------------------------------------
 
+/**
+ * 字段命名同 @myj/shared.PriceCurvePoint（snapshotDate / source / priceChangeId）。
+ * `source` 取值约定：
+ *   - 'snapshot' = 来自 store_sku_snapshots（带销量数据）
+ *   - 'change'   = 来自 store_price_changes（无销量数据）
+ */
 export interface PriceCurvePoint {
-  snapshotDate: string;
+  snapshotDate: string;            // YYYY-MM-DD
   retailPrice: number | null;
   originalPrice: number | null;
   wholesalePrice: number | null;
   salesQty30d: number | null;
   salesAmount30d: number | null;
   grossMargin30d: number | null;
-  source: string;
+  source: 'snapshot' | 'change';
   priceChangeId: string | null;
 }
 
@@ -31,81 +39,133 @@ export interface PriceCurveSku {
   points: PriceCurvePoint[];
 }
 
+function ymd(d: Date | string): string {
+  if (typeof d === 'string') return d.slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export async function getPriceCurve(args: {
   storeId: string;
   skuCodes?: string[];
-  /** 取最近多少天的快照（默认 365 天） */
+  /** 最近多少天，默认 365 天，最多 5 年 */
   daysBack?: number;
 }): Promise<PriceCurveSku[]> {
-  const params: unknown[] = [args.storeId];
-  const filters: string[] = ['f.store_id = $1'];
+  const days = Math.min(args.daysBack ?? 365, 1825);
 
+  const snapParams: unknown[] = [args.storeId];
+  const snapFilters: string[] = ['s.store_id = $1'];
   if (args.skuCodes && args.skuCodes.length > 0) {
-    params.push(args.skuCodes);
-    filters.push(`f.sku_code = ANY($${params.length}::text[])`);
+    snapParams.push(args.skuCodes);
+    snapFilters.push(`s.sku_code = ANY($${snapParams.length}::text[])`);
   }
-
-  const days = Math.min(args.daysBack ?? 365, 1825); // 最多 5 年
-  params.push(days);
-  filters.push(
-    `f.snapshot_date >= CURRENT_DATE - ($${params.length}::int * INTERVAL '1 day')`,
+  snapParams.push(days);
+  snapFilters.push(
+    `s.snapshot_date >= CURRENT_DATE - ($${snapParams.length}::int * INTERVAL '1 day')`,
   );
 
-  const res = await query<{
+  const snapRes = await query<{
     sku_code: string;
-    product_name: string | null;
-    snapshot_date: string;
-    retail_price: number | null;
-    original_price: number | null;
-    wholesale_price: number | null;
+    product_name: string;
+    snapshot_date: string | Date;
+    retail_price: string | null;
+    original_price: string | null;
+    wholesale_price: string | null;
     sales_qty_30d: number | null;
-    sales_amount_30d: number | null;
-    gross_margin_30d: number | null;
-    source: string;
-    price_change_id: string | null;
+    sales_amount_30d: string | null;
+    gross_margin_30d: string | null;
   }>(
-    `SELECT f.sku_code, p.product_name, f.snapshot_date, f.retail_price, f.original_price,
-            f.wholesale_price, f.sales_qty_30d, f.sales_amount_30d, f.gross_margin_30d,
-            f.source, f.price_change_id
-       FROM fact_store_sku_weekly f
-  LEFT JOIN dim_product p ON p.id = f.product_id AND p.deleted_at IS NULL
-      WHERE ${filters.join(' AND ')}
-   ORDER BY f.sku_code, f.snapshot_date, f.created_at`,
-    params,
+    `SELECT s.sku_code, p.product_name, s.snapshot_date,
+            s.retail_price, s.original_price, s.wholesale_price,
+            s.sales_qty_30d, s.sales_amount_30d, s.gross_margin_30d
+       FROM store_sku_snapshots s
+  LEFT JOIN hq_products p ON p.id = s.product_id AND p.deleted_at IS NULL
+      WHERE ${snapFilters.join(' AND ')}
+   ORDER BY s.sku_code, s.snapshot_date`,
+    snapParams,
+  );
+
+  const changeParams: unknown[] = [args.storeId];
+  const changeFilters: string[] = ['c.store_id = $1'];
+  if (args.skuCodes && args.skuCodes.length > 0) {
+    changeParams.push(args.skuCodes);
+    changeFilters.push(`c.sku_code = ANY($${changeParams.length}::text[])`);
+  }
+  changeParams.push(days);
+  changeFilters.push(
+    `c.effective_date >= CURRENT_DATE - ($${changeParams.length}::int * INTERVAL '1 day')`,
+  );
+
+  const changeRes = await query<{
+    id: string;
+    sku_code: string;
+    product_name: string;
+    effective_date: string | Date;
+    new_price: string;
+  }>(
+    `SELECT c.id, c.sku_code, p.product_name, c.effective_date, c.new_price
+       FROM store_price_changes c
+  LEFT JOIN hq_products p ON p.id = c.product_id AND p.deleted_at IS NULL
+      WHERE ${changeFilters.join(' AND ')}
+   ORDER BY c.sku_code, c.effective_date, c.created_at`,
+    changeParams,
   );
 
   const bySku = new Map<string, PriceCurveSku>();
-  for (const r of res.rows) {
-    let entry = bySku.get(r.sku_code);
+  const ensure = (skuCode: string, productName: string | null): PriceCurveSku => {
+    let entry = bySku.get(skuCode);
     if (!entry) {
-      entry = { skuCode: r.sku_code, productName: r.product_name, points: [] };
-      bySku.set(r.sku_code, entry);
+      entry = { skuCode, productName, points: [] };
+      bySku.set(skuCode, entry);
+    } else if (entry.productName == null && productName) {
+      entry.productName = productName;
     }
+    return entry;
+  };
+
+  for (const r of snapRes.rows) {
+    const entry = ensure(r.sku_code, r.product_name);
     entry.points.push({
-      snapshotDate: r.snapshot_date,
-      retailPrice: r.retail_price,
-      originalPrice: r.original_price,
-      wholesalePrice: r.wholesale_price,
+      snapshotDate: ymd(r.snapshot_date),
+      retailPrice: r.retail_price != null ? Number(r.retail_price) : null,
+      originalPrice: r.original_price != null ? Number(r.original_price) : null,
+      wholesalePrice: r.wholesale_price != null ? Number(r.wholesale_price) : null,
       salesQty30d: r.sales_qty_30d,
-      salesAmount30d: r.sales_amount_30d,
-      grossMargin30d: r.gross_margin_30d,
-      source: r.source,
-      priceChangeId: r.price_change_id,
+      salesAmount30d: r.sales_amount_30d != null ? Number(r.sales_amount_30d) : null,
+      grossMargin30d: r.gross_margin_30d != null ? Number(r.gross_margin_30d) : null,
+      source: 'snapshot',
+      priceChangeId: null,
     });
   }
-
+  for (const r of changeRes.rows) {
+    const entry = ensure(r.sku_code, r.product_name);
+    entry.points.push({
+      snapshotDate: ymd(r.effective_date),
+      retailPrice: Number(r.new_price),
+      originalPrice: null,
+      wholesalePrice: null,
+      salesQty30d: null,
+      salesAmount30d: null,
+      grossMargin30d: null,
+      source: 'change',
+      priceChangeId: r.id,
+    });
+  }
+  for (const sku of bySku.values()) {
+    sku.points.sort((a, b) => a.snapshotDate.localeCompare(b.snapshotDate));
+  }
   return Array.from(bySku.values());
 }
 
-// ---- 调价（决策 D3 两步写入） -------------------------------------------
+// ---- 调价（**只写流水**） ------------------------------------------------
 
 export interface SubmitPriceChangeInput {
   skuCode: string;
   newPrice: number;
   oldPrice?: number;
-  source?: 'manual' | 'ai_suggest' | 'rule_engine';
-  aiAdvice?: Record<string, unknown>;
-  aiModel?: string;
+  source?: 'manual' | 'rule_engine';
   effectiveDate?: string;
   note?: string;
 }
@@ -117,8 +177,11 @@ export interface PriceChangeRecord {
   skuCode: string;
   oldPrice: number | null;
   newPrice: number;
-  source: 'manual' | 'ai_suggest' | 'rule_engine';
+  source: 'manual' | 'rule_engine';
   effectiveDate: string;
+  changedBy: string | null;
+  changedByDisplay: string | null;
+  note: string | null;
   createdAt: string;
 }
 
@@ -128,9 +191,8 @@ export async function submitPriceChange(
   userId: string,
   userDisplayName: string,
 ): Promise<PriceChangeRecord> {
-  // 解析 product_id
   const prod = await query<{ id: string }>(
-    `SELECT id FROM dim_product WHERE sku_code = $1 AND deleted_at IS NULL LIMIT 1`,
+    `SELECT id FROM hq_products WHERE sku_code = $1 AND deleted_at IS NULL LIMIT 1`,
     [input.skuCode],
   );
   const productId = prod.rows[0]?.id;
@@ -138,56 +200,43 @@ export async function submitPriceChange(
     throw new AppError(404, ErrorCodes.NOT_FOUND, `SKU ${input.skuCode} 不存在`);
   }
 
-  // 取最近一次 retail_price 作为 old_price 回退值
+  // 缺省 oldPrice：取最近一次快照的 retail_price 作回退
   let oldPrice = input.oldPrice;
   if (oldPrice == null) {
-    const latest = await query<{ retail_price: number | null }>(
-      `SELECT retail_price FROM fact_store_sku_weekly
+    const latest = await query<{ retail_price: string | null }>(
+      `SELECT retail_price FROM store_sku_snapshots
         WHERE store_id = $1 AND product_id = $2
-     ORDER BY snapshot_date DESC, created_at DESC LIMIT 1`,
+     ORDER BY snapshot_date DESC LIMIT 1`,
       [storeId, productId],
     );
-    oldPrice = latest.rows[0]?.retail_price ?? undefined;
+    const v = latest.rows[0]?.retail_price;
+    oldPrice = v != null ? Number(v) : undefined;
   }
 
+  // **只写 store_price_changes**，绝不动 store_sku_snapshots
   return withTransaction(async (client) => {
-    // 1) 写 ops_store_price_change
-    const ins = await client.query<{ id: string; created_at: string; effective_date: string }>(
-      `INSERT INTO ops_store_price_change
+    const ins = await client.query<{
+      id: string;
+      effective_date: string | Date;
+      created_at: string;
+    }>(
+      `INSERT INTO store_price_changes
          (store_id, product_id, sku_code, old_price, new_price, source,
-          ai_advice, ai_model, effective_date, operator_user_id, operator_display, note)
+          effective_date, changed_by, changed_by_display, note)
        VALUES ($1, $2, $3, $4, $5, $6::price_change_source,
-               $7::jsonb, $8, COALESCE($9, CURRENT_DATE), $10, $11, $12)
-       RETURNING id, created_at, effective_date`,
+               COALESCE($7::date, CURRENT_DATE),
+               $8, $9, $10)
+       RETURNING id, effective_date, created_at`,
       [
-        storeId,
-        productId,
-        input.skuCode,
-        oldPrice ?? null,
-        input.newPrice,
+        storeId, productId, input.skuCode,
+        oldPrice ?? null, input.newPrice,
         input.source ?? 'manual',
-        JSON.stringify(input.aiAdvice ?? {}),
-        input.aiModel ?? null,
         input.effectiveDate ?? null,
-        userId,
-        userDisplayName,
+        userId, userDisplayName,
         input.note ?? null,
       ],
     );
     const row = ins.rows[0]!;
-
-    // 2) 决策 D3：同时往 fact_store_sku_weekly 插一行 source='price_change'
-    //    snapshot_date 用 effective_date；如同一天已有 source='price_change' 则更新 retail_price
-    await client.query(
-      `INSERT INTO fact_store_sku_weekly
-         (store_id, product_id, sku_code, snapshot_date, retail_price, source, price_change_id)
-       VALUES ($1, $2, $3, $4, $5, 'price_change', $6)
-       ON CONFLICT (store_id, product_id, snapshot_date, source) DO UPDATE
-         SET retail_price = EXCLUDED.retail_price,
-             price_change_id = EXCLUDED.price_change_id`,
-      [storeId, productId, input.skuCode, row.effective_date, input.newPrice, row.id],
-    );
-
     return {
       id: row.id,
       storeId,
@@ -196,8 +245,11 @@ export async function submitPriceChange(
       oldPrice: oldPrice ?? null,
       newPrice: input.newPrice,
       source: input.source ?? 'manual',
-      effectiveDate: row.effective_date,
-      createdAt: row.created_at,
+      effectiveDate: ymd(row.effective_date),
+      changedBy: userId,
+      changedByDisplay: userDisplayName,
+      note: input.note ?? null,
+      createdAt: typeof row.created_at === 'string' ? row.created_at : (row.created_at as Date).toISOString(),
     };
   });
 }
@@ -219,15 +271,18 @@ export async function listPriceChanges(args: {
     store_id: string;
     product_id: string;
     sku_code: string;
-    old_price: number | null;
-    new_price: number;
-    source: 'manual' | 'ai_suggest' | 'rule_engine';
-    effective_date: string;
+    old_price: string | null;
+    new_price: string;
+    source: 'manual' | 'rule_engine';
+    effective_date: string | Date;
+    changed_by: string | null;
+    changed_by_display: string | null;
+    note: string | null;
     created_at: string;
   }>(
     `SELECT id, store_id, product_id, sku_code, old_price, new_price,
-            source, effective_date, created_at
-       FROM ops_store_price_change
+            source, effective_date, changed_by, changed_by_display, note, created_at
+       FROM store_price_changes
       WHERE ${filters.join(' AND ')}
    ORDER BY created_at DESC
       LIMIT $${params.length}`,
@@ -238,78 +293,14 @@ export async function listPriceChanges(args: {
     storeId: r.store_id,
     productId: r.product_id,
     skuCode: r.sku_code,
-    oldPrice: r.old_price,
-    newPrice: r.new_price,
+    oldPrice: r.old_price != null ? Number(r.old_price) : null,
+    newPrice: Number(r.new_price),
     source: r.source,
-    effectiveDate: r.effective_date,
+    effectiveDate: ymd(r.effective_date),
+    changedBy: r.changed_by,
+    changedByDisplay: r.changed_by_display,
+    note: r.note,
     createdAt: r.created_at,
   }));
 }
 
-// ---- AI 诊断（PR-B1，走统一 AI 网关） ------------------------------------
-
-export interface DiagnoseSkuInput {
-  skuCode: string;
-  currentPrice: number;
-  wholesalePrice?: number;
-  salesQty30d?: number;
-  grossMargin30d?: number;
-  competitorPrices?: Array<{ channel: string; price: number }>;
-}
-
-export interface DiagnoseSkuResult {
-  skuCode: string;
-  suggestion: 'up' | 'down' | 'hold' | 'unknown';
-  suggestedPrice: number | null;
-  reasoning: string;
-  confidence: number;
-  source: string;
-}
-
-export async function diagnoseBatch(
-  storeId: string,
-  skus: DiagnoseSkuInput[],
-  userId: string,
-): Promise<DiagnoseSkuResult[]> {
-  if (skus.length === 0) return [];
-
-  // 调一次 Dify price-diagnose workflow，把整批 SKU 作为 inputs.skus 传过去
-  // Dify 端可以批处理或逐条；返回格式假设为 { results: [{ sku_code, suggestion, ... }] }
-  const outputs = await difyService.invoke(
-    'price-diagnose',
-    { store_id: storeId, skus },
-    { userId },
-  );
-
-  const results = Array.isArray(outputs.results) ? outputs.results : [];
-  const byCode = new Map<string, DiagnoseSkuResult>();
-
-  for (const r of results) {
-    if (!r || typeof r !== 'object') continue;
-    const obj = r as Record<string, unknown>;
-    const skuCode = typeof obj.sku_code === 'string' ? obj.sku_code : '';
-    if (!skuCode) continue;
-    const suggestion = ['up', 'down', 'hold'].includes(String(obj.suggestion))
-      ? (obj.suggestion as DiagnoseSkuResult['suggestion'])
-      : 'unknown';
-    byCode.set(skuCode, {
-      skuCode,
-      suggestion,
-      suggestedPrice:
-        typeof obj.suggested_price === 'number' ? obj.suggested_price : null,
-      reasoning: typeof obj.reasoning === 'string' ? obj.reasoning : '',
-      confidence: typeof obj.confidence === 'number' ? obj.confidence : 0,
-      source: typeof obj.source === 'string' ? obj.source : 'dify',
-    });
-  }
-
-  // 保留请求顺序，缺的 SKU 填 unknown
-  return skus.map((s) => byCode.get(s.skuCode) ?? {
-    skuCode: s.skuCode,
-    suggestion: 'unknown',
-    suggestedPrice: null,
-    reasoning: 'AI 未返回该 SKU 诊断',
-    confidence: 0,
-    source: 'dify',
-  });
-}

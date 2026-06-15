@@ -29,7 +29,9 @@
     "pino-pretty": "^11.3.0",
     "swagger-ui-express": "^5.0.1",
     "yamljs": "^0.3.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "multer": "^2.1.1",
+    "ali-oss": "^6.21.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -41,6 +43,8 @@
     "@types/yamljs": "^0.2.34",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "@types/multer": "^2.1.0",
+    "@types/ali-oss": "^6.16.11"
   }
 }

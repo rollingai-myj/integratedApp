@@ -14,9 +14,9 @@ import { generatePoster, type PosterResult, type PosterStyleId } from './ai';
 import { StorePrompt } from './StorePrompt';
 import { addRecent } from './recent';
 import { authClient } from './auth-client';
+import { getHostContext } from './host-bridge';
 import { recordLogin } from '@/lib/auth.functions';
 import { startSession, heartbeat } from '@/lib/usage.functions';
-import { getStoreForDevice, bindStoreToDevice } from '@/lib/store.functions';
 import { stripLeadingProductName, stripLeadingPromoCodes } from '@/utils/promoDisplayText';
 import { PromotionProvider, usePromotion } from './PromotionContext';
 import { JobsProvider } from './JobsContext';
@@ -29,20 +29,6 @@ type ScreenId =
   | 'copy' | 'style' | 'loading' | 'result' | 'batch' | 'retry';
 
 const ACCENT = '#E11D2A';
-const DEVICE_ID_KEY = 'myj_device_id';
-
-function getOrCreateDeviceId(): string {
-  try {
-    let id = localStorage.getItem(DEVICE_ID_KEY);
-    if (!id) {
-      id = (crypto.randomUUID?.() ?? `dev-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
-      localStorage.setItem(DEVICE_ID_KEY, id);
-    }
-    return id;
-  } catch {
-    return `dev-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
-  }
-}
 
 export function PosterApp() {
   return (
@@ -64,10 +50,8 @@ function PosterAppInner() {
   const [storeId, setStoreId] = React.useState<string | null>(null);
   const [needsStore, setNeedsStore] = React.useState(false);
   const [sessionTick, setSessionTick] = React.useState(0);
-  const deviceIdRef = React.useRef<string>('');
 
   React.useEffect(() => {
-    deviceIdRef.current = getOrCreateDeviceId();
     const { subscription } = authClient.onAuthStateChange((session) => {
       setAuthed(!!session);
       if (!session) { setStoreId(null); setNeedsStore(false); }
@@ -77,21 +61,15 @@ function PosterAppInner() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // After login: check device store binding, then record login + start usage session.
+  // After login: read current store from host-bridge, then record login + start usage session.
   React.useEffect(() => {
     if (!authed) return;
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
     let sessionId: string | null = null;
     (async () => {
-      // 原 standalone repo 在这里有"超管跳 /admin"逻辑，整合后由门户 / select-store 决定
-      // 默认门店，posters 不再需要前端判定 super_admin 也不再插自己的"返回首页"按钮。
-
-      let resolvedStore: string | null = null;
-      try {
-        const { storeId: bound } = await getStoreForDevice({ data: { deviceId: deviceIdRef.current } });
-        resolvedStore = bound;
-      } catch (e) { console.warn('[getStoreForDevice]', e); }
+      // host (/posters 路由) 已经通过 setHostContext 灌了当前门店；这里直接读。
+      const resolvedStore = getHostContext()?.storeCode ?? null;
 
       if (cancelled) return;
       if (!resolvedStore) {
@@ -122,10 +100,22 @@ function PosterAppInner() {
   const handleStoreSubmit = async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
+    // 用户在 PosterApp 里输入门店编号（如"粤37893"）→ 解析成 UUID → 切店
     try {
-      await bindStoreToDevice({ data: { deviceId: deviceIdRef.current, storeId: trimmed } });
+      const listRes = await fetch('/api/v1/portal/stores', { credentials: 'include' });
+      if (!listRes.ok) throw new Error(`portal/stores ${listRes.status}`);
+      const { stores } = (await listRes.json()) as { stores: Array<{ id: string; code: string }> };
+      const match = stores.find((s) => s.code === trimmed);
+      if (!match) throw new Error(`门店编号 ${trimmed} 不在你的可见范围内`);
+      const switchRes = await fetch('/api/v1/portal/active-store', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storeId: match.id }),
+      });
+      if (!switchRes.ok) throw new Error(`active-store ${switchRes.status}`);
     } catch (e) {
-      console.error('[bindStoreToDevice]', e);
+      console.error('[switch-store]', e);
       return;
     }
     setStoreId(trimmed);

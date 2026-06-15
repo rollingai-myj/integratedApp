@@ -16,6 +16,8 @@ import { hashToken, issueToken } from '../lib/session.js';
 import { config } from '../config/env.js';
 import { feishuService } from './feishu.service.js';
 import { upsertUserFromFeishu } from './feishu-identity.service.js';
+import { runStoreLoginBootstrap } from './ai-shelves.service.js';
+import { logger } from '../lib/logger.js';
 import type {
   AuthenticatedUser,
   AuthNotice,
@@ -116,7 +118,7 @@ export async function loginWithPassword(args: {
 
   await withTransaction(async (client) => {
     await client.query(
-      `INSERT INTO auth_sessions
+      `INSERT INTO user_sessions
         (user_id, token_hash, auth_method, client_type, active_store_id, user_agent, ip, expires_at)
        VALUES ($1, $2, 'legacy_password', 'browser', $3, $4, $5::inet, $6)`,
       [user.id, tokenHash, activeStoreId, args.userAgent, args.ip, expiresAt],
@@ -125,6 +127,13 @@ export async function loginWithPassword(args: {
       user.id,
     ]);
   });
+
+  // 单店账号登录直接 active 一家店：fire-and-forget 触发引导任务（洞察 + 问卷题目）。
+  if (activeStoreId) {
+    void runStoreLoginBootstrap(activeStoreId).catch((err) => {
+      logger.warn({ err, storeId: activeStoreId }, 'loginWithPassword: runStoreLoginBootstrap hook 异常');
+    });
+  }
 
   const roles = await loadRoles(user.id);
 
@@ -184,9 +193,9 @@ export async function loginWithFeishu(args: {
 
   await withTransaction(async (client) => {
     await client.query(
-      `INSERT INTO auth_sessions
+      `INSERT INTO user_sessions
         (user_id, token_hash, auth_method, client_type, active_store_id, user_agent, ip, expires_at)
-       VALUES ($1, $2, $3::auth_method, $4::feishu_client_type, $5, $6, $7::inet, $8)`,
+       VALUES ($1, $2, $3::auth_method, $4::client_type, $5, $6, $7::inet, $8)`,
       [
         upsert.userId,
         tokenHash,
@@ -202,6 +211,12 @@ export async function loginWithFeishu(args: {
       upsert.userId,
     ]);
   });
+
+  if (upsert.defaultStoreId) {
+    void runStoreLoginBootstrap(upsert.defaultStoreId).catch((err) => {
+      logger.warn({ err, storeId: upsert.defaultStoreId }, 'loginWithFeishu: runStoreLoginBootstrap hook 异常');
+    });
+  }
 
   const roles = await loadRoles(upsert.userId);
 
@@ -228,7 +243,7 @@ export async function getMeByToken(token: string | null): Promise<MeResponse> {
   const tokenHash = hashToken(token);
   const sessionRes = await query<SessionRow>(
     `SELECT id, user_id, active_store_id, expires_at, revoked_at
-     FROM auth_sessions
+     FROM user_sessions
      WHERE token_hash = $1
      LIMIT 1`,
     [tokenHash],
@@ -259,7 +274,7 @@ export async function getMeByToken(token: string | null): Promise<MeResponse> {
 
   // 顺手 touch 最近活跃时间（不 await，业务上无影响）
   void query(
-    `UPDATE auth_sessions SET last_seen_at = now() WHERE id = $1`,
+    `UPDATE user_sessions SET last_seen_at = now() WHERE id = $1`,
     [session.id],
   ).catch(() => {
     /* 静默：心跳更新失败不影响读取 */
@@ -305,7 +320,7 @@ export async function logoutByToken(token: string | null): Promise<void> {
   if (!token) return;
   const tokenHash = hashToken(token);
   await query(
-    `UPDATE auth_sessions
+    `UPDATE user_sessions
      SET revoked_at = now()
      WHERE token_hash = $1 AND revoked_at IS NULL`,
     [tokenHash],
@@ -316,7 +331,7 @@ export async function logoutByToken(token: string | null): Promise<void> {
 
 async function loadRoles(userId: string): Promise<string[]> {
   const res = await query<{ role: string }>(
-    `SELECT role FROM user_roles WHERE user_id = $1 ORDER BY role`,
+    `SELECT system_role AS role FROM user_roles WHERE user_id = $1 ORDER BY system_role`,
     [userId],
   );
   return res.rows.map((r) => r.role);

@@ -67,6 +67,17 @@ export function useSwitchStore() {
   return useMutation({
     mutationFn: (body: SwitchStoreRequest) => portalApi.switchStore(body),
     onSuccess: async () => {
+      // 切店是全局上下文变更：scenes / runtime / store skus 等所有按 storeId 隔离
+      // 的 query 缓存键里没有 storeId，不清掉会把上家店的数据带到新店。
+      //
+      // 注意：不能直接 qc.removeQueries() 全清 —— 那会把 ME 的 cache 条目也删掉，
+      // 紧跟的 invalidateQueries(ME) 找不到 entry → useMe 观察者卡 pending、
+      // HomePage 走 isAuthenticated=false 分支被踢到登录页。
+      // 所以只清 auth/portal 之外的（即按 storeId 隔离的那一坨），ME 走 invalidate 让 useMe 立刻 refetch。
+      qc.removeQueries({
+        predicate: (q) =>
+          q.queryKey[0] !== 'auth' && q.queryKey[0] !== 'portal',
+      });
       await qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
     },
   });

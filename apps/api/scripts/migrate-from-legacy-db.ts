@@ -138,7 +138,7 @@ async function migrateDimProduct(): Promise<Stats> {
         `INSERT INTO dim_product (
             sku_code, product_name, category_id, brand, spec, unit,
             is_new_product, is_private_label, shelf_life_days,
-            length_mm, width_mm, height_mm,
+            length_cm, width_cm, height_cm,
             introduced_at, wholesale_price, status
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
           ON CONFLICT DO NOTHING`,
