@@ -40,7 +40,7 @@ interface CategoryItem {
   /** poster-app 的 deriveBest 需要这个 fallback；shim 必须从 API 透传过去 */
   all_options?: ProductPromotionDealOption[] | null;
   is_group?: boolean;
-  group_id?: string;
+  group_id?: string | null;
   brand_label?: string | null;
   group_members?: Array<{ sku: string; productName: string }> | null;
   best_applies_to_skus?: string[] | null;
