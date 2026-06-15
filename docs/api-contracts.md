@@ -162,7 +162,6 @@
 
 | Method + Path | Auth | Inputs | Outputs | 备注 |
 |---|---|---|---|---|
-| **GET** `/scenes/:scene/promo-texts` | required | `:scene` | `{ texts: [...] }` | |
 | **POST** `/scenes/:scene/ai/diagnose` | required + store | `{ photoUrl }` | **SSE 流**（Dify align workflow） | `text/event-stream`，非 JSON wrapped |
 | **POST** `/scenes/:scene/ai/strategy` | required + store | — | **SSE 流**（Dify selection workflow） | |
 | **POST** `/scenes/:scene/ai/virtual-shelf` | required + store | — | **SSE 流**（Dify virtual_shelf workflow） | |
@@ -350,7 +349,6 @@
 - `GET /health`
 - `POST /portal/usage:start` + `POST /portal/usage/:usageId/heartbeat`
 - `GET /hq/products/:skuCode/barcode`
-- `GET /scenes/:scene/promo-texts`
 - `POST /admin/load-test/poster`
 - `GET /competitors/price-compare`
 

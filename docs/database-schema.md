@@ -39,7 +39,7 @@
 | 身份 / 权限 | users, user_sessions, user_roles, user_stores, user_feishu_identities, stores | auth, portal, admin-accounts, feishu-identity |
 | 系统横切 | sys_audit_events, sys_usage_sessions, sys_settings | audit, admin-stats |
 | 总部主数据 | hq_categories, hq_products, hq_benchmark_skus | hq, benchmark |
-| 促销 | hq_promo_batches, hq_promo_batch_items, hq_promo_mix_groups, hq_promo_sku_texts | promotions |
+| 促销 | hq_promo_batches, hq_promo_batch_items, hq_promo_mix_groups | promotions |
 | 门店现状 | store_scene_state, store_scene_shelves, store_sku_snapshots | scene, store-skus |
 | 门店洞察 | store_insights, store_competitors, store_competitor_products, store_competitor_price_snapshots, store_survey_questions, store_survey_answers | competitors, surveys |
 | 门店动作 | store_scene_adjustments, store_assortment_changes, store_scene_remakes, store_scene_virtual_history, store_sku_corrections, store_price_changes | scene, prices, ai-shelves |
@@ -470,42 +470,6 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 | best_total_price | NUMERIC(12,2) | 凑齐后整组总价 | 派生：MIN(batch_items.best_total_price) | 店长端卡片大字价 |
 | best_saving_percent | NUMERIC(6,2) | 凑齐后相对原总价的折扣率 | 派生：MAX(batch_items.best_saving_percent) | 店长端"省 X%"标签 |
 | representative_image_url | TEXT | 组代表图 | 始终 NULL（VIEW 占位列，无写入路径） | 店长端组卡片缩略图（未消费） |
-
----
-
-### `hq_promo_sku_texts`
-
-> 选品（/shelves）页商品旁的促销小标语 —— 与海报模块的促销批次是**两套完全独立的体系**：海报促销是按月整批上传 Excel、固定 1 个生效版本；本表是按 SKU 维度长期挂的小标签（如"低糖 0 卡"、"新品热卖"），支持按城市 / 门店范围筛选。[V005.sql](../apps/api/src/db/migrations/V005__hq_promotions.sql)
->
-> ⚠️ **当前端到端未启用**：
-> - 后端服务 `listScenePromoTexts` + 路由 `GET /api/v1/scenes/:scene/promo-texts` 已实现，按场景读取本表；
-> - **但 apps/web/src/features/shelves/ 没有任何调用方**，端点实际是死端点；
-> - **也完全没有写接口**（INSERT/UPDATE/DELETE 在服务层、路由层均不存在），生产环境无法维护数据；
-> - 唯一数据来源是 [dev-seed.sql](../apps/api/src/db/seeds/dev-seed.sql) 灌的种子。
->
-> **结论**：等"商品旁标语"产品决策落地后再接入；现状清空本表不影响任何业务。
-
-| 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
-|---|---|---|---|---|
-| id | UUID PK | 唯一标识 | 仅 dev-seed | listScenePromoTexts 返回 |
-| group_code | VARCHAR(64) | 标语组编码（与 `mix_group_code` 是完全不同的体系） | 仅 seed | 选品页按组聚合（待接入） |
-| group_name | TEXT | 标语组的显示名 | 仅 seed | 同上 |
-| product_id | UUID FK(hq_products) | 标语挂在哪个商品上（与 category_id 二选一） | 仅 seed | LEFT JOIN 兜底取 category_id |
-| sku_code | VARCHAR(64) | SKU 码（product_id 缺失时直接用） | 仅 seed | 选品页按 SKU 匹配（待接入） |
-| promo_text | TEXT | 标语文案（如"低糖 0 卡"、"新品热卖"） | 仅 seed | 选品页 SKU 旁标签（待接入） |
-| category_id | UUID FK(hq_categories) | 标语挂哪个品类（与 product_id 二选一） | 仅 seed | 走 `fn_category_scene` 把品类映射到场景编号、按场景过滤 |
-| scope | promotion_scope NOT NULL | 作用范围：`all_stores` / `city` / `store_list` | 仅 seed | 当前服务端过滤掉 `store_list`（避免按门店维度展开） |
-| scope_cities | TEXT[] | scope=city 时的城市白名单 | 仅 seed | 选品页按门店所在城市过滤（待接入） |
-| scope_store_ids | UUID[] | scope=store_list 时的门店白名单 | 仅 seed | 同上 |
-| effective_from | DATE | 标语生效起始 | 仅 seed | 时间过滤（当前查询未启用此条件） |
-| effective_to | DATE | 标语停用日期 | 仅 seed | 同上 |
-| is_active | BOOLEAN | 是否启用 | 仅 seed | 查询条件 |
-| display_order | INT | 同组内显示顺序 | 仅 seed | 排序（当前查询未启用） |
-| created_by | UUID FK(users) | 创建者 | 仅 seed | 审计 |
-| attributes | JSONB | 扩展槽（尚未使用） | — | — |
-| created_at / updated_at | TIMESTAMPTZ | DB 时间戳 | DB | — |
-
-**约束 #6**：scope 三选一必须与对应 scope_cities / scope_store_ids 配对（all_stores 时两者都 NULL；city 时 cities 非空、store_ids NULL；反之）。
 
 ---
 
