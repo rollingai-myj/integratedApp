@@ -549,35 +549,4 @@ export async function recordVirtualHistory(args: {
   return { id: res.rows[0]!.id };
 }
 
-// ---- 场景下的促销文案（虚拟陈列 / 选品页用） -------------------------------
-
-export async function listScenePromoTexts(scene: number): Promise<Array<{
-  groupCode: string;
-  groupName: string | null;
-  skuCode: string;
-  promoText: string;
-}>> {
-  const res = await query<{
-    group_code: string;
-    group_name: string | null;
-    sku_code: string;
-    promo_text: string;
-  }>(
-    `SELECT t.group_code, t.group_name, t.sku_code, t.promo_text
-       FROM hq_promo_sku_texts t
-       LEFT JOIN hq_products p ON p.id = t.product_id
-      WHERE t.is_active
-        AND (t.scope <> 'store_list')
-        AND fn_category_scene(COALESCE(t.category_id, p.category_id)) = $1
-   ORDER BY t.group_code, t.sku_code`,
-    [scene],
-  );
-  return res.rows.map((r) => ({
-    groupCode: r.group_code,
-    groupName: r.group_name,
-    skuCode: r.sku_code,
-    promoText: r.promo_text,
-  }));
-}
-
 export const _internal = { rowToRuntime } as const;

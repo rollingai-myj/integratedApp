@@ -20,7 +20,6 @@ import {
   applyAdjustment, listAdjustments,
   listCorrections, submitCorrection,
   listVirtualHistory, recordVirtualHistory,
-  listScenePromoTexts,
   type AdjustmentItem,
 } from '../services/scene.service.js';
 import {
@@ -443,16 +442,6 @@ scenesRouter.post(
       userId: req.user!.id,
     });
     res.status(201).json(r);
-  }),
-);
-
-// ---- 场景促销文案 --------------------------------------------------------
-
-scenesRouter.get(
-  '/scenes/:scene/promo-texts', requireAuth,
-  asyncHandler(async (req, res) => {
-    const scene = parseScene(req);
-    res.json({ texts: await listScenePromoTexts(scene) });
   }),
 );
 
