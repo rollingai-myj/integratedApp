@@ -158,11 +158,25 @@ export class OpenRouterService {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      logger.warn({ status: res.status, body: body.slice(0, 500) }, 'openrouter non-2xx');
+      // OpenRouter 错误体一般是 JSON `{error: {message, code, ...}}` —— 抠出来塞进
+      // AppError.message，方便落到 store_poster_generations.error_message 给用户看。
+      let detail = body.slice(0, 1000);
+      try {
+        const parsed = JSON.parse(body) as { error?: { message?: string; code?: string | number } };
+        if (parsed.error?.message) {
+          detail = String(parsed.error.message).slice(0, 600);
+        }
+      } catch {
+        // 不是 JSON，保留原文截断
+      }
+      logger.warn(
+        { status: res.status, body: body.slice(0, 2000), model, hasImages: Array.isArray(content) },
+        'openrouter non-2xx',
+      );
       throw new AppError(
         502,
         ErrorCodes.UPSTREAM_ERROR,
-        `OpenRouter 返回 ${res.status}`,
+        `OpenRouter 返回 ${res.status}: ${detail}`,
       );
     }
 

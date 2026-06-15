@@ -94,7 +94,7 @@
 | **GET** `/hq/products/:skuCode/official-image` | public | `w?` (像素宽，触发 OSS resize) | 302 redirect 到 OSS URL | 404 | 用于 `<img src>`，所以不验登录 |
 | **GET** `/hq/products/:skuCode/barcode` | public | — | 302 redirect 到条码图 | 404 | |
 | **GET** `/hq/benchmark-skus` | required | `segment?` (`core\|innovation`) | `{ benchmarks: BenchmarkRow[] }` | 401 | |
-| **PUT** `/hq/stores/:storeId` | super_admin | body: `{ code, name, ownership, province?, city?, district?, address?, latitude?, longitude?, openedAt?, isProjectStore? }` | `{ id }` | 401, 403, 400, 404 | 审计 |
+| **PUT** `/hq/stores/:storeId` | super_admin | body: `{ code, name, province?, city?, address?, latitude?, longitude?, openedAt?, isProjectStore?, storeAreaSqm?, poiCategory? }` | `{ id }` | 401, 403, 400, 404 | 审计 |
 
 **`CategoryNode`** = `{ id, parentId, level (0-3), scene?, code, name, children? }`
 
@@ -277,9 +277,9 @@
 
 | Method + Path | Auth | Inputs | Outputs (200) | 备注 |
 |---|---|---|---|---|
-| **GET** `/insights` | required + store | — | `StoreInsight \| null` | |
-| **PUT** `/insights` | required + store | `{ city?, mainDemographic?, consumptionLevel?, populationDensity?, crowdSourceAnalysis?, competitorAnalysis?, topCompetitors?, reportMarkdown? }` | 同 GET | upsert |
-| **POST** `/insights/ai/report` | required + store | — | **SSE 流**（Dify insight workflow） | |
+| **GET** `/insights` | required + store | — | `StoreInsight \| null` 即 `{ category, crowdSourceAnalysis, competitorAnalysis, topCompetitors }` | V015 起精简至 4 字段 |
+| **PUT** `/insights` | required + store | `{ category?, crowdSourceAnalysis?, competitorAnalysis?, topCompetitors? }` | 同 GET | upsert |
+| **POST** `/insights/ai/report` | required + store | — | **SSE 流**（Dify insight workflow，POI inputs 取自 `store_insights.poi_data` 缓存；首次未命中则同步调高德 + 写回） | |
 | **GET** `/insights/surveys/questions` | required + store | `scene?` (0-12) | `{ questions: [...] }` | scope=null 表全店 |
 | **PUT** `/insights/surveys/questions` | required + store | `scene?` query, `{ questions: [...], source? ('ai'\|'manual') }` | `{ questions: [...] }` | 替换 scope 内问题 |
 | **POST** `/insights/surveys/questions/ai` | required + store | `scene` (req!) | **SSE 流** | |

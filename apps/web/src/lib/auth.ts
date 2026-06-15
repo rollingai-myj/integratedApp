@@ -67,6 +67,9 @@ export function useSwitchStore() {
   return useMutation({
     mutationFn: (body: SwitchStoreRequest) => portalApi.switchStore(body),
     onSuccess: async () => {
+      // 切店是全局上下文变更：scenes / runtime / store skus 等所有按 storeId 隔离
+      // 的 query 缓存键里没有 storeId，不清掉会把上家店的数据带到新店
+      qc.removeQueries();
       await qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
     },
   });

@@ -626,15 +626,21 @@ export async function claimAndProcess(
   );
   const task = tRes.rows[0]!;
   const inputs = (task.inputs ?? {}) as Record<string, unknown>;
+  // sourcePhotoUrl / productImageUrl / productImageUrls 都是反代 URL，OpenRouter
+  // 在外网拉不到——这里统一转回 OSS 直链
   const aiInput: PosterGenerateInput = {
     template: task.template,
     mode: task.mode,
     copyText: task.copy_text,
-    sourcePhotoUrl: task.source_photo_url ?? undefined,
-    productImageUrl: task.product_image_url ?? undefined,
+    sourcePhotoUrl: task.source_photo_url
+      ? ossService.toExternalUrl(task.source_photo_url)
+      : undefined,
+    productImageUrl: task.product_image_url
+      ? ossService.toExternalUrl(task.product_image_url)
+      : undefined,
     customStyleDescription: task.custom_style_description ?? undefined,
     productImageUrls: Array.isArray(inputs.productImageUrls)
-      ? (inputs.productImageUrls as string[])
+      ? (inputs.productImageUrls as string[]).map((u) => ossService.toExternalUrl(u))
       : undefined,
     skuCode: typeof inputs.skuCode === 'string' ? inputs.skuCode : undefined,
     categoryName:

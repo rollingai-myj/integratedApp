@@ -109,9 +109,9 @@ export interface ProductRow {
   unit: string | null;
   series: string | null;
   shelfLifeDays: number | null;
-  lengthMm: number | null;
-  widthMm: number | null;
-  heightMm: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
   categoryId: string | null;
   categoryPath: string | null;
   scene: number | null;
@@ -169,9 +169,9 @@ export async function listProducts(args: {
     suggested_retail_price: string | null;
     introduced_at: string | Date | null;
     status: 'active' | 'delisted';
-    length_mm: string | null;
-    width_mm: string | null;
-    height_mm: string | null;
+    length_cm: string | null;
+    width_cm: string | null;
+    height_cm: string | null;
   }>(
     `SELECT p.id, p.sku_code, p.product_name, p.brand, p.spec, p.unit, p.series,
             p.shelf_life_days, p.category_id,
@@ -179,7 +179,7 @@ export async function listProducts(args: {
             fn_category_scene(p.category_id) AS scene,
             p.is_new_product, p.is_private_label,
             p.wholesale_price, p.suggested_retail_price, p.introduced_at, p.status,
-            p.length_mm, p.width_mm, p.height_mm
+            p.length_cm, p.width_cm, p.height_cm
        FROM hq_products p
       WHERE ${where.join(' AND ')}
    ORDER BY p.sku_code
@@ -195,9 +195,9 @@ export async function listProducts(args: {
     unit: r.unit,
     series: r.series,
     shelfLifeDays: r.shelf_life_days,
-    lengthMm: r.length_mm != null ? Number(r.length_mm) : null,
-    widthMm: r.width_mm != null ? Number(r.width_mm) : null,
-    heightMm: r.height_mm != null ? Number(r.height_mm) : null,
+    lengthCm: r.length_cm != null ? Number(r.length_cm) : null,
+    widthCm: r.width_cm != null ? Number(r.width_cm) : null,
+    heightCm: r.height_cm != null ? Number(r.height_cm) : null,
     categoryId: r.category_id,
     categoryPath: r.cat_path,
     scene: r.scene,
@@ -279,15 +279,15 @@ export function resolveBarcodeUrl(skuCode: string): string {
 export interface StoreUpsertInput {
   code: string;
   name: string;
-  ownership: 'direct' | 'franchise';
   province?: string;
   city?: string;
-  district?: string;
   address?: string;
   latitude?: number;
   longitude?: number;
   openedAt?: string;
   isProjectStore?: boolean;
+  storeAreaSqm?: number;
+  poiCategory?: string;
 }
 
 export async function upsertStore(id: string, input: StoreUpsertInput): Promise<{ id: string }> {
@@ -296,29 +296,34 @@ export async function upsertStore(id: string, input: StoreUpsertInput): Promise<
     // 创建
     await query(
       `INSERT INTO stores
-        (id, store_code, store_name, ownership, province, city, district, address,
-         latitude, longitude, opened_at, is_project_store)
+        (id, store_code, store_name, province, city, address,
+         latitude, longitude, opened_at, is_project_store,
+         store_area_sqm, poi_category)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
-        id, input.code, input.name, input.ownership,
-        input.province ?? null, input.city ?? null, input.district ?? null, input.address ?? null,
+        id, input.code, input.name,
+        input.province ?? null, input.city ?? null, input.address ?? null,
         input.latitude ?? null, input.longitude ?? null, input.openedAt ?? null,
         input.isProjectStore ?? false,
+        input.storeAreaSqm ?? null, input.poiCategory ?? null,
       ],
     );
   } else {
     await query(
       `UPDATE stores
-          SET store_code = $2, store_name = $3, ownership = $4,
-              province = $5, city = $6, district = $7, address = $8,
-              latitude = $9, longitude = $10, opened_at = $11,
-              is_project_store = $12, updated_at = now()
+          SET store_code = $2, store_name = $3,
+              province = $4, city = $5, address = $6,
+              latitude = $7, longitude = $8, opened_at = $9,
+              is_project_store = $10,
+              store_area_sqm = $11, poi_category = $12,
+              updated_at = now()
         WHERE id = $1`,
       [
-        id, input.code, input.name, input.ownership,
-        input.province ?? null, input.city ?? null, input.district ?? null, input.address ?? null,
+        id, input.code, input.name,
+        input.province ?? null, input.city ?? null, input.address ?? null,
         input.latitude ?? null, input.longitude ?? null, input.openedAt ?? null,
         input.isProjectStore ?? false,
+        input.storeAreaSqm ?? null, input.poiCategory ?? null,
       ],
     );
   }

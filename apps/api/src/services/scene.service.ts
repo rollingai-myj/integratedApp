@@ -347,8 +347,18 @@ export async function applyAdjustment(args: {
              updated_at = now()`,
       [args.storeId, args.scene, id],
     );
+    // apply 即"这一轮调改结束"：清照片 / 状态机回到 empty / draft 清空。
+    // 历史照片要看时进 store_scene_adjustments / store_assortment_changes 看。
     await client.query(
-      `UPDATE store_scene_state SET draft = NULL, updated_at = now()
+      `UPDATE store_scene_state
+          SET draft = NULL,
+              photos = '[]'::jsonb,
+              status = 'empty'::scene_state_status,
+              detection_data = '{}'::jsonb,
+              virtual_status = 'idle'::scene_virtual_status,
+              virtual_raw_outputs = NULL,
+              virtual_context = NULL,
+              updated_at = now()
         WHERE store_id = $1 AND scene = $2`,
       [args.storeId, args.scene],
     );
@@ -399,7 +409,7 @@ export interface Correction {
   scene: number;
   skuCode: string;
   productId: string | null;
-  kind: 'missed' | 'false_positive' | 'remove' | 'add' | 'observe';
+  kind: 'missed' | 'false_positive' | 'remove' | 'add';
   scope: 'detection' | 'decision';
   reasonCode: string;
   reasonText: string | null;
@@ -409,7 +419,7 @@ export interface Correction {
 
 const KIND_BY_SCOPE: Record<string, string[]> = {
   detection: ['missed', 'false_positive'],
-  decision: ['remove', 'add', 'observe'],
+  decision: ['remove', 'add'],
 };
 
 export async function listCorrections(args: {

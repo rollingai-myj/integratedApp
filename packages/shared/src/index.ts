@@ -163,15 +163,15 @@ export interface StoreDetail {
   id: string;
   code: string;
   name: string;
-  ownership: 'direct' | 'franchise';
   province: string | null;
   city: string | null;
-  district: string | null;
   address: string | null;
   latitude: number | null;
   longitude: number | null;
   openedAt: string | null;
   status: 'active' | 'disabled';
+  storeAreaSqm: number | null;
+  poiCategory: string | null;
 }
 
 export interface ProductRow {
@@ -182,9 +182,9 @@ export interface ProductRow {
   spec: string | null;
   unit: string | null;
   shelfLifeDays: number | null;
-  lengthMm: number | null;
-  widthMm: number | null;
-  heightMm: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
   categoryId: string | null;
   /** hq_categories 树递归算出的 "L1[/L2[/L3]]"；后端 fn_category_path() 实时计算 */
   categoryPath: string | null;
@@ -201,7 +201,6 @@ export interface ProductRow {
 export interface StoreSkuRow extends ProductRow {
   retailPrice: number | null;
   originalPrice: number | null;
-  hasPriceChange: boolean;
   salesQty30d: number | null;
   salesAmount30d: number | null;
   salesQty90d: number | null;
@@ -210,6 +209,8 @@ export interface StoreSkuRow extends ProductRow {
   stockQty: number | null;
   lastDeliveryAt: string | null;
   snapshotDate: string | null;
+  /** 本店该 SKU 最后一次调价的时刻（ISO 8601）；null = 从未调过价；价盘"最近调整"排序按它倒序 */
+  lastPriceChangeAt: string | null;
 }
 
 export interface ListStoresResponse {

@@ -47,23 +47,17 @@ insightsRouter.get(
 );
 
 const insightPutSchema = z.object({
-  city: z.string().nullable().optional(),
-  mainDemographic: z.string().nullable().optional(),
-  consumptionLevel: z.string().nullable().optional(),
-  populationDensity: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
   crowdSourceAnalysis: z.string().nullable().optional(),
   competitorAnalysis: z.string().nullable().optional(),
   topCompetitors: z.unknown().optional(),
-  reportMarkdown: z.string().nullable().optional(),
 });
 
 insightsRouter.put(
   '/insights', requireAuth, requireStore,
   asyncHandler(async (req, res) => {
     const body = insightPutSchema.parse(req.body);
-    const out = await upsertStoreInsight(
-      req.user!.currentStoreId!, body, req.user!.id,
-    );
+    const out = await upsertStoreInsight(req.user!.currentStoreId!, body);
     void writeAuditEvent({
       eventKind: 'store_insight_update',
       actorUserId: req.user!.id,

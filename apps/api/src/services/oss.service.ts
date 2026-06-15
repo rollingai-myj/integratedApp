@@ -33,9 +33,20 @@ export interface UploadInput {
 }
 
 export interface UploadResult {
-  url: string;
   key: string;
   size: number;
+  /**
+   * 前端 <img> 渲染用 —— 一律走反代 `/api/v1/storage/oss-image?key=...`，绕过
+   * bucket 的"强制浏览器下载"。本地 fallback 模式下是 `/api/v1/storage/local/...`。
+   * 数据库里持久化的就是这个值（前端拉历史时直接渲染）。
+   */
+  url: string;
+  /**
+   * 外部 AI（Dify / OpenRouter）从外网拉取用 —— OSS 直链。本地 fallback 模式下
+   * 等于 `url`（外网拿不到，但接口对齐避免调用方分支）。
+   * service 内部传给 Dify / OpenRouter 前必须取这个；前端永远拿不到、也不需要。
+   */
+  externalUrl: string;
 }
 
 const LOCAL_DIR = '/tmp/myj-uploads';
@@ -82,9 +93,9 @@ export class OssService {
     if (ossConfigured()) {
       try {
         const client = getClient();
-        // 上传时设 Content-Disposition: inline 是 best-effort。bucket 控制台
-        // 开了"强制浏览器下载"时仍会被覆盖回 attachment → 浏览器 `<img>` 渲染失败
-        // 显示纯黑。`browserUrl` 走 /storage/oss-image 反代统一兜底。
+        // Content-Disposition: inline 是 best-effort —— bucket 控制台开了"强制浏览器下载"时
+        // 仍会被改成 attachment 导致 `<img>` 渲染纯黑。所以前端 URL 一律走 /storage/oss-image
+        // 反代兜底；externalUrl 留给 service 内部传给 Dify / OpenRouter 用。
         const res = await client.put(key, input.buffer, {
           headers: {
             'Content-Type': input.contentType,
@@ -93,17 +104,12 @@ export class OssService {
         });
         const directUrl = (res as { url?: string }).url
           ?? `https://${config.OSS_BUCKET}.${config.OSS_REGION}.aliyuncs.com/${key}`;
-        // poster-output / avatar 只在浏览器渲染——返回反代 URL，绕开 OSS 强制下载头。
-        // shelf-photo / poster-source 还要给 Dify / OpenRouter 外网抓——必须保留 OSS 直链。
-        const browserOnly = input.purpose === 'poster-output' || input.purpose === 'avatar';
-        const url = browserOnly
-          ? `/api/v1/storage/oss-image?key=${encodeURIComponent(key)}`
-          : directUrl;
+        const url = `/api/v1/storage/oss-image?key=${encodeURIComponent(key)}`;
         logger.info(
-          { key, size: input.buffer.length, purpose: input.purpose, mode: 'oss', proxied: browserOnly },
+          { key, size: input.buffer.length, purpose: input.purpose, mode: 'oss' },
           'upload',
         );
-        return { key, size: input.buffer.length, url };
+        return { key, size: input.buffer.length, url, externalUrl: directUrl };
       } catch (err) {
         // OSS 凭证可能没写权限 → 警告 + 降级到本地，保证业务链路不挂
         logger.warn(
@@ -113,7 +119,8 @@ export class OssService {
       }
     }
 
-    // 本地 fallback：写到 /tmp/myj-uploads（仅本机可达；Dify 外网拿不到）
+    // 本地 fallback：写到 /tmp/myj-uploads（仅本机可达；Dify 外网拿不到 externalUrl，
+    // 但接口形态对齐 OSS 模式以避免调用方分支）
     const path = join(LOCAL_DIR, key);
     await mkdir(join(LOCAL_DIR, key, '..'), { recursive: true });
     await writeFile(path, input.buffer);
@@ -121,11 +128,32 @@ export class OssService {
       { key, size: input.buffer.length, purpose: input.purpose, mode: 'local' },
       'upload',
     );
+    const localUrl = `/api/v1/storage/local/${encodeURIComponent(key)}`;
     return {
       key,
       size: input.buffer.length,
-      url: `/api/v1/storage/local/${encodeURIComponent(key)}`,
+      url: localUrl,
+      externalUrl: localUrl,
     };
+  }
+
+  /**
+   * 把前端持久化的"反代 URL"反推回 OSS 直链。
+   * 调外部 AI（Dify / OpenRouter）前，把 photoUrl / imageUrl 转一次，否则
+   * 外网拉不到 `/api/v1/storage/oss-image?key=...`。
+   * 不是反代 URL 时（已经是直链、http(s) 外链、data URI 等）原样返回。
+   */
+  toExternalUrl(internalUrl: string): string {
+    if (!internalUrl) return internalUrl;
+    // /api/v1/storage/oss-image?key=<encoded>
+    const m = /\/api\/v1\/storage\/oss-image\?key=([^&]+)/.exec(internalUrl);
+    if (m) {
+      const key = decodeURIComponent(m[1]!);
+      if (config.OSS_BUCKET && config.OSS_REGION) {
+        return `https://${config.OSS_BUCKET}.${config.OSS_REGION}.aliyuncs.com/${key}`;
+      }
+    }
+    return internalUrl;
   }
 
   /**

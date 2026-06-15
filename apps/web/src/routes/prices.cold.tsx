@@ -202,10 +202,12 @@ function ColdPage() {
         (a: StoreSkuRow, b: StoreSkuRow) => (b.salesQty30d ?? 0) - (a.salesQty30d ?? 0),
       );
     } else {
-      sorted.sort(
-        (a: StoreSkuRow, b: StoreSkuRow) =>
-          Number(b.hasPriceChange) - Number(a.hasPriceChange),
-      );
+      // 最近调整：按最后一次调价时间倒序；从未调过价的（null）排在最后
+      sorted.sort((a: StoreSkuRow, b: StoreSkuRow) => {
+        const ta = a.lastPriceChangeAt ? Date.parse(a.lastPriceChangeAt) : 0;
+        const tb = b.lastPriceChangeAt ? Date.parse(b.lastPriceChangeAt) : 0;
+        return tb - ta;
+      });
     }
     return sorted;
   }, [allRows, query, sortKey]);

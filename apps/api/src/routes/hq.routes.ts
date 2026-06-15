@@ -96,15 +96,15 @@ hqRouter.get(
 const upsertStoreSchema = z.object({
   code: z.string().min(1).max(32),
   name: z.string().min(1),
-  ownership: z.enum(['direct', 'franchise']),
   province: z.string().optional(),
   city: z.string().optional(),
-  district: z.string().optional(),
   address: z.string().optional(),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
   openedAt: z.string().optional(),
   isProjectStore: z.boolean().optional(),
+  storeAreaSqm: z.number().nonnegative().optional(),
+  poiCategory: z.string().optional(),
 });
 
 hqRouter.put(

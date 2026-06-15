@@ -9,6 +9,7 @@
 > - 共享类型：[packages/shared/src/index.ts](../packages/shared/src/index.ts)
 > - 前端 API client：[apps/web/src/lib/api-client.ts](../apps/web/src/lib/api-client.ts)
 > - 接口契约速查：[api-contracts.md](./api-contracts.md)
+> - **每张表每字段的业务含义 / 读写位置**：[database-schema.md](./database-schema.md)
 >
 > **TL;DR 漂移**：全栈对齐 ✓
 > - ~~🔴 `/hq/products` 的 dimensions / productName / 5 缺字段~~ → **已修**（2026-06-14 重构后补全；详见 [§ 3](#3--主数据-master--hq)）
@@ -314,20 +315,24 @@ snapshot_date (DATE) → snapshotDate ('YYYY-MM-DD')
 
 ### DB
 
-复用 [V007__store_insight.sql](../apps/api/src/db/migrations/V007__store_insight.sql)：
+[V007__store_insight.sql](../apps/api/src/db/migrations/V007__store_insight.sql) + [V015__shrink_store_insights_add_poi.sql](../apps/api/src/db/migrations/V015__shrink_store_insights_add_poi.sql)：
 
-- `store_insights`: 单店一行的环境信息 + AI 报告 markdown
+- `store_insights`: 单店一行；**V015 起仅保留** category / crowd_source_analysis / competitor_analysis / top_competitors 四个 AI 输出字段 + `poi_data`（高德 POI 缓存）
 - `store_survey_questions` + `store_survey_answers`: 调研问卷
 
 ### Service / Route
 
 [insights.routes.ts](../apps/api/src/routes/insights.routes.ts) + [surveys.service.ts](../apps/api/src/services/surveys.service.ts) + [ai-shelves.service.ts](../apps/api/src/services/ai-shelves.service.ts)（Dify 调用）
 
-字段：`main_demographic → mainDemographic`，`crowd_source_analysis → crowdSourceAnalysis`，`report_markdown → reportMarkdown` 等。
+POI 流向：`buildQuestionsInputs / buildInsightInputs` → `getOrFetchPoi(storeId, location)` →
+1. `store_insights.poi_data` 有效 → 直接复用；
+2. 否则同步调高德 `searchAround()` 两次（COMPETITOR / CROWD types）→ `writeCachedPoi()` UPSERT 写回 → 返回。
+
+字段映射：`crowd_source_analysis → crowdSourceAnalysis`，`competitor_analysis → competitorAnalysis`，`top_competitors → topCompetitors`，`category → category`。
 
 ### 前端
 
-主要在货盘的 QA 页消费（survey 部分）和（未来的）洞察页。
+QA 页（货盘）消费 `/insights/surveys/*`。GET/PUT `/insights` 与 `POST /insights/ai/report` 当前**前端未接入**（后端就绪、UI 待建）。
 
 ---
 

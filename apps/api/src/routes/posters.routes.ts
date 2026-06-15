@@ -72,12 +72,28 @@ const taskProductSchema = z.object({
   displayOrder: z.number().int().nonnegative().optional(),
 });
 
+/**
+ * 上传 OSS 后返回的"反代 URL"形如 `/api/v1/storage/oss-image?key=...`，
+ * 不是绝对 URL，z.string().url() 会拒绝。所以这里放宽校验：
+ * 接受绝对 URL 或本仓 storage 的内部相对路径。
+ */
+const imageUrlSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (v) =>
+      /^https?:\/\//.test(v) ||
+      v.startsWith('/api/v1/storage/oss-image?') ||
+      v.startsWith('/api/v1/storage/local/'),
+    { message: '必须是 http(s) URL 或本仓 storage 反代路径' },
+  );
+
 const taskCreateSchema = z.object({
   mode: z.enum(['photo_compose', 'official_bg_only', 'multi_product']),
   template: z.enum(['vibrant', 'premium', 'minimal', 'custom']),
   copyText: z.string().min(1).max(500),
-  sourcePhotoUrl: z.string().url().optional(),
-  productImageUrl: z.string().url().optional(),
+  sourcePhotoUrl: imageUrlSchema.optional(),
+  productImageUrl: imageUrlSchema.optional(),
   customStyleDescription: z.string().max(500).optional(),
   skuCode: z.string().optional(),
   products: z.array(taskProductSchema).optional(),

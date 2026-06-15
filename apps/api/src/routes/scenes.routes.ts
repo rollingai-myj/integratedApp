@@ -379,7 +379,7 @@ scenesRouter.get(
 
 const correctionSchema = z.object({
   skuCode: z.string(),
-  kind: z.enum(['missed', 'false_positive', 'remove', 'add', 'observe']),
+  kind: z.enum(['missed', 'false_positive', 'remove', 'add']),
   scope: z.enum(['detection', 'decision']),
   reasonCode: z.string(),
   reasonText: z.string().optional(),

@@ -15,6 +15,10 @@ export interface StoreSkuRow {
   brand: string | null;
   spec: string | null;
   unit: string | null;
+  /** 商品尺寸（cm）；虚拟陈列图智能体输入需要 */
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
   categoryPath: string | null;
   scene: number | null;
   /** 本店实际售价 */
@@ -30,6 +34,8 @@ export interface StoreSkuRow {
   salesAmountChange30d: number | null;
   /** 同上，按销量件数 */
   salesQtyChange30d: number | null;
+  /** 本店在 store_price_changes 里最后一次调价的时刻；null = 从未调过价 */
+  lastPriceChangeAt: string | null;
 }
 
 export interface ListStoreSkusArgs {
@@ -57,6 +63,8 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
   const whereExtra = filters.length ? `AND ${filters.join(' AND ')}` : '';
 
   // 每店每商品的两期：latest = 最近一条；prev = 倒数第二条
+  // last_price_change_at 来自 store_price_changes：本店该 SKU 最后一次调价的时刻，
+  // 价盘"最近调整"排序就是按它倒序。
   const sql = `
     WITH ranked AS (
       SELECT s.*,
@@ -68,18 +76,27 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
              ) AS rn
         FROM store_sku_snapshots s
        WHERE s.store_id = $1
+    ),
+    last_change AS (
+      SELECT product_id, MAX(created_at) AS last_at
+        FROM store_price_changes
+       WHERE store_id = $1
+       GROUP BY product_id
     )
     SELECT p.id AS product_id, p.sku_code, p.product_name,
            p.brand, p.spec, p.unit,
+           p.length_cm, p.width_cm, p.height_cm,
            fn_category_path(p.category_id) AS cat_path,
            fn_category_scene(p.category_id) AS scene,
            latest.retail_price, latest.original_price, latest.wholesale_price,
            latest.sales_qty_30d, latest.sales_amount_30d, latest.gross_margin_30d,
            latest.stock_qty, latest.snapshot_date,
            prev.sales_qty_30d    AS prev_qty,
-           prev.sales_amount_30d AS prev_amt
+           prev.sales_amount_30d AS prev_amt,
+           lc.last_at            AS last_price_change_at
       FROM ranked latest
       LEFT JOIN ranked prev ON prev.product_id = latest.product_id AND prev.rn = 2
+      LEFT JOIN last_change lc ON lc.product_id = latest.product_id
       JOIN hq_products p ON p.id = latest.product_id AND p.deleted_at IS NULL
      WHERE latest.rn = 1 ${whereExtra}
   ORDER BY latest.sales_amount_30d DESC NULLS LAST, p.sku_code
@@ -91,6 +108,9 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
     brand: string | null;
     spec: string | null;
     unit: string | null;
+    length_cm: string | null;
+    width_cm: string | null;
+    height_cm: string | null;
     cat_path: string | null;
     scene: number | null;
     retail_price: string | null;
@@ -103,6 +123,7 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
     snapshot_date: string | Date;
     prev_qty: number | null;
     prev_amt: string | null;
+    last_price_change_at: Date | string | null;
   }>(sql, params);
 
   return res.rows.map((r) => {
@@ -117,6 +138,9 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
       brand: r.brand,
       spec: r.spec,
       unit: r.unit,
+      lengthCm: r.length_cm != null ? Number(r.length_cm) : null,
+      widthCm: r.width_cm != null ? Number(r.width_cm) : null,
+      heightCm: r.height_cm != null ? Number(r.height_cm) : null,
       categoryPath: r.cat_path,
       scene: r.scene,
       retailPrice: r.retail_price ? Number(r.retail_price) : null,
@@ -138,6 +162,10 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
         qty != null && prevQty != null && prevQty > 0
           ? round1(((qty - prevQty) / prevQty) * 100)
           : null,
+      lastPriceChangeAt:
+        r.last_price_change_at instanceof Date
+          ? r.last_price_change_at.toISOString()
+          : r.last_price_change_at,
     };
   });
 }

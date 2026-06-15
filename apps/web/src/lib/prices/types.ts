@@ -88,7 +88,7 @@ export function rowToSku(row: StoreSkuRow): SKU {
     originalPrice: Number(row.originalPrice ?? row.retailPrice ?? 0),
     ownStoreSales: Number(row.salesQty30d ?? 0),
     adjustments: [],
-    hasAdjusted: row.hasPriceChange,
+    hasAdjusted: row.lastPriceChangeAt != null,
   };
 }
 

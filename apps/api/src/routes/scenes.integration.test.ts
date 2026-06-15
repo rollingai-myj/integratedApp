@@ -174,18 +174,18 @@ d('Phase 3 · scenes selection-domain (integration)', () => {
     expect(hist.json.adjustments[0].summaryText).toBe('测试调改');
   });
 
-  it('勘误：kind×scope 配对——decision+observe 通过；detection+observe 400', async () => {
+  it('勘误：kind×scope 配对——decision+remove 通过；detection+remove 400', async () => {
     const ctx = await loginAndSelectStore('admin', 'Admin@1234', '粤39128');
     const ok = await call('POST', '/api/v1/scenes/3/corrections', {
       ctx, body: {
-        skuCode: '06000460', kind: 'observe', scope: 'decision',
+        skuCode: '06000460', kind: 'remove', scope: 'decision',
         reasonCode: 'manual_keep', reasonText: '老顾客常买',
       },
     });
     expect(ok.status).toBe(201);
     const bad = await call('POST', '/api/v1/scenes/3/corrections', {
       ctx, body: {
-        skuCode: '06000460', kind: 'observe', scope: 'detection',
+        skuCode: '06000460', kind: 'remove', scope: 'detection',
         reasonCode: 'other',
       },
     });
@@ -196,7 +196,7 @@ d('Phase 3 · scenes selection-domain (integration)', () => {
     const adminCtx = await loginAndSelectStore('admin', 'Admin@1234', '粤39128');
     await call('POST', '/api/v1/scenes/3/corrections', {
       ctx: adminCtx, body: {
-        skuCode: '06012950', kind: 'observe', scope: 'decision', reasonCode: 'manual_keep',
+        skuCode: '06012950', kind: 'remove', scope: 'decision', reasonCode: 'manual_keep',
       },
     });
     // ops 切到不同店（粤37893）看自己的勘误清单（应该看不到 admin 在 粤39128 的）
