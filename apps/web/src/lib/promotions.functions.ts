@@ -138,13 +138,9 @@ export async function getPersonalizedPromotions(): Promise<PersonalizedPromotion
       }
     }
 
-    // 收集 group 成员 SKU，用作单品去重
-    const skusInGroup = new Set<string>();
-    for (const g of groups) {
-      for (const sku of (g.skuCodes ?? [])) skusInGroup.add(sku);
-    }
-
     // SKU → product 反查表（折叠 group 时用）
+    // 注：故意不做"组成员 SKU 在单品列表里去重"——group 卡和成员单品卡需要各自独立展示，
+    // 因为它们代表两种不同促销玩法（凑单组合价 vs 单品最优档），店长选品时两者均需可见。
     const skuToProduct = new Map<string, ProductPromotion>();
     for (const p of products) skuToProduct.set(p.skuCode, p);
 
@@ -189,9 +185,8 @@ export async function getPersonalizedPromotions(): Promise<PersonalizedPromotion
       pushTo(groupName, item);
     }
 
-    // 2) 再入剩余单品（被 group 收编的过滤掉）
+    // 2) 再入全部单品（不排除 group 成员——见上方注释）
     for (const p of products) {
-      if (skusInGroup.has(p.skuCode)) continue;
       const item = rowToCategoryItem(p);
       pushTo(mapCategoryToGroup(item.category ?? ''), item);
     }
