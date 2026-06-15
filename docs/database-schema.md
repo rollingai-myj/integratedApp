@@ -455,7 +455,7 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 > 凑单组卡片的数据源。**V020 起从 TABLE 改为 VIEW**：所有字段直接从 [`hq_promo_batch_items`](#hq_promo_batch_items) 按 `mix_group_code` GROUP BY 实时派生，不再有独立写入路径。原表的 `representative_image_url` 字段在 VIEW 里恒为 NULL（YAGNI；前端未消费）。[V020.sql](../apps/api/src/db/migrations/V020__mix_groups_to_view.sql)
 >
-> ✅ **前端已接入**（V020 同期）：店长 /posters 首页通过 [apps/web/src/lib/promotions.functions.ts](../apps/web/src/lib/promotions.functions.ts) shim 把 groups 折成 CategoryItem，按 `category_name` 分桶后置顶在所属分类。被任一组收编的 SKU 不再单独显示单品卡。
+> ✅ **前端已接入**（V020 同期）：店长 /posters 首页通过 [apps/web/src/lib/promotions.functions.ts](../apps/web/src/lib/promotions.functions.ts) shim 把 groups 折成 CategoryItem，按 `category_name` 分桶后置顶在所属分类。**组卡与单品卡独立展示**：店长选品时凑单组合价（组卡）与单品最优档（成员单品卡）两种玩法均可见。
 
 | 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
 |---|---|---|---|---|

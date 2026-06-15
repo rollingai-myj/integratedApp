@@ -117,10 +117,9 @@ COMMIT;
 | `group_members` | `group.skuCodes.map(sku => ({sku, productName: products 反查 ?? sku}))` |
 | `best_applies_to_skus` | `null`（全员适用） |
 
-**SKU 去重（关键）：**
-- 老 repo 的核心做法：被任一 mix_group 收编的 SKU **不再以单品卡身份出现**。
-- 实现：`const skusInGroup = new Set(groups.flatMap(g => g.skuCodes));` → 过滤掉 `products` 里 `skusInGroup.has(skuCode)` 的项。
-- 不去重的话同一 SKU 会同时出现在组卡和单品卡里 → 视觉重复 + 加入海报选品时重复入选。
+**组卡与单品卡独立展示：**
+- group 卡与单品卡独立展示，两种促销玩法（凑单组合价 vs 单品最优档）店长选品时均需可见。
+- 同一 SKU 可同时出现在组卡（参与凑单）和单品卡（单品最优档）里，两种促销逻辑独立计算，互不干扰。
 
 **分桶 + 置顶：**
 - 单品和组都走 `mapCategoryToGroup(categoryName)` 进同一个 byCategory map。
@@ -134,7 +133,7 @@ COMMIT;
 | `apps/api/src/services/promotions.service.ts` | `recommendForUser()` 返回值加 `groups: active.groups` |
 | `apps/api/src/routes/promotions.routes.ts` | recommend 路由响应 schema 加 `groups` 字段（如有 zod schema） |
 | `packages/shared/src/index.ts` | recommend 响应类型加 `groups`（若 active 类型已有则复用） |
-| `apps/web/src/lib/promotions.functions.ts` | shim 加 SKU 去重 + groups → CategoryItem 折叠；调整 byCategory 写入顺序 |
+| `apps/web/src/lib/promotions.functions.ts` | shim 加 groups → CategoryItem 折叠（组卡与单品卡独立展示）；调整 byCategory 写入顺序 |
 | `apps/web/src/components/posters/screens/Home.tsx` | `pickPerCategory` 加 group-first 排序保护 |
 
 ### 3.4 验收
@@ -157,7 +156,7 @@ VALUES
 **验收清单：**
 1. 后端 `GET /api/v1/promotions/recommend` 响应体含 `groups` 数组（非空）。
 2. /posters 首页"饮料"分类顶部出现 GroupCard：2×2 缩略图 + "可混搭 · 3 款" + `-35%`。
-3. 测试组的 3 个成员 SKU 不再单独出现在"饮料"分类的单品卡里。
+3. 测试组的 3 个成员 SKU 在"饮料"分类中同时可见：组卡（凑单价）与单品卡（单品最优档）独立并存。
 4. 点击组卡 → 进入选品队列（顶部计数 +1）；切换到其他屏后再回来选中态保留。
 5. 关掉"今日有效"开关组卡仍在（组无日期 → 默认有效）。
 6. 没有测试数据时（删完 TEST_MIX_DRINK 后），分类内单品卡数量恢复，不报错、不闪烁。
@@ -205,7 +204,7 @@ VALUES
 1. **任务 A' V020 迁移**（mix_groups TABLE → VIEW）+ **删 upload 期聚合 INSERT 代码** + db:reset 跑通 + promotions integration test 全绿。
 2. **任务 A 后端**（service recommend 补 groups + shared types）—— 在 A' 基础上加返回字段。
 3. **任务 A 前端**（shim 折叠 + Home.tsx 排序保护）—— 依赖 #2。
-4. **任务 A 端到端验收** —— 浏览器打开 /posters + 手工 SQL 灌 TEST_MIX_DRINK 验组卡出现 + 成员去重生效。
+4. **任务 A 端到端验收** —— 浏览器打开 /posters + 手工 SQL 灌 TEST_MIX_DRINK 验组卡出现 + 组卡与单品卡独立并存。
 5. **任务 B 代码**（删 service + route + import）。
 6. **任务 B V021 迁移**（DROP hq_promo_sku_texts）+ 清 seed + db:reset 验证。
 7. **任务 B 文档**（database-schema.md + api-contracts.md）。

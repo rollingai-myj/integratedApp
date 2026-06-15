@@ -6,7 +6,7 @@
 
 **Architecture:**
 - **A'（结构化）**：`hq_promo_mix_groups` 从 TABLE 改为 VIEW，所有字段直接从 `hq_promo_batch_items` GROUP BY 派生；upload 服务删掉 ~40 行聚合 INSERT，改成 `SELECT COUNT(*)` 取 group_count。
-- **A（前端接入）**：后端 `/promotions/recommend` 补返回 `groups`；前端 shim 把 groups 折成 `is_group=true` 的 CategoryItem 并对成员 SKU 去重；Home.tsx 排序加 group-first 保护。
+- **A（前端接入）**：后端 `/promotions/recommend` 补返回 `groups`；前端 shim 把 groups 折成 `is_group=true` 的 CategoryItem（组卡与单品卡独立展示）；Home.tsx 排序加 group-first 保护。
 - **B（死链清理）**：服务 + 路由 + 表 + seed + 文档一并删除，V021 迁移落地。
 
 **Tech Stack:** Express + zod + node-postgres（后端）、React + TanStack Router + Vite（前端）、vitest（API 测试）。前端无单测框架，验收用浏览器 + 手工 SQL 灌 mix_group 测试数据。
@@ -26,7 +26,7 @@
 - Modify `packages/shared/src/index.ts:497-500` — `RecommendPromotionsResponse` 加 `groups`
 - Modify `apps/api/src/services/promotions.service.ts:441-472` — `recommendForUser` 返回 `groups`
 - Modify `apps/api/src/routes/promotions.integration.test.ts` — 验 recommend 返回 groups
-- Modify `apps/web/src/lib/promotions.functions.ts` — 读 body.groups + SKU 去重 + 折叠成 CategoryItem
+- Modify `apps/web/src/lib/promotions.functions.ts` — 读 body.groups + 折叠成 CategoryItem（组卡与单品卡独立展示）
 - Modify `apps/web/src/components/posters/screens/Home.tsx:411-422` — group-first 排序
 
 **任务 B · 死链清理：**
@@ -159,7 +159,7 @@ git commit -m "refactor(promo): mix_groups TABLE→VIEW + 删 upload 聚合 INSE
 ```md
 > 凑单组卡片的数据源。**V020 起从 TABLE 改为 VIEW**：所有字段直接从 [`hq_promo_batch_items`](#hq_promo_batch_items) 按 `mix_group_code` GROUP BY 实时派生，不再有独立写入路径。原表的 `representative_image_url` 字段在 VIEW 里恒为 NULL（YAGNI；前端未消费）。[V020.sql](../apps/api/src/db/migrations/V020__mix_groups_to_view.sql)
 >
-> ✅ **前端已接入**（V020 同期）：店长 /posters 首页通过 [apps/web/src/lib/promotions.functions.ts](../apps/web/src/lib/promotions.functions.ts) shim 把 groups 折成 CategoryItem，按 `category_name` 分桶后置顶在所属分类。被任一组收编的 SKU 不再单独显示单品卡。
+> ✅ **前端已接入**（V020 同期）：店长 /posters 首页通过 [apps/web/src/lib/promotions.functions.ts](../apps/web/src/lib/promotions.functions.ts) shim 把 groups 折成 CategoryItem，按 `category_name` 分桶后置顶在所属分类。**组卡与单品卡独立展示**：两种促销玩法（凑单组合价 vs 单品最优档）均可见。
 ```
 （原本"⚠️ 当前前端未消费"块完全替换掉。）
 
@@ -310,7 +310,7 @@ git commit -m "test(promotions): 验证 recommend 端点返回 groups 字段"
 
 - [ ] **Step 7.1: 读懂当前 getPersonalizedPromotions 结构**
 
-阅读 [apps/web/src/lib/promotions.functions.ts:107-151](apps/web/src/lib/promotions.functions.ts#L107-L151)。当前只读 `body.products`，进 byCategory。任务是：(a) 同时读 `body.groups`；(b) SKU 去重；(c) 把 group 折成 CategoryItem 加入 byCategory；(d) groups 项排在 category 列表的最前面。
+阅读 [apps/web/src/lib/promotions.functions.ts:107-151](apps/web/src/lib/promotions.functions.ts#L107-L151)。当前只读 `body.products`，进 byCategory。任务是：(a) 同时读 `body.groups`；(b) 把 group 折成 CategoryItem 加入 byCategory（组卡与单品卡独立展示，两者并存）；(c) groups 项排在 category 列表的最前面。
 
 - [ ] **Step 7.2: import 增 PromotionGroupRow + RecommendPromotionsResponse**
 
@@ -380,16 +380,10 @@ if (products.length === 0) {
 }
 ```
 
-- [ ] **Step 7.7: 把"按品类分组"代码块替换成新版（SKU 去重 + group 折叠）**
+- [ ] **Step 7.7: 把"按品类分组"代码块替换成新版（group 折叠 + 组卡与单品卡独立展示）**
 
 把原 line 132-144 的 byCategory 构建段整个替换为：
 ```ts
-// 收集 group 成员 SKU，用作单品去重
-const skusInGroup = new Set<string>();
-for (const g of groups) {
-  for (const sku of (g.skuCodes ?? [])) skusInGroup.add(sku);
-}
-
 // SKU → product 反查表（折叠 group 时用）
 const skuToProduct = new Map<string, ProductPromotion>();
 for (const p of products) skuToProduct.set(p.skuCode, p);
@@ -435,9 +429,8 @@ for (const g of groups) {
   pushTo(groupName, item);
 }
 
-// 2) 再入剩余单品（被 group 收编的过滤掉）
+// 2) 再入全部单品（group 卡与单品卡独立展示）
 for (const p of products) {
-  if (skusInGroup.has(p.skuCode)) continue;
   const item = rowToCategoryItem(p);
   pushTo(mapCategoryToGroup(item.category ?? ''), item);
 }
@@ -462,7 +455,7 @@ Expected: 无 error。
 
 ```bash
 git add apps/web/src/lib/promotions.functions.ts
-git commit -m "feat(posters): shim 折叠 mix_groups 成 CategoryItem + SKU 去重"
+git commit -m "feat(posters): shim 折叠 mix_groups 成 CategoryItem（组卡与单品卡独立展示）"
 ```
 
 ---
@@ -556,7 +549,7 @@ Expected: 1 行，display_name=`饮料 系列`，sku_codes 含 3 个 SKU，best_
 打开 http://localhost:8089/posters，逐项确认：
 1. F12 Network 看 `/api/v1/promotions/recommend` 响应 body 含 `groups` 数组（应该是 1 元素）。
 2. "饮料"分类（或所选品类）顶部出现 GroupCard：2×2 缩略图 + `可混搭 · 3 款` + 顶角折扣率。
-3. 测试组的 3 个成员 SKU **不再单独出现**在"饮料"分类的单品卡里（去重生效）。
+3. 测试组的 3 个成员 SKU 在"饮料"分类中**组卡与单品卡独立并存**（两种促销玩法均可见）。
 4. 点击组卡 → 顶部计数 +1；离开页面再回来选中态保留。
 5. 切换"今日有效"开关，组卡仍在（组无日期 → 默认有效）。
 6. 没问题截图保留。
