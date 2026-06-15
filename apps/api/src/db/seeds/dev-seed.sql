@@ -1541,8 +1541,6 @@ fcef0aa9-7fe0-4852-9468-bef5010b0d70	5d34fd6d-6a82-4c77-ab3a-37594006686a	1082	5
 fcef80ef-19ec-42cf-94fe-00771a4844f4	5d34fd6d-6a82-4c77-ab3a-37594006686a	1083	39080172	乐天小熊饼干草莓味夹心饼干37g	盒	39饼干	7.50	\N	会员价	1	6.50	6.50	13.33	[{"label": "会员价", "detail": "特价6.5元/盒", "channel": "in_store", "sources": ["6月上会员价明细"], "validTo": "2026-06-15", "promoType": "特价", "validFrom": "2026-06-01", "totalPrice": 6.5, "requiredQty": 1, "savingPercent": 13.33, "effectiveUnitPrice": 6.5}]	2026-06-01	2026-06-15	{}	\N	原价¥7.5/盒，会员价 ¥6.5/盒	{}	2026-06-04 07:45:18.426+00	2026-06-08 10:02:02.459458+00
 \.
 
-COPY hq_promo_mix_groups (id, batch_id, mix_group_code, display_name, category_name, sku_codes, product_count, best_label, best_total_price, best_saving_percent, representative_image_url, attributes, created_at, updated_at) FROM stdin;
-\.
 
 COPY hq_promo_sku_texts (id, group_code, group_name, product_id, sku_code, promo_text, category_id, scope, scope_cities, scope_store_ids, effective_from, effective_to, is_active, display_order, attributes, created_at, updated_at) FROM stdin;
 da7b984a-a888-4d5d-a4a8-b4f012c81654	128	\N	\N	05011471	加1元多任意1杯	\N	all_stores	\N	\N	\N	\N	t	0	{"promo_type": "加N元多*件"}	2026-05-21 07:33:15.428+00	2026-06-08 09:54:47.025914+00
