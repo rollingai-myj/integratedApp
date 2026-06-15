@@ -177,49 +177,12 @@ export async function uploadPromotion(
       }
     }
 
-    // 4) 聚合 hq_promo_mix_groups（按 mix_group_code）
-    const groupRes = await client.query<{
-      mix_group_code: string;
-      sku_codes: string[];
-      category_name: string | null;
-      best_label: string | null;
-      best_total_price: number | null;
-      best_saving_percent: number | null;
-      product_count: number;
-    }>(
-      `SELECT mix_group_code,
-              array_agg(sku_code ORDER BY row_index) AS sku_codes,
-              (array_agg(category_name) FILTER (WHERE category_name IS NOT NULL))[1] AS category_name,
-              (array_agg(best_label ORDER BY best_saving_percent DESC NULLS LAST))[1] AS best_label,
-              MIN(best_total_price) AS best_total_price,
-              MAX(best_saving_percent) AS best_saving_percent,
-              COUNT(*)::int AS product_count
-         FROM hq_promo_batch_items
-        WHERE batch_id = $1 AND mix_group_code IS NOT NULL
-     GROUP BY mix_group_code`,
+    // 4) 从 VIEW hq_promo_mix_groups（V020 起为派生视图）直接 COUNT 出本批的凑单组数
+    const groupCountRes = await client.query<{ c: number }>(
+      `SELECT COUNT(*)::int AS c FROM hq_promo_mix_groups WHERE batch_id = $1`,
       [batchId],
     );
-    for (const g of groupRes.rows) {
-      await client.query(
-        `INSERT INTO hq_promo_mix_groups
-           (batch_id, mix_group_code, display_name, category_name, sku_codes,
-            product_count, best_label, best_total_price, best_saving_percent)
-         VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8, $9)
-         ON CONFLICT (batch_id, mix_group_code) DO NOTHING`,
-        [
-          batchId,
-          g.mix_group_code,
-          g.category_name ? `${g.category_name} 系列` : null,
-          g.category_name,
-          g.sku_codes,
-          g.product_count,
-          g.best_label,
-          g.best_total_price,
-          g.best_saving_percent,
-        ],
-      );
-    }
-    const groupCount = groupRes.rows.length;
+    const groupCount = groupCountRes.rows[0]!.c;
 
     // 5) 回写批次的计数 + warnings
     await client.query(
