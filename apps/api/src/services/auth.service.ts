@@ -16,6 +16,8 @@ import { hashToken, issueToken } from '../lib/session.js';
 import { config } from '../config/env.js';
 import { feishuService } from './feishu.service.js';
 import { upsertUserFromFeishu } from './feishu-identity.service.js';
+import { runStoreLoginBootstrap } from './ai-shelves.service.js';
+import { logger } from '../lib/logger.js';
 import type {
   AuthenticatedUser,
   AuthNotice,
@@ -126,6 +128,13 @@ export async function loginWithPassword(args: {
     ]);
   });
 
+  // 单店账号登录直接 active 一家店：fire-and-forget 触发引导任务（洞察 + 问卷题目）。
+  if (activeStoreId) {
+    void runStoreLoginBootstrap(activeStoreId).catch((err) => {
+      logger.warn({ err, storeId: activeStoreId }, 'loginWithPassword: runStoreLoginBootstrap hook 异常');
+    });
+  }
+
   const roles = await loadRoles(user.id);
 
   return {
@@ -202,6 +211,12 @@ export async function loginWithFeishu(args: {
       upsert.userId,
     ]);
   });
+
+  if (upsert.defaultStoreId) {
+    void runStoreLoginBootstrap(upsert.defaultStoreId).catch((err) => {
+      logger.warn({ err, storeId: upsert.defaultStoreId }, 'loginWithFeishu: runStoreLoginBootstrap hook 异常');
+    });
+  }
 
   const roles = await loadRoles(upsert.userId);
 

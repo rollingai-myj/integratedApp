@@ -9,6 +9,8 @@
 import { query } from '../db/index.js';
 import { AppError, ErrorCodes } from '../lib/errors.js';
 import { hashToken } from '../lib/session.js';
+import { runStoreLoginBootstrap } from './ai-shelves.service.js';
+import { logger } from '../lib/logger.js';
 import type {
   ModuleKey,
   PortalModulesResponse,
@@ -172,6 +174,12 @@ export async function switchActiveStore(
       WHERE token_hash = $2`,
     [storeId, tokenHash],
   );
+
+  // 登录到该门店：异步触发引导任务（store_insights POI + 4 字段 + 已开放场景的问卷题目）。
+  // fire-and-forget，不阻塞切店响应；内部各步都做了幂等与并发去重。
+  void runStoreLoginBootstrap(storeId).catch((err) => {
+    logger.warn({ err, storeId }, 'switchActiveStore: runStoreLoginBootstrap hook 异常');
+  });
 
   return {
     currentStore: {

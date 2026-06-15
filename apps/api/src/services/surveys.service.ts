@@ -61,7 +61,8 @@ export async function replaceSurveyQuestions(args: {
     options?: unknown[];
   }>;
   source?: 'ai' | 'manual';
-  userId: string;
+  /** null = 系统触发（登录时预生成），created_by 落 NULL */
+  userId: string | null;
 }): Promise<SurveyQuestion[]> {
   await withTransaction(async (client) => {
     if (args.scene == null) {
@@ -121,100 +122,97 @@ export async function submitSurveyAnswers(args: {
 }
 
 // ---- 周边洞察 -----------------------------------------------------------
+// V015 起表只保留 4 个 AI 输出字段 + poi_data 缓存。
 
 export interface StoreInsight {
-  city: string | null;
-  mainDemographic: string | null;
-  consumptionLevel: string | null;
-  populationDensity: string | null;
+  category: string | null;
   crowdSourceAnalysis: string | null;
   competitorAnalysis: string | null;
   topCompetitors: unknown;
-  reportMarkdown: string | null;
-  generatedAt: string | null;
 }
 
 export async function getStoreInsight(storeId: string): Promise<StoreInsight | null> {
   const res = await query<{
-    city: string | null;
-    main_demographic: string | null;
-    consumption_level: string | null;
-    population_density: string | null;
+    category: string | null;
     crowd_source_analysis: string | null;
     competitor_analysis: string | null;
     top_competitors: unknown;
-    report_markdown: string | null;
-    generated_at: string | null;
   }>(
-    `SELECT city, main_demographic, consumption_level, population_density,
-            crowd_source_analysis, competitor_analysis, top_competitors,
-            report_markdown, generated_at
+    `SELECT category, crowd_source_analysis, competitor_analysis, top_competitors
        FROM store_insights WHERE store_id = $1 LIMIT 1`,
     [storeId],
   );
   if (!res.rows[0]) return null;
   const r = res.rows[0];
   return {
-    city: r.city,
-    mainDemographic: r.main_demographic,
-    consumptionLevel: r.consumption_level,
-    populationDensity: r.population_density,
+    category: r.category,
     crowdSourceAnalysis: r.crowd_source_analysis,
     competitorAnalysis: r.competitor_analysis,
     topCompetitors: r.top_competitors ?? [],
-    reportMarkdown: r.report_markdown,
-    generatedAt: r.generated_at,
   };
 }
 
 export interface UpsertInsightInput {
-  city?: string | null;
-  mainDemographic?: string | null;
-  consumptionLevel?: string | null;
-  populationDensity?: string | null;
+  category?: string | null;
   crowdSourceAnalysis?: string | null;
   competitorAnalysis?: string | null;
   topCompetitors?: unknown;
-  reportMarkdown?: string | null;
 }
 
 export async function upsertStoreInsight(
   storeId: string,
   input: UpsertInsightInput,
-  userId: string,
 ): Promise<StoreInsight> {
   await query(
     `INSERT INTO store_insights
-       (store_id, city, main_demographic, consumption_level, population_density,
-        crowd_source_analysis, competitor_analysis, top_competitors,
-        report_markdown, generated_at, generated_by, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, now(), $10, 'ai')
+       (store_id, category, crowd_source_analysis, competitor_analysis, top_competitors)
+     VALUES ($1, $2, $3, $4, $5::jsonb)
      ON CONFLICT (store_id) DO UPDATE
-       SET city = EXCLUDED.city,
-           main_demographic = EXCLUDED.main_demographic,
-           consumption_level = EXCLUDED.consumption_level,
-           population_density = EXCLUDED.population_density,
+       SET category = EXCLUDED.category,
            crowd_source_analysis = EXCLUDED.crowd_source_analysis,
            competitor_analysis = EXCLUDED.competitor_analysis,
            top_competitors = EXCLUDED.top_competitors,
-           report_markdown = EXCLUDED.report_markdown,
-           generated_at = now(),
-           generated_by = EXCLUDED.generated_by,
            updated_at = now()`,
     [
       storeId,
-      input.city ?? null,
-      input.mainDemographic ?? null,
-      input.consumptionLevel ?? null,
-      input.populationDensity ?? null,
+      input.category ?? null,
       input.crowdSourceAnalysis ?? null,
       input.competitorAnalysis ?? null,
       JSON.stringify(input.topCompetitors ?? []),
-      input.reportMarkdown ?? null,
-      userId,
     ],
   );
   const out = await getStoreInsight(storeId);
   if (!out) throw new Error('store_insights upsert 失败');
   return out;
+}
+
+// ---- POI 缓存 -----------------------------------------------------------
+// 高德 POI 检索昂贵（限流 + 收费），store_insights.poi_data 做店级缓存。
+
+export interface CachedPoi {
+  competitor: unknown[];
+  crowdSource: unknown[];
+  fetchedAt: string;
+}
+
+export async function getCachedPoi(storeId: string): Promise<CachedPoi | null> {
+  const res = await query<{ poi_data: CachedPoi | null }>(
+    `SELECT poi_data FROM store_insights WHERE store_id = $1 LIMIT 1`,
+    [storeId],
+  );
+  const data = res.rows[0]?.poi_data;
+  if (!data || typeof data !== 'object') return null;
+  if (!Array.isArray(data.competitor) || !Array.isArray(data.crowdSource)) return null;
+  return data;
+}
+
+export async function writeCachedPoi(storeId: string, poi: CachedPoi): Promise<void> {
+  // store_insights 已存在则只更 poi_data；不存在就新建一行（其他列走 DEFAULT NULL/'[]'）
+  await query(
+    `INSERT INTO store_insights (store_id, poi_data)
+     VALUES ($1, $2::jsonb)
+     ON CONFLICT (store_id) DO UPDATE
+       SET poi_data = EXCLUDED.poi_data, updated_at = now()`,
+    [storeId, JSON.stringify(poi)],
+  );
 }
