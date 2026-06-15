@@ -386,7 +386,7 @@
 
 ## 4 · 促销 (V005)
 
-> **使用情况速查**：当前 4 张表里 `hq_promo_batches` / `hq_promo_batch_items` 是海报模块的核心数据源（店长 /posters 首页直接读这套）；`hq_promo_mix_groups` 服务端已写已查、但**前端未消费**；`hq_promo_sku_texts` 是早期为选品模块准备的"商品旁标语"体系，**端到端均未启用**（详见每节顶部提示）。
+> **使用情况速查**：`hq_promo_batches` / `hq_promo_batch_items` 是海报模块核心数据源；`hq_promo_mix_groups` 从 V020 起改为派生视图（VIEW），前端 shim 已折成"凑单组"卡片置顶在所属分类。原 `hq_promo_sku_texts` 在 V021 已删（端到端从未启用）。
 
 ### `hq_promo_batches`
 
@@ -451,27 +451,25 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 ---
 
-### `hq_promo_mix_groups`
+### `hq_promo_mix_groups`（VIEW · 从 V020 起）
 
-> 多个 SKU 共享同一 `mix_group_code` 时聚合成"凑单组"（如"任选 3 件 9.9 元"）。**总部上传促销 Excel 时由 batch_items 自动 GROUP BY 聚合写入**，不需要单独录入。[V005.sql](../apps/api/src/db/migrations/V005__hq_promotions.sql)
+> 凑单组卡片的数据源。**V020 起从 TABLE 改为 VIEW**：所有字段直接从 [`hq_promo_batch_items`](#hq_promo_batch_items) 按 `mix_group_code` GROUP BY 实时派生，不再有独立写入路径。原表的 `representative_image_url` 字段在 VIEW 里恒为 NULL（YAGNI；前端未消费）。[V020.sql](../apps/api/src/db/migrations/V020__mix_groups_to_view.sql)
 >
-> ⚠️ **当前前端未消费**：服务端 `/promotions/active` 已返回 `groups[]`，但 [apps/web/src/lib/promotions.functions.ts](../apps/web/src/lib/promotions.functions.ts) 的店长侧 shim 只读 `products[]`，`groups` 被直接丢弃；店长 /posters 首页全是单品卡片，没有"组合凑单"入口。**结论**：数据写入和查询都通了，差最后一步前端接入。
+> ✅ **前端已接入**（V020 同期）：店长 /posters 首页通过 [apps/web/src/lib/promotions.functions.ts](../apps/web/src/lib/promotions.functions.ts) shim 把 groups 折成 CategoryItem，按 `category_name` 分桶后置顶在所属分类。被任一组收编的 SKU 不再单独显示单品卡。
 
 | 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
 |---|---|---|---|---|
-| id | UUID PK | 组的稳定标识 | 上传解析时聚合生成 | API 透传 |
-| batch_id | UUID FK(hq_promo_batches) ON DELETE CASCADE | 所属批次 | 上传解析时写入 | 过滤当前活动的凑单组；批次删除级联清空 |
-| mix_group_code | TEXT | 组编码（如"COLD_DRINK_SUMMER"，与 batch_id 组合唯一） | 上传解析时从 batch_items 同字段聚合 | 反查组内 batch_items |
-| display_name | TEXT | 组的对外名 | 上传解析时按 `"{category_name} 系列"` 自动生成（category 缺失则 NULL） | 店长端凑单组卡片标题（待接入） |
-| category_name | TEXT | 组的主品类（取组内首个非空品类） | 上传解析时聚合 | 店长端按品类分桶（待接入） |
-| sku_codes | TEXT[] | 组内 SKU 列表（按 row_index 顺序） | 上传解析时 `array_agg` 写入 | 店长端展开组成员（待接入） |
-| product_count | INT | 组内有多少个 SKU | 上传解析时 COUNT | 总部端排序优先级（多 SKU 的组排前） |
-| best_label | TEXT | 整组凑齐后的最优档标签 | 上传解析时聚合 | 店长端卡片主推文案（待接入） |
-| best_total_price | NUMERIC(12,2) | 凑齐后整组总价 | 上传解析时聚合 | 店长端卡片大字价（待接入） |
-| best_saving_percent | NUMERIC(6,2) | 凑齐后相对原总价的折扣率 | 上传解析时聚合 | 店长端"省 X%"标签（待接入） |
-| representative_image_url | TEXT | 组代表图 | （当前上传流程未填）后续总部端可补 | 店长端组卡片缩略图（待接入） |
-| attributes | JSONB | 扩展槽（尚未使用） | — | — |
-| created_at / updated_at | TIMESTAMPTZ | DB 时间戳 | DB | — |
+| id | UUID PK | 组的稳定标识 | `md5(batch_id || '|' || mix_group_code)::uuid 自动生成` | API 透传 |
+| batch_id | UUID FK(hq_promo_batches) ON DELETE CASCADE | 所属批次 | 派生自 batch_items 同字段 | 过滤当前活动的凑单组；批次删除级联清空 |
+| mix_group_code | TEXT | 组编码（如"COLD_DRINK_SUMMER"，与 batch_id 组合唯一） | 派生自 batch_items 同字段 | 反查组内 batch_items |
+| display_name | TEXT | 组的对外名 | 派生：(category_name \|\| ' 系列') | 店长端凑单组卡片标题 |
+| category_name | TEXT | 组的主品类（取组内首个非空品类） | 派生：首个非空 batch_items.category_name | 店长端按品类分桶 |
+| sku_codes | TEXT[] | 组内 SKU 列表（按 row_index 顺序） | 派生：array_agg(sku_code ORDER BY row_index) | 店长端展开组成员 |
+| product_count | INT | 组内有多少个 SKU | 派生：COUNT(*) | 总部端排序优先级（多 SKU 的组排前） |
+| best_label | TEXT | 整组凑齐后的最优档标签 | 派生：MAX-saving 的 batch_items.best_label | 店长端卡片主推文案 |
+| best_total_price | NUMERIC(12,2) | 凑齐后整组总价 | 派生：MIN(batch_items.best_total_price) | 店长端卡片大字价 |
+| best_saving_percent | NUMERIC(6,2) | 凑齐后相对原总价的折扣率 | 派生：MAX(batch_items.best_saving_percent) | 店长端"省 X%"标签 |
+| representative_image_url | TEXT | 组代表图 | 始终 NULL（VIEW 占位列，无写入路径） | 店长端组卡片缩略图（未消费） |
 
 ---
 
