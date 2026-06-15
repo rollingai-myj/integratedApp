@@ -1,20 +1,23 @@
 /**
  * 选品 · 场景列表
  *
- * 进入选品模块的首屏：13 场景双列卡片 + "继续调改"高亮卡 + 状态角标。
+ * 视觉对齐 prices/index：双列、emoji + 场景名 + "X 个商品"小字、未启用灰显「敬请期待」。
+ * 上方"继续调改"高亮卡保留作为快速入口。
  */
+import { useMemo } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useMe } from '@/lib/auth';
-import { AppBar, Card, Chip, ScreenWrap } from '../ui/primitives';
+import { AppBar, Card, ScreenWrap } from '../ui/primitives';
 import { TOKENS } from '../ui/tokens';
 import { I } from '../ui/icons';
-import { scenesApi } from '../api';
+import { scenesApi, storeApi } from '../api';
 import { emojiForScene } from '../data';
 
 /**
  * 当前阶段仅"面包架【烘焙】"(scene=2) 与 "冷藏"(scene=12) 有完整商品主数据；
  * 其余 11 个场景待总部主数据补齐后再逐个开放。
+ * 与后端 ai-shelves.service.ts 的 ENABLED_SCENES 保持一致。
  */
 const ENABLED_SCENES = new Set<number>([2, 12]);
 
@@ -23,9 +26,19 @@ export function HomePage() {
   const me = useMe();
   const scenesQ = useQuery({ queryKey: ['scenes', 'list'], queryFn: scenesApi.list });
   const ovQ = useQuery({ queryKey: ['scenes', 'overview'], queryFn: scenesApi.overview });
+  // 全店 SKU 一次性拉，前端按 scene 分组算"X 个商品"
+  const skusQ = useQuery({ queryKey: ['store', 'skus', 'all'], queryFn: () => storeApi.skus() });
 
   const scenes = scenesQ.data?.scenes ?? [];
   const ovMap = new Map(ovQ.data?.scenes.map((o) => [o.scene, o]) ?? []);
+  const sceneSkuCount = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const s of skusQ.data?.skus ?? []) {
+      if (s.scene != null) m.set(s.scene, (m.get(s.scene) ?? 0) + 1);
+    }
+    return m;
+  }, [skusQ.data]);
+
   // 选 draft 最新的那一条；没 draftUpdatedAt 的兜底排到最后
   const draft = (ovQ.data?.scenes ?? [])
     .filter((o) => o.hasDraft)
@@ -40,7 +53,6 @@ export function HomePage() {
   const goWorkspace = (scene: number) => {
     void navigate({ to: '/shelves/scene/$scene', params: { scene: String(scene) } });
   };
-
   const goBackHome = () => void navigate({ to: '/' });
 
   return (
@@ -74,42 +86,40 @@ export function HomePage() {
                 进度已自动保存，点击继续
               </div>
             </div>
-            <Chip tone="orange">继续</Chip>
+            {I.ChevronR({ size: 16, color: TOKENS.orange })}
           </Card>
         )}
 
-        <div style={{ fontSize: 17, fontWeight: 800, color: TOKENS.ink }}>选择场景</div>
-        <div style={{ fontSize: 11.5, color: TOKENS.inkMuted, marginTop: 2, marginBottom: 12 }}>
-          每个场景对应一组货架，点进去即可查看与调改
-        </div>
+        <div style={{ fontSize: 17, fontWeight: 800, color: TOKENS.ink, marginBottom: 14 }}>请选择场景</div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           {scenes.map((s) => {
-            const ov = ovMap.get(s.scene);
             const enabled = ENABLED_SCENES.has(s.scene);
-            const status = enabled ? computeStatus(ov) : { tone: 'gray' as const, label: '数据准备中' };
+            const ov = enabled ? ovMap.get(s.scene) : undefined;
+            const skuN = sceneSkuCount.get(s.scene) ?? 0;
             return (
               <Card
                 key={s.scene}
                 onClick={enabled ? () => goWorkspace(s.scene) : undefined}
-                pad={13}
+                pad={14}
                 style={{
-                  display: 'flex', flexDirection: 'column', gap: 8, minHeight: 108,
+                  display: 'flex', flexDirection: 'column', gap: 0, minHeight: 108,
                   border: enabled && ov?.hasDraft ? `2px solid ${TOKENS.orange}` : '2px solid transparent',
-                  opacity: enabled ? 1 : 0.45,
+                  opacity: enabled ? 1 : 0.4,
                   cursor: enabled ? 'pointer' : 'not-allowed',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: 28, lineHeight: 1 }}>{emojiForScene(s.scene)}</div>
-                  <Chip tone={status.tone}>{status.label}</Chip>
+                <div style={{ fontSize: 30, lineHeight: 1 }}>{emojiForScene(s.scene)}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: TOKENS.ink, marginTop: 12 }}>
+                  {s.name}
                 </div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: TOKENS.ink }}>{s.name}</div>
-                  <div style={{
-                    fontSize: 11, color: TOKENS.inkMuted, marginTop: 2,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>{s.categories.map((c) => c.name).join('、')}</div>
+                <div style={{
+                  fontSize: 11.5, color: TOKENS.inkMuted, marginTop: 2,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {enabled
+                    ? <><span style={{ color: TOKENS.red, fontWeight: 700 }}>{skuN}</span> 个商品</>
+                    : '敬请期待'}
                 </div>
               </Card>
             );
@@ -125,15 +135,4 @@ export function HomePage() {
       </div>
     </ScreenWrap>
   );
-}
-
-function computeStatus(ov?: { hasDraft: boolean; shelfConfigured: boolean; adjustmentCount: number }): {
-  tone: 'orange' | 'gray' | 'green';
-  label: string;
-} {
-  if (!ov) return { tone: 'gray', label: '加载中' };
-  if (ov.hasDraft) return { tone: 'orange', label: '调改进行中' };
-  if (!ov.shelfConfigured) return { tone: 'gray', label: '未登记货架' };
-  if (ov.adjustmentCount > 0) return { tone: 'green', label: `已调改 ${ov.adjustmentCount} 次` };
-  return { tone: 'gray', label: '未调改' };
 }

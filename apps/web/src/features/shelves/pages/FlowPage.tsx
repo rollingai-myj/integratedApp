@@ -28,10 +28,12 @@ import {
 } from '../ui/primitives';
 import { TOKENS } from '../ui/tokens';
 import { I } from '../ui/icons';
-import { scenesApi, detectApi, hqApi, type DetectBox } from '../api';
+import { scenesApi, detectApi, storeApi, type DetectBox, type StoreSku, type SceneRuntime } from '../api';
 import { readWorkflowFinished, extractDiagnosis, extractStrategy, type DiagnosisResult, type StrategyItem as AiStrategyItem } from '../sse';
 import { classifyStrategyKind, type StrategyKind } from '../lib/strategyAction';
 import { SKIP_REASONS } from '../data';
+import { SkuDetailDialog, type SkuDetailLike } from '../components/SkuDetailDialog';
+import { SkuThumb } from '../components/SkuThumb';
 
 type Stage = 'photo' | 'diagnosing' | 'diag' | 'review' | 'confirm' | 'applied';
 type Decision = 'accept' | 'skip';
@@ -45,11 +47,14 @@ interface DraftShape {
   strategy?: AiStrategyItem[] | null;
   detectBoxes?: DetectBox[] | null;
   detectError?: string | null;
+  /** 诊断/选品后台运行状态，参考 virtualStatus 的语义：退出再进来据此恢复 spinner 或结果 */
+  diagnoseStatus?: 'idle' | 'processing' | 'completed' | 'failed';
+  strategyStatus?: 'idle' | 'processing' | 'completed' | 'failed';
+  aiError?: string | null;
 }
 
 const KIND_META: Record<StrategyKind, { label: string; color: string; bg: string; emoji: string }> = {
   remove:  { label: '建议：停止进货', color: TOKENS.red,   bg: TOKENS.redSoft,   emoji: '📦' },
-  observe: { label: '建议：保留观察', color: TOKENS.amber, bg: TOKENS.amberSoft, emoji: '👀' },
   push:    { label: '建议：上架新品', color: TOKENS.green, bg: TOKENS.greenSoft, emoji: '✨' },
 };
 
@@ -64,6 +69,12 @@ export function FlowPage() {
   const runtimeQ = useQuery({
     queryKey: ['scenes', scene, 'runtime'],
     queryFn: () => scenesApi.runtime(scene),
+    // 诊断/选品在后台运行（IIFE 把结果写回 draft）：stage=diagnosing 时 5s 拉一次
+    // 取代原本"只有同一个 tab session 才能拿到结果"的局限，进而支持页面间退出再进入
+    refetchInterval: (q) => {
+      const d = (q.state.data as { draft?: DraftShape } | undefined)?.draft;
+      return d?.stage === 'diagnosing' ? 5_000 : false;
+    },
   });
   const draft = (runtimeQ.data?.draft ?? null) as DraftShape | null;
   const photosFromServer = Array.isArray(runtimeQ.data?.photos)
@@ -103,13 +114,27 @@ export function FlowPage() {
     if (draft.strategy) setStrategy(draft.strategy);
     if (draft.detectBoxes) { setDetectBoxes(draft.detectBoxes); setDetectDone(true); }
     if (draft.detectError) setDetectError(draft.detectError);
+    if (draft.aiError) setAiError(draft.aiError);
     if (draft.decisions) setDecisions(draft.decisions);
     if (draft.skipReasons) setSkipReasons(draft.skipReasons);
     if (typeof draft.reviewIndex === 'number') setReviewIndex(draft.reviewIndex);
-    if (draft.stage === 'diag' || draft.stage === 'review' || draft.stage === 'confirm') {
+    // diagnosing 也要恢复：让退出 → 重进的店长直接看到 spinner 而不是回到拍照页
+    if (
+      draft.stage === 'diagnosing' || draft.stage === 'diag' ||
+      draft.stage === 'review' || draft.stage === 'confirm'
+    ) {
       setStage(draft.stage);
     }
   }, [hydrated, runtimeQ.isSuccess, draft, photosFromServer]);
+
+  // 后台 IIFE 写回 draft.diagnosis / draft.strategy 时（轮询拉到新值），同步到本地 state
+  // 这样跨页面 navigation 回来后，新挂载的 FlowPage 会看到结果并由下方 effect 推进 stage
+  useEffect(() => {
+    if (!diagnosis && draft?.diagnosis) setDiagnosis(draft.diagnosis);
+  }, [diagnosis, draft?.diagnosis]);
+  useEffect(() => {
+    if (!strategy && draft?.strategy) setStrategy(draft.strategy);
+  }, [strategy, draft?.strategy]);
 
   // ---- 草稿写入（增量 merge） --------------------------------------------
 
@@ -174,7 +199,17 @@ export function FlowPage() {
     setDiagnosis(null);
     setStrategy(null);
 
-    saveDraft.mutate({ stage: 'diagnosing' });
+    // status='processing' + 清掉上一轮残留：让 LastPage 风格的轮询能识别"运行中"
+    saveDraft.mutate({
+      stage: 'diagnosing',
+      diagnoseStatus: 'processing',
+      strategyStatus: 'processing',
+      diagnosis: null,
+      strategy: null,
+      aiError: null,
+      detectBoxes: null,
+      detectError: null,
+    });
 
     // detect：用第一张原图（fetch 拿回 blob → 调 detectApi）
     void (async () => {
@@ -196,16 +231,18 @@ export function FlowPage() {
       }
     })();
 
-    // diagnose SSE
+    // diagnose SSE —— 即使页面被切走，IIFE 仍在 browser 后台跑；完成后写回 draft
     void (async () => {
       try {
         const resp = await scenesApi.streamDiagnose(scene, firstPhotoUrl);
         const outputs = await readWorkflowFinished(resp);
         const diag = extractDiagnosis(outputs);
         setDiagnosis(diag);
-        saveDraft.mutate({ diagnosis: diag });
+        saveDraft.mutate({ diagnosis: diag, diagnoseStatus: 'completed' });
       } catch (e) {
-        setAiError(`诊断失败：${(e as Error).message}`);
+        const msg = `诊断失败：${(e as Error).message}`;
+        setAiError(msg);
+        saveDraft.mutate({ diagnoseStatus: 'failed', aiError: msg });
       }
     })();
 
@@ -217,20 +254,22 @@ export function FlowPage() {
         const strat = extractStrategy(outputs);
         const items = strat?.items ?? [];
         setStrategy(items);
-        saveDraft.mutate({ strategy: items });
+        saveDraft.mutate({ strategy: items, strategyStatus: 'completed' });
       } catch (e) {
-        setAiError((prev) => prev ?? `方案生成失败：${(e as Error).message}`);
+        const msg = `方案生成失败：${(e as Error).message}`;
+        setAiError((prev) => prev ?? msg);
+        saveDraft.mutate({ strategyStatus: 'failed', aiError: msg });
       }
     })();
   };
 
-  // 诊断+方案都到位 → 自动进 diag 阶段
+  // 诊断结果出来就直接进 diag 展示（不等选品）；选品结果在按钮区域单独显示加载/启用状态。
   useEffect(() => {
-    if (stage === 'diagnosing' && diagnosis && strategy) {
+    if (stage === 'diagnosing' && diagnosis) {
       setStage('diag');
       saveDraft.mutate({ stage: 'diag' });
     }
-  }, [stage, diagnosis, strategy]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stage, diagnosis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- 阶段 3：诊断结果展示 → 阶段 4：逐条确认 --------------------------
 
@@ -255,7 +294,7 @@ export function FlowPage() {
       const kind = classifyStrategyKind(item.action);
       void scenesApi.submitCorrection(scene, {
         skuCode: item.skuCode,
-        kind: kind === 'remove' ? 'remove' : kind === 'push' ? 'add' : 'observe',
+        kind: kind === 'remove' ? 'remove' : 'add',
         scope: 'decision',
         reasonCode: 'manual_keep',
         reasonText: reason,
@@ -289,7 +328,6 @@ export function FlowPage() {
     : [];
   const counts = {
     remove: accepted.filter((s) => s.kind === 'remove').length,
-    observe: accepted.filter((s) => s.kind === 'observe').length,
     push: accepted.filter((s) => s.kind === 'push').length,
   };
 
@@ -297,31 +335,61 @@ export function FlowPage() {
 
   const apply = useMutation({
     mutationFn: async () => {
-      const items = accepted
-        .filter((s) => s.kind !== 'observe') // observe 不入 adjustments
-        .map((s) => ({
-          action: s.kind === 'push' ? 'add' as const : 'remove' as const,
-          skuCode: s.skuCode,
-          productName: s.skuName,
-          reasonCode: s.kind === 'push' ? 'ai_recommend_core' : 'low_sales',
-          reasonText: s.reason,
-        }));
-      return scenesApi.apply(scene, {
-        summaryText: `上架了${counts.push}个品，停止进货了${counts.remove}个品`,
-        items,
+      const items = accepted.map((s) => ({
+        action: s.kind === 'push' ? 'add' as const : 'remove' as const,
+        skuCode: s.skuCode,
+        productName: s.skuName,
+        reasonCode: s.kind === 'push' ? 'ai_recommend_core' : 'low_sales',
+        reasonText: s.reason,
+      }));
+      const summary = `上架了${counts.push}个品，停止进货了${counts.remove}个品`;
+      // apply 后端会 RESET photos / draft / status / detection_data；
+      // 但 last_snapshot 保留。把这一次的「照片 / 诊断 / 识别框 / 调改项」打包写入，
+      // 供 LastPage 复现「上一次调改的详情」（照片、诊断、清单、虚拟货架图）。
+      await scenesApi.saveRuntime(scene, {
+        lastSnapshot: {
+          at: new Date().toISOString(),
+          summary,
+          items: items.map((i) => ({
+            skuCode: i.skuCode, skuName: i.productName, kind: i.action,
+            spec: accepted.find((s) => s.skuCode === i.skuCode)?.spec ?? null,
+          })),
+          photos: photos.filter((p) => p.url).map((p) => ({ url: p.url })),
+          diagnosis,
+          detectBoxes,
+        } as unknown as SceneRuntime['lastSnapshot'],
       });
+      return scenesApi.apply(scene, { summaryText: summary, items });
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['scenes', 'overview'] });
       void qc.invalidateQueries({ queryKey: ['scenes', scene] });
       setStage('applied');
-      // 顺手触发虚拟陈列生成（不等结果）
+      // 顺手触发虚拟陈列生成（不等结果）；带 2 次重试 + virtualStatus 状态机
+      // Dify virtual-shelf 工作流耗时 5~10 分钟，期间靠 virtualStatus='processing' 让 LastPage 显示加载态
       void (async () => {
-        try {
-          const resp = await scenesApi.streamVirtualShelf(scene);
-          await readWorkflowFinished(resp);
-          void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
-        } catch { /* 失败由 runtime.virtualStatus 反映 */ }
+        await scenesApi.saveRuntime(scene, { virtualStatus: 'processing' }).catch(() => {});
+        void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
+        const MAX_ATTEMPTS = 3;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          try {
+            const resp = await scenesApi.streamVirtualShelf(scene);
+            const outputs = await readWorkflowFinished(resp);
+            await scenesApi.saveRuntime(scene, {
+              virtualStatus: 'completed',
+              virtualRawOutputs: outputs,
+            });
+            void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
+            return;
+          } catch (err) {
+            if (attempt < MAX_ATTEMPTS) {
+              await new Promise((r) => setTimeout(r, 5_000 * attempt));
+              continue;
+            }
+            await scenesApi.saveRuntime(scene, { virtualStatus: 'failed' }).catch(() => {});
+            void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
+          }
+        }
       })();
     },
   });
@@ -432,8 +500,9 @@ export function FlowPage() {
       {/* ===== 阶段 2：诊断中 ===== */}
       {stage === 'diagnosing' && (
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px 32px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* 诊断结果出来之前不显示红框，照片上保持激光扫描动画 */}
           {heroPhoto && (
-            <PhotoWithBoxes src={heroPhoto} boxes={detectBoxes ?? []} scanning={!detectDone} height={220} />
+            <PhotoWithBoxes src={heroPhoto} boxes={[]} scanning height={220} />
           )}
           {detectError && (
             <Card pad={12} style={{ background: TOKENS.amberSoft, boxShadow: 'none' }}>
@@ -453,6 +522,8 @@ export function FlowPage() {
           <div style={{ fontSize: 12, color: TOKENS.inkMuted, textAlign: 'center' }}>
             诊断与方案需要 30-60 秒，请耐心等待
           </div>
+          {/* 等待期间让店长可以先看本场景的商品数据 */}
+          <SkuListPanel scene={scene} defaultOpen />
           {aiError && (
             <Card pad={12} style={{ background: TOKENS.redSoft, boxShadow: 'none' }}>
               <div style={{ fontSize: 12.5, color: TOKENS.red, lineHeight: 1.55 }}>{aiError}</div>
@@ -466,17 +537,13 @@ export function FlowPage() {
         </div>
       )}
 
-      {/* ===== 阶段 3：诊断结果 ===== */}
-      {stage === 'diag' && diagnosis && strategy && (
+      {/* ===== 阶段 3：诊断结果（诊断先出就先展，选品在底部按钮区域同步加载状态） ===== */}
+      {stage === 'diag' && diagnosis && (
         <>
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px 130px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* 诊断已出 → 此时才显示识别红框（如 detect 已就绪） */}
             {heroPhoto && (
               <PhotoWithBoxes src={heroPhoto} boxes={detectBoxes ?? []} scanning={false} height={210} />
-            )}
-            {(detectBoxes && detectBoxes.length > 0) && (
-              <div style={{ fontSize: 12, color: TOKENS.inkSoft, textAlign: 'center', marginTop: -4 }}>
-                <span style={{ color: TOKENS.red, fontWeight: 700 }}>红框</span>是 AI 找到的问题单品
-              </div>
             )}
             {[
               { key: 'paragraphCustomer' as const, label: '客群分析', icon: '👥', color: '#1d63b8', bg: '#e8f1fb' },
@@ -496,15 +563,24 @@ export function FlowPage() {
                 </div>
               </Card>
             ))}
+            {/* 诊断完成后仍允许店长展开查看本场景商品数据 */}
+            <SkuListPanel scene={scene} />
           </div>
           <BottomBar>
-            <PrimaryBtn
-              disabled={strategy.length === 0}
-              onClick={startReview}
-              icon={I.ArrowR({ size: 20, color: '#fff' })}
-            >
-              {strategy.length === 0 ? 'AI 未返回方案' : `开始过方案（共 ${strategy.length} 条）`}
-            </PrimaryBtn>
+            {strategy === null ? (
+              <PrimaryBtn disabled icon={<Spin size={18} />}>
+                正在生成调改方案…
+              </PrimaryBtn>
+            ) : strategy.length === 0 ? (
+              <PrimaryBtn disabled>AI 未返回方案</PrimaryBtn>
+            ) : (
+              <PrimaryBtn
+                onClick={startReview}
+                icon={I.ArrowR({ size: 20, color: '#fff' })}
+              >
+                {`查看调改方案（共 ${strategy.length} 条）`}
+              </PrimaryBtn>
+            )}
           </BottomBar>
         </>
       )}
@@ -643,7 +719,7 @@ function ReviewDeck({
             <span style={{ fontSize: 16, fontWeight: 800, color: meta.color }}>{meta.label}</span>
             {s.tags.length > 0 && (
               <span style={{ marginLeft: 'auto' }}>
-                <Chip tone={kind === 'remove' ? 'red' : kind === 'push' ? 'green' : 'amber'}>{s.tags[0]}</Chip>
+                <Chip tone={kind === 'remove' ? 'red' : 'green'}>{s.tags[0]}</Chip>
               </span>
             )}
           </div>
@@ -664,7 +740,7 @@ function ReviewDeck({
               display: 'flex', flexDirection: 'column', gap: 6, minHeight: 86,
             }}>
               <div style={{ fontSize: 11.5, fontWeight: 800, color: meta.color, letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
-                {I.Sparkles({ size: 14, color: meta.color })} AI 为什么这么建议
+                {I.Sparkles({ size: 14, color: meta.color })} 理由
               </div>
               <div style={{ fontSize: 14.5, color: TOKENS.ink, lineHeight: 1.8 }}>{s.reason || '（AI 未提供原因）'}</div>
             </div>
@@ -792,7 +868,7 @@ function ConfirmList({
   skippedIdx: number[];
   skipReasons: (string | null)[];
   skus: AiStrategyItem[];
-  counts: { remove: number; observe: number; push: number };
+  counts: { remove: number; push: number };
   onRestore: (idx: number) => void;
   onRecheck: () => void;
   onApply: () => void;
@@ -801,9 +877,8 @@ function ConfirmList({
 }) {
   const [showSkipped, setShowSkipped] = useState(false);
   const groups = [
-    { kind: 'remove'  as const, label: '停止进货', color: TOKENS.red,   bg: TOKENS.redSoft },
-    { kind: 'observe' as const, label: '保留观察', color: TOKENS.amber, bg: TOKENS.amberSoft },
-    { kind: 'push'    as const, label: '上架新品', color: TOKENS.green, bg: TOKENS.greenSoft },
+    { kind: 'remove' as const, label: '停止进货', color: TOKENS.red,   bg: TOKENS.redSoft },
+    { kind: 'push'   as const, label: '上架新品', color: TOKENS.green, bg: TOKENS.greenSoft },
   ];
 
   return (
@@ -814,7 +889,7 @@ function ConfirmList({
           <div style={{ fontSize: 12.5, color: TOKENS.inkSoft, marginTop: 4 }}>确认没问题就点最下面的红色按钮应用</div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           {groups.map((g) => (
             <div key={g.kind} style={{ background: g.bg, borderRadius: 12, padding: '10px 6px', textAlign: 'center' }}>
               <div style={{ fontSize: 22, fontWeight: 800, color: g.color }}>{counts[g.kind]}</div>
@@ -831,7 +906,7 @@ function ConfirmList({
               <div style={{ fontSize: 13, fontWeight: 800, color: g.color, marginBottom: 8 }}>{g.label}（{items.length}）</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                 {items.map((s) => (
-                  <ProductRow key={s.skuCode} sku={s} right={s.tags[0] ? <Chip tone={g.kind === 'remove' ? 'red' : g.kind === 'push' ? 'green' : 'amber'} style={{ flexShrink: 0 }}>{s.tags[0]}</Chip> : undefined} />
+                  <ProductRow key={s.skuCode} sku={s} right={s.tags[0] ? <Chip tone={g.kind === 'remove' ? 'red' : 'green'} style={{ flexShrink: 0 }}>{s.tags[0]}</Chip> : undefined} />
                 ))}
               </div>
             </Card>
@@ -895,53 +970,29 @@ function ConfirmList({
 }
 
 function ProductRow({ sku, right, dim }: { sku: AiStrategyItem; right?: React.ReactNode; dim?: boolean }) {
+  const [detail, setDetail] = useState<SkuDetailLike | null>(null);
   return (
-    <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9 }}>
-      <SkuThumb skuCode={sku.skuCode} size={34} />
-      <span style={{
-        flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600,
-        color: dim ? TOKENS.inkMuted : TOKENS.ink,
-        textDecoration: dim ? 'line-through' : 'none',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-      }}>
-        {sku.skuName} {sku.spec && <span style={{ fontSize: 11.5, color: TOKENS.inkMuted, fontWeight: 500 }}>{sku.spec}</span>}
-      </span>
-      {right}
-    </div>
-  );
-}
-
-function SkuThumb({ skuCode, size }: { skuCode: string; size: number }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) {
-    return (
-      <div style={{
-        width: size, height: size, borderRadius: Math.round(size / 4), flexShrink: 0,
-        background: 'repeating-linear-gradient(135deg, #efe9df 0 8px, #f6f2ec 8px 16px)',
-        border: `1px solid ${TOKENS.line}`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
+    <>
+      <button
+        onClick={() => setDetail({ skuCode: sku.skuCode, productName: sku.skuName, spec: sku.spec })}
+        style={{
+          appearance: 'none', border: 0, background: 'transparent', fontFamily: 'inherit',
+          width: '100%', textAlign: 'left', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 9, padding: 0,
+        }}>
+        <SkuThumb skuCode={sku.skuCode} size={34} />
         <span style={{
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-          fontSize: Math.max(8, size / 8), color: TOKENS.inkMuted, letterSpacing: 0.5,
-        }}>{skuCode.slice(-4)}</span>
-      </div>
-    );
-  }
-  return (
-    <img
-      src={hqApi.productImageUrl(skuCode)}
-      alt={skuCode}
-      onError={() => setFailed(true)}
-      style={{
-        width: size, height: size, borderRadius: Math.round(size / 4),
-        // contain：商品官方图大多是 1:1 + 大边距设计，cover 会把瓶身两端裁掉
-        // 用户看不见商品本体。参考 posters/ProductImg.tsx。
-        objectFit: 'contain', background: '#fafafa', flexShrink: 0,
-        border: `1px solid ${TOKENS.line}`,
-        padding: Math.round(size / 24),
-      }}
-    />
+          flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600,
+          color: dim ? TOKENS.inkMuted : TOKENS.ink,
+          textDecoration: dim ? 'line-through' : 'none',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {sku.skuName} {sku.spec && <span style={{ fontSize: 11.5, color: TOKENS.inkMuted, fontWeight: 500 }}>{sku.spec}</span>}
+        </span>
+        {right}
+      </button>
+      <SkuDetailDialog sku={detail} onClose={() => setDetail(null)} />
+    </>
   );
 }
 
@@ -989,5 +1040,106 @@ function AppliedPanel({ counts, sceneStr }: { counts: { push: number; remove: nu
         返回工作台
       </GhostBtn>
     </div>
+  );
+}
+
+// ---- 子组件：本店{场景}月销额面板 ----------------------------------------
+// 诊断中默认展开，让店长在等 AI 时可浏览本场景所有 SKU；
+// 诊断结果出来后默认收起为一行文字按钮，按需展开。
+
+function SkuListPanel({ scene, defaultOpen = false }: { scene: number; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [detail, setDetail] = useState<SkuDetailLike | null>(null);
+  const skusQ = useQuery({
+    queryKey: ['store', 'skus', 'scene', scene],
+    queryFn: () => storeApi.skus(scene),
+  });
+  const scenesQ = useQuery({ queryKey: ['scenes', 'list'], queryFn: scenesApi.list });
+  const sceneName = scenesQ.data?.scenes.find((s) => s.scene === scene)?.name ?? '';
+  const skus = skusQ.data?.skus ?? [];
+  const count = skus.length;
+
+  return (
+    <>
+      <Card pad={0} style={{ overflow: 'hidden' }}>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            appearance: 'none', border: 0, background: 'transparent', fontFamily: 'inherit',
+            width: '100%', padding: '12px 14px', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}
+        >
+          <span style={{ fontSize: 13.5, fontWeight: 800, color: TOKENS.ink, display: 'flex', alignItems: 'center', gap: 6 }}>
+            📋 本店{sceneName}月销额
+            {skusQ.isLoading
+              ? <Spin size={12} />
+              : <span style={{ fontSize: 12, fontWeight: 700, color: TOKENS.red }}>· {count}</span>}
+          </span>
+          <span style={{ fontSize: 12.5, color: TOKENS.red, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 2 }}>
+            {open ? '收起' : '展开查看'}
+            {open ? I.ChevronD({ size: 14, color: TOKENS.red }) : I.ChevronR({ size: 14, color: TOKENS.red })}
+          </span>
+        </button>
+        {open && (
+          <div style={{ borderTop: `1px solid ${TOKENS.lineSoft}` }}>
+            {skusQ.isLoading ? (
+              <div style={{ padding: 24, textAlign: 'center', color: TOKENS.inkMuted, fontSize: 13 }}>
+                <Spin size={18} /> 正在加载…
+              </div>
+            ) : count === 0 ? (
+              <div style={{ padding: 20, textAlign: 'center', color: TOKENS.inkMuted, fontSize: 13 }}>
+                本场景暂无商品数据
+              </div>
+            ) : (
+              <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                {skus.map((s) => (
+                  <SkuRow
+                    key={s.skuCode}
+                    sku={s}
+                    onClick={() => setDetail({
+                      skuCode: s.skuCode, productName: s.productName, spec: s.spec, brand: s.brand,
+                    })}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+      <SkuDetailDialog sku={detail} onClose={() => setDetail(null)} />
+    </>
+  );
+}
+
+function SkuRow({ sku, onClick }: { sku: StoreSku; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        appearance: 'none', border: 0, background: 'transparent', fontFamily: 'inherit',
+        width: '100%', textAlign: 'left', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '10px 14px', borderBottom: `1px solid ${TOKENS.lineSoft}`,
+      }}>
+      <SkuThumb skuCode={sku.skuCode} size={40} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 700, color: TOKENS.ink,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{sku.productName}</div>
+        <div style={{ fontSize: 11, color: TOKENS.inkMuted, marginTop: 1 }}>
+          {sku.spec ?? ''}{sku.spec && (sku.brand || sku.categoryPath) ? ' · ' : ''}{sku.brand ?? ''}
+        </div>
+      </div>
+      <div style={{ flexShrink: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: TOKENS.ink }}>
+          {sku.salesAmount30d != null ? `¥${Math.round(sku.salesAmount30d)}` : '—'}
+        </div>
+        <div style={{ fontSize: 10.5, color: TOKENS.inkMuted, marginTop: 1 }}>
+          30 日 {sku.salesQty30d ?? 0} 件
+        </div>
+      </div>
+    </button>
   );
 }

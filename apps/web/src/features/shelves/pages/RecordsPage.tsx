@@ -12,6 +12,8 @@ import { TOKENS } from '../ui/tokens';
 import { I } from '../ui/icons';
 import { scenesApi } from '../api';
 import { emojiForScene, fmtDate } from '../data';
+import { SkuThumb } from '../components/SkuThumb';
+import { SkuDetailDialog, type SkuDetailLike } from '../components/SkuDetailDialog';
 
 export function RecordsPage() {
   const { scene: sceneStr } = useParams({ from: '/shelves/scene/$scene/records' });
@@ -26,6 +28,7 @@ export function RecordsPage() {
   const def = scenesQ.data?.scenes.find((s) => s.scene === scene);
 
   const [openId, setOpenId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<SkuDetailLike | null>(null);
   const records = listQ.data?.adjustments ?? [];
 
   const goBack = () => void navigate({ to: '/shelves/scene/$scene', params: { scene: sceneStr } });
@@ -65,13 +68,28 @@ export function RecordsPage() {
                     { title: '上架', list: up,   color: TOKENS.green },
                     { title: '停止进货', list: down, color: TOKENS.red },
                   ].map((g) => g.list.length > 0 && (
-                    <div key={g.title} style={{ marginTop: 10 }}>
-                      <div style={{ fontSize: 12, fontWeight: 800, color: g.color, marginBottom: 7 }}>{g.title}（{g.list.length}）</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div key={g.title} style={{ marginTop: 12 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: g.color, marginBottom: 8 }}>{g.title}（{g.list.length}）</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                         {g.list.map((it, i) => (
-                          <div key={i} style={{ fontSize: 13, color: TOKENS.ink }}>
-                            {it.productName ?? it.skuCode}
-                          </div>
+                          <button
+                            key={i}
+                            onClick={() => setDetail({
+                              skuCode: it.skuCode,
+                              productName: it.productName ?? undefined,
+                            })}
+                            style={{
+                              appearance: 'none', border: 0, background: 'transparent', fontFamily: 'inherit',
+                              width: '100%', textAlign: 'left', cursor: 'pointer',
+                              display: 'flex', alignItems: 'center', gap: 9, padding: 0,
+                            }}
+                          >
+                            <SkuThumb skuCode={it.skuCode} size={34} />
+                            <span style={{
+                              flex: 1, minWidth: 0, fontSize: 13, color: TOKENS.ink,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>{it.productName ?? it.skuCode}</span>
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -82,6 +100,8 @@ export function RecordsPage() {
           );
         })}
       </div>
+
+      <SkuDetailDialog sku={detail} onClose={() => setDetail(null)} />
     </ScreenWrap>
   );
 }

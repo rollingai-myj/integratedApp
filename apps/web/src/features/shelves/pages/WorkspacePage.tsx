@@ -2,18 +2,24 @@
  * 选品 · 场景工作台
  *
  * 已登记/未登记两种状态：
- *  - 未登记：引导卡 → 跳登记货架向导
+ *  - 未登记：自动跳登记货架向导（不再展示中间引导卡）
  *  - 已登记：拍照大按钮 + 数据三格 + 上次调改卡（如有）+ 调改追踪 + 经营提示
  *
  * 已登记但未"聊一聊"：点拍照前先去聊一聊（仅一次）。
  */
+import { useEffect } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { AppBar, Card, Chip, PrimaryBtn, ListRow, ScreenWrap } from '../ui/primitives';
 import { TOKENS } from '../ui/tokens';
 import { I } from '../ui/icons';
-import { scenesApi } from '../api';
+import { scenesApi, storeApi } from '../api';
 import { emojiForScene, fmtDate } from '../data';
+
+const fmtBigYuan = (n: number) =>
+  n >= 10_000 ? `¥${(n / 10_000).toFixed(1)}万` : `¥${Math.round(n).toLocaleString('zh-CN')}`;
+const fmtBigCount = (n: number) =>
+  n >= 10_000 ? `${(n / 10_000).toFixed(1)}万` : `${Math.round(n).toLocaleString('zh-CN')}`;
 
 export function WorkspacePage() {
   const { scene: sceneStr } = useParams({ from: '/shelves/scene/$scene/' });
@@ -26,13 +32,33 @@ export function WorkspacePage() {
     queryKey: ['scenes', scene, 'runtime'],
     queryFn: () => scenesApi.runtime(scene),
   });
+  const skusQ = useQuery({
+    queryKey: ['store', 'skus', 'scene', scene],
+    queryFn: () => storeApi.skus(scene),
+  });
 
   const def = scenesQ.data?.scenes.find((s) => s.scene === scene);
   const ov = ovQ.data?.scenes.find((s) => s.scene === scene);
   const rt = runtimeQ.data;
 
+  const totals = (skusQ.data?.skus ?? []).reduce(
+    (acc, s) => {
+      acc.amount += s.salesAmount30d ?? 0;
+      acc.qty += s.salesQty30d ?? 0;
+      acc.margin += s.grossMargin30d ?? 0;
+      return acc;
+    },
+    { amount: 0, qty: 0, margin: 0 },
+  );
+
+  // 未登记货架 → 直接进入登记向导，省掉中间引导卡
+  useEffect(() => {
+    if (ovQ.isSuccess && ov && !ov.shelfConfigured) {
+      void navigate({ to: '/shelves/scene/$scene/setup', params: { scene: sceneStr }, replace: true });
+    }
+  }, [ovQ.isSuccess, ov, sceneStr, navigate]);
+
   const goBack = () => void navigate({ to: '/shelves' });
-  const goSetup = () => void navigate({ to: '/shelves/scene/$scene/setup', params: { scene: sceneStr } });
   const goInfo = () => void navigate({ to: '/shelves/scene/$scene/info', params: { scene: sceneStr } });
   const goRecords = () => void navigate({ to: '/shelves/scene/$scene/records', params: { scene: sceneStr } });
   const goLast = () => void navigate({ to: '/shelves/scene/$scene/last', params: { scene: sceneStr } });
@@ -66,41 +92,34 @@ export function WorkspacePage() {
       />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 32px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {!ov?.shelfConfigured && (
-          <>
-            <Card pad={18} style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 40, lineHeight: 1, marginBottom: 10 }}>{emojiForScene(scene)}</div>
-              <div style={{ fontSize: 17, fontWeight: 800, color: TOKENS.ink }}>先花 1 分钟登记货架</div>
-              <div style={{ fontSize: 13, color: TOKENS.inkSoft, marginTop: 6, lineHeight: 1.6 }}>
-                告诉我们这个场景有几组什么样的货架，<br />AI 才能给出准确的选品调改建议。<br />只需登记一次。
-              </div>
-              <div style={{ marginTop: 16 }}>
-                <PrimaryBtn onClick={goSetup} icon={I.Shelf({ size: 20, color: '#fff' })}>登记货架</PrimaryBtn>
-              </div>
-            </Card>
-
-            <Card pad={14}>
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: TOKENS.inkMuted, marginBottom: 10, letterSpacing: 1 }}>之后的流程</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {[
-                  { n: '1', t: '登记货架', d: '选类型和大小，只做一次' },
-                  { n: '2', t: '聊一聊', d: '回答几个问题，也只做一次' },
-                  { n: '3', t: '拍照调改', d: 'AI 诊断给方案，以后每次只需这步' },
-                ].map((s) => (
-                  <div key={s.n} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{
-                      width: 24, height: 24, borderRadius: '50%', background: TOKENS.redSoft, color: TOKENS.red,
-                      fontSize: 12.5, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    }}>{s.n}</div>
-                    <div>
-                      <span style={{ fontSize: 13.5, fontWeight: 700, color: TOKENS.ink }}>{s.t}</span>
-                      <span style={{ fontSize: 12, color: TOKENS.inkMuted, marginLeft: 8 }}>{s.d}</span>
-                    </div>
+        {ov?.shelfConfigured && (
+          <Card pad={18} style={{ borderRadius: 20 }}>
+            <div style={{
+              fontSize: 11.5, fontWeight: 800, color: TOKENS.inkMuted,
+              letterSpacing: 1, marginBottom: 14,
+            }}>近 30 日{def?.name ? ` · ${def.name}` : ''} · 经营概览</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', alignItems: 'end' }}>
+              {[
+                { label: '总月销额', value: fmtBigYuan(totals.amount), color: TOKENS.red },
+                { label: '月销件数', value: fmtBigCount(totals.qty), color: TOKENS.ink },
+                { label: '月毛利', value: fmtBigYuan(totals.margin), color: TOKENS.green },
+              ].map((m, idx) => (
+                <div key={m.label} style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center',
+                  borderLeft: idx > 0 ? `1px solid ${TOKENS.lineSoft}` : 'none',
+                  padding: '4px 6px',
+                }}>
+                  <div style={{ fontSize: 11, color: TOKENS.inkMuted, fontWeight: 700, marginBottom: 6 }}>{m.label}</div>
+                  <div style={{
+                    fontSize: skusQ.isLoading ? 18 : (m.value.length > 6 ? 18 : 22),
+                    fontWeight: 800, color: m.color, fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {skusQ.isLoading ? '—' : m.value}
                   </div>
-                ))}
-              </div>
-            </Card>
-          </>
+                </div>
+              ))}
+            </div>
+          </Card>
         )}
 
         {ov?.shelfConfigured && ov.hasDraft && (
@@ -154,7 +173,7 @@ export function WorkspacePage() {
         )}
 
         {ov?.shelfConfigured && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             {[
               { label: '已调改', value: String(ov.adjustmentCount), unit: '次' },
               {
@@ -165,16 +184,15 @@ export function WorkspacePage() {
                   ? (ov.lastSalesDeltaPercent >= 0 ? TOKENS.green : TOKENS.red)
                   : TOKENS.inkMuted,
               },
-              { label: '场景状态', value: ov.qaDone ? '已就绪' : '待聊一聊', unit: '' },
             ].map((t) => (
               <div key={t.label} style={{
-                background: '#fff', borderRadius: 14, padding: '12px 6px 11px', textAlign: 'center',
+                background: '#fff', borderRadius: 14, padding: '14px 10px 13px', textAlign: 'center',
                 boxShadow: TOKENS.shadow1,
               }}>
-                <div style={{ fontSize: 10.5, color: TOKENS.inkMuted, fontWeight: 700 }}>{t.label}</div>
-                <div style={{ fontSize: t.value.length > 4 ? 14 : 20, fontWeight: 800, color: t.color || TOKENS.ink, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
+                <div style={{ fontSize: 11, color: TOKENS.inkMuted, fontWeight: 700 }}>{t.label}</div>
+                <div style={{ fontSize: t.value.length > 4 ? 16 : 22, fontWeight: 800, color: t.color || TOKENS.ink, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
                   {t.value}
-                  {t.unit && <span style={{ fontSize: 10.5, fontWeight: 600, color: TOKENS.inkMuted, marginLeft: 2 }}>{t.unit}</span>}
+                  {t.unit && <span style={{ fontSize: 11, fontWeight: 600, color: TOKENS.inkMuted, marginLeft: 3 }}>{t.unit}</span>}
                 </div>
               </div>
             ))}

@@ -20,7 +20,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppBar, PrimaryBtn, ScreenWrap, Spin } from '../ui/primitives';
 import { TOKENS } from '../ui/tokens';
 import { I } from '../ui/icons';
-import { insightsApi, type SurveyQuestion } from '../api';
+import { insightsApi, scenesApi, type SurveyQuestion } from '../api';
 import { readWorkflowFinished, extractQuestions, type QaQuestion } from '../sse';
 
 interface Msg { role: 'bot' | 'user'; text: string }
@@ -46,10 +46,20 @@ export function QAPage() {
     queryFn: () => insightsApi.questions(scene),
   });
 
+  // 顶部标题用「{场景名}选品调改」；scenes list 已被 HomePage 缓存，命中 RQ cache
+  const scenesQ = useQuery({ queryKey: ['scenes', 'list'], queryFn: scenesApi.list });
+  const sceneName = scenesQ.data?.scenes.find((s) => s.scene === scene)?.name ?? '';
+
   // 2. 历史无题 → 调 AI 出题 + 落库
+  //    AbortController：QAPage unmount 时取消流式调用，防止"用户退出后 mutation 仍在跑、
+  //    回来时与新一次 mutation race 卡住加载"。
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
+
   const genMutation = useMutation({
     mutationFn: async (): Promise<QaQuestion[]> => {
-      const resp = await insightsApi.streamQuestions(scene);
+      abortRef.current = new AbortController();
+      const resp = await insightsApi.streamQuestions(scene, abortRef.current.signal);
       const outputs = await readWorkflowFinished(resp);
       const qs = extractQuestions(outputs);
       if (qs.length === 0) throw new Error('AI 未返回有效题目');
@@ -73,9 +83,12 @@ export function QAPage() {
     genMutation.data ??
     (historyQ.data?.questions.length ? historyQ.data.questions.map(toQa) : []);
 
-  // 历史为空且未在生成中 → 自动触发一次生成
+  // 历史为空 + 没在 background refetch + 未在生成中 → 自动触发一次生成
+  // `!historyQ.isFetching` 是关键：避免 cache 命中但 refetch 还在跑时基于陈旧的空数组
+  // 误触发二次 mutation；等 refetch 完成后再判断。
   const needGenerate =
     historyQ.isSuccess &&
+    !historyQ.isFetching &&
     historyQ.data!.questions.length === 0 &&
     !genMutation.isPending &&
     !genMutation.isSuccess &&
@@ -96,24 +109,30 @@ export function QAPage() {
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const started = useRef(false);
+  // 之前用 useRef 守卫，重新进入页面后偶发"卡在三个点"。改用 useState 让守卫与
+  // 组件生命周期严格对齐：每次 mount 都重置为 false，effect dep 包含它本身，
+  // 确保"只启动一次"语义在任何重入场景下都成立。
+  const [conversationStarted, setConversationStarted] = useState(false);
 
-  useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
+  useEffect(() => () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  }, []);
 
   // 题目就绪后才启动对话
   useEffect(() => {
-    if (started.current || questions.length === 0 || finished) return;
-    started.current = true;
+    if (conversationStarted || questions.length === 0 || finished) return;
+    setConversationStarted(true);
     setTyping(true);
     timers.current.push(setTimeout(() => {
       setTyping(false);
       setMessages([{
         role: 'bot',
-        text: '你好！我是选品助手。开始之前先聊几句关于您门店的情况。',
+        text: '在调改之前，能否和您聊几句，以了解门店的情况？',
       }]);
       timers.current.push(setTimeout(() => askRound(0), 800));
     }, 500));
-  }, [questions, finished]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversationStarted, questions.length, finished]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const el = listRef.current;
@@ -123,7 +142,9 @@ export function QAPage() {
   const askRound = (i: number) => {
     setTyping(true);
     timers.current.push(setTimeout(() => {
-      setMessages((m) => [...m, { role: 'bot', text: questions[i]!.questionText }]);
+      const q = questions[i];
+      if (!q) { setTyping(false); return; }   // 题目在 timer 触发瞬间被清空时安全降级
+      setMessages((m) => [...m, { role: 'bot', text: q.questionText }]);
       setRound(i);
       setTyping(false);
     }, 600));
@@ -194,7 +215,7 @@ export function QAPage() {
 
   return (
     <ScreenWrap>
-      <AppBar title="聊一聊" onBack={() => finish(false)} />
+      <AppBar title={sceneName ? `${sceneName}选品调改` : '选品调改'} onBack={() => finish(false)} />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -209,7 +230,7 @@ export function QAPage() {
           {genMutation.isPending && (
             <BotBubble>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <Spin size={14} /> 正在为这家店量身准备问题，约 10 秒…
+                <Spin size={14} /> 请稍后，正在洞察门店周边环境
               </span>
             </BotBubble>
           )}

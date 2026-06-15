@@ -44,7 +44,7 @@ export const DEMO_DIAGNOSIS = {
 
 export const DEMO_PROBLEM_SKUS = new Set(['06210372', '06210520', '06210157', '06210488']);
 
-export type StrategyKind = 'remove' | 'observe' | 'push';
+export type StrategyKind = 'remove' | 'push';
 export interface StrategyItem {
   skuCode: string;
   skuName: string;
@@ -60,8 +60,6 @@ export const DEMO_STRATEGY: StrategyItem[] = [
   { skuCode: '06210372', skuName: '跳跳糖',         spec: '9g',   action: '淘汰下架', kind: 'remove',  tag: '低动销',  reason: '客群以上班族为主，儿童糖果动销持续走低' },
   { skuCode: '06210157', skuName: '棉花糖',         spec: '60g',  action: '淘汰下架', kind: 'remove',  tag: '低动销',  reason: '连续两月动销垫底，占用一节陈列面' },
   { skuCode: '06210488', skuName: '酒心巧克力',     spec: '120g', action: '淘汰下架', kind: 'remove',  tag: '滞销',    reason: '30 日仅售 3 件，保质期临近，建议清仓处理' },
-  { skuCode: '06210234', skuName: '榛仁巧克力排块', spec: '90g',  action: '保留观察', kind: 'observe', tag: '待观察',  reason: '环比下滑但毛利高，建议调整陈列位置后观察一个月' },
-  { skuCode: '06210601', skuName: '黑糖话梅糖',     spec: '95g',  action: '保留观察', kind: 'observe', tag: '待观察',  reason: '中年客群仍有稳定复购，暂不调整' },
   { skuCode: '06210710', skuName: '黑巧克力85%',    spec: '100g', action: '上架推广', kind: 'push',    tag: '趋势款',  reason: '黑巧 65% 动销 +21.7%，向上延伸高浓度规格，白领客群接受度高' },
   { skuCode: '06210725', skuName: '生椰拿铁味软糖', spec: '108g', action: '上架推广', kind: 'push',    tag: '网红款',  reason: '软糖品类动销强，咖啡风味契合写字楼客群' },
   { skuCode: '06210733', skuName: '0糖薄荷软糖',    spec: '76g',  action: '上架推广', kind: 'push',    tag: '高毛利',  reason: '无糖品类周边竞对未覆盖，差异化空档' },
@@ -105,6 +103,5 @@ export const fmtDate = (iso: string) => {
 
 export const SKIP_REASONS: Record<StrategyKind, string[]> = {
   remove:  ['其实卖得还可以', '有老顾客常买', '还有库存要卖完', '想再观察一阵子'],
-  observe: ['其实卖得还可以', '有老顾客常买', '这个品我想直接下架', '不想调整陈列'],
   push:    ['进不到这个货', '不看好这个品', '货架实在放不下', '想先少上几个试试'],
 };

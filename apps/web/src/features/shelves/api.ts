@@ -66,7 +66,7 @@ export interface SceneOverview {
 export interface StoreSku {
   productId: string;
   skuCode: string;
-  name: string;
+  productName: string;
   brand: string | null;
   spec: string | null;
   unit: string | null;
@@ -166,7 +166,7 @@ export const scenesApi = {
 
   submitCorrection: (scene: number, body: {
     skuCode: string;
-    kind: 'missed' | 'false_positive' | 'remove' | 'add' | 'observe';
+    kind: 'missed' | 'false_positive' | 'remove' | 'add';
     scope: 'detection' | 'decision';
     reasonCode: string;
     reasonText?: string;

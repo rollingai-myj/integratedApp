@@ -71,7 +71,11 @@ export function SetupPage() {
 
   const back = () => {
     if (step === 0 && groups.length === 0) {
-      void navigate({ to: '/shelves/scene/$scene', params: { scene: sceneStr } });
+      // 还没建过任何一组：货架未登记 → 工作台会自动转回这里，直接回场景列表更顺
+      const target = firstTime
+        ? { to: '/shelves' as const }
+        : { to: '/shelves/scene/$scene' as const, params: { scene: sceneStr } };
+      void navigate(target);
       return;
     }
     if (step === 0) { setStep(2); return; }
@@ -187,7 +191,7 @@ export function SetupPage() {
               onClick={() => save.mutate()}
               icon={I.Check({ size: 20, color: '#fff' })}
             >
-              {firstTime ? `保存，去聊一聊（共 ${groups.length} 组）` : `保存（共 ${groups.length} 组货架）`}
+              {firstTime ? `保存，开始调改（共 ${groups.length} 组）` : `保存（共 ${groups.length} 组货架）`}
             </PrimaryBtn>
           )}
         </BottomBar>
