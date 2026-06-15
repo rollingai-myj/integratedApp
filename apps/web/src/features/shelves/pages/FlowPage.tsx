@@ -102,9 +102,14 @@ export function FlowPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ---- 草稿恢复（只跑一次） -----------------------------------------------
+  //
+  // 等 runtimeQ 既 isSuccess=true 又 isFetching=false 才 hydrate：
+  // 重新进入 FlowPage 时 React Query 会先返陈旧 cache（isSuccess=true）再后台
+  // refetch（isFetching=true）。只看 isSuccess 会用陈旧 draft 把 stage 锁回 photo，
+  // 之后 refetch 拿到 stage='diagnosing' 也无法再恢复（hydrated 已 true）。
 
   useEffect(() => {
-    if (hydrated || !runtimeQ.isSuccess) return;
+    if (hydrated || !runtimeQ.isSuccess || runtimeQ.isFetching) return;
     setHydrated(true);
     if (photosFromServer.length > 0) {
       setPhotos(photosFromServer.map((p) => ({ url: p.url })));
@@ -125,7 +130,7 @@ export function FlowPage() {
     ) {
       setStage(draft.stage);
     }
-  }, [hydrated, runtimeQ.isSuccess, draft, photosFromServer]);
+  }, [hydrated, runtimeQ.isSuccess, runtimeQ.isFetching, draft, photosFromServer]);
 
   // 后台 IIFE 写回 draft.diagnosis / draft.strategy 时（轮询拉到新值），同步到本地 state
   // 这样跨页面 navigation 回来后，新挂载的 FlowPage 会看到结果并由下方 effect 推进 stage
@@ -138,11 +143,40 @@ export function FlowPage() {
 
   // ---- 草稿写入（增量 merge） --------------------------------------------
 
+  // saveDraft：每次 mutation 把 patch 合到 cache 里现有的 draft 上，再整段写回 DB。
+  //
+  // 关键点：mutationFn 和 onMutate 都从 React Query cache 读 latest，不用组件闭包里的 draft。
+  // 原因：诊断阶段 3 个 IIFE（detect / diagnose / strategy）会从同一次点击的闭包里同时
+  // 调 saveDraft，闭包里的 draft 是同一份 stale snapshot，3 个 `{...draft, ...patch}` 互相
+  // 覆盖会把对方的字段全擦掉（最后落地那个的 patch 字段才留下）—— 用户表现：退出再进发现
+  // strategy 已经没了，confirm 阶段被 `stage === 'confirm' && strategy` 的 strategy 短路成空白。
+  //
+  // onMutate 做乐观更新 + cancelQueries 拦截 refetch 乱序覆盖；onSettled 收尾再 invalidate。
   const saveDraft = useMutation({
-    mutationFn: (patch: Partial<DraftShape>) =>
-      scenesApi.saveRuntime(scene, {
-        draft: { ...(draft ?? {}), ...patch, stage: patch.stage ?? draft?.stage ?? stage } as any,
-      } as any),
+    mutationFn: (patch: Partial<DraftShape>) => {
+      const latest = qc.getQueryData<{ draft?: DraftShape | null }>(['scenes', scene, 'runtime']);
+      const latestDraft = (latest?.draft ?? null) as DraftShape | null;
+      return scenesApi.saveRuntime(scene, {
+        draft: { ...(latestDraft ?? {}), ...patch, stage: patch.stage ?? latestDraft?.stage ?? stage } as any,
+      } as any);
+    },
+    onMutate: async (patch: Partial<DraftShape>) => {
+      await qc.cancelQueries({ queryKey: ['scenes', scene, 'runtime'] });
+      const prev = qc.getQueryData<{ draft?: DraftShape | null }>(['scenes', scene, 'runtime']);
+      const prevDraft = (prev?.draft ?? {}) as DraftShape;
+      const nextDraft = { ...prevDraft, ...patch, stage: patch.stage ?? prevDraft.stage ?? stage };
+      qc.setQueryData(['scenes', scene, 'runtime'], (old: any) =>
+        old ? { ...old, draft: nextDraft } : old,
+      );
+      return { prev };
+    },
+    onError: (_err, _patch, ctx) => {
+      const c = ctx as { prev?: unknown } | undefined;
+      if (c?.prev !== undefined) qc.setQueryData(['scenes', scene, 'runtime'], c.prev);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
+    },
   });
 
   // ---- 阶段 1：拍照 + 上传 -----------------------------------------------
@@ -613,7 +647,7 @@ export function FlowPage() {
 
       {/* ===== 阶段 7：完成 ===== */}
       {stage === 'applied' && (
-        <AppliedPanel counts={counts} sceneStr={sceneStr} />
+        <AppliedPanel counts={counts} scene={scene} sceneStr={sceneStr} />
       )}
     </ScreenWrap>
   );
@@ -996,8 +1030,22 @@ function ProductRow({ sku, right, dim }: { sku: AiStrategyItem; right?: React.Re
   );
 }
 
-function AppliedPanel({ counts, sceneStr }: { counts: { push: number; remove: number }; sceneStr: string }) {
+function AppliedPanel({ counts, scene, sceneStr }: { counts: { push: number; remove: number }; scene: number; sceneStr: string }) {
   const navigate = useNavigate();
+  const rtQ = useQuery({
+    queryKey: ['scenes', scene, 'runtime'],
+    queryFn: () => scenesApi.runtime(scene),
+    // Dify virtual-shelf 5~10 分钟才完成，状态非终态时本面板自轮询。
+    // 不能光等 FlowPage 顶层那个 IIFE 完成时的 invalidate —— 用户停在 applied 阶段才看得到状态翻转。
+    refetchInterval: (q) => {
+      const status = (q.state.data as { virtualStatus?: string } | undefined)?.virtualStatus;
+      return status === 'processing' || status === 'idle' ? 5_000 : false;
+    },
+  });
+  const virtualStatus = rtQ.data?.virtualStatus;
+  const virtualReady = virtualStatus === 'completed';
+  const virtualFailed = virtualStatus === 'failed';
+
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '28px 20px 40px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ textAlign: 'center', padding: '10px 0 6px' }}>
@@ -1012,15 +1060,43 @@ function AppliedPanel({ counts, sceneStr }: { counts: { push: number; remove: nu
         </div>
       </div>
 
-      <Card pad={14} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <Spin size={26} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: TOKENS.ink }}>正在帮你生成陈列示意图…</div>
-          <div style={{ fontSize: 12, color: TOKENS.inkMuted, marginTop: 2, lineHeight: 1.5 }}>
-            不用等在这里，过一会回来看就行
+      {virtualReady ? (
+        <Card pad={14} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{
+            width: 34, height: 34, borderRadius: 10, background: TOKENS.greenSoft, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>{I.Check({ size: 18, color: TOKENS.green })}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: TOKENS.ink }}>陈列示意图已就绪</div>
+            <div style={{ fontSize: 12, color: TOKENS.inkMuted, marginTop: 2, lineHeight: 1.5 }}>
+              点下方"查看调改清单和陈列示意图"
+            </div>
           </div>
-        </div>
-      </Card>
+        </Card>
+      ) : virtualFailed ? (
+        <Card pad={14} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{
+            width: 34, height: 34, borderRadius: 10, background: TOKENS.redSoft, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
+          }}>⚠️</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: TOKENS.red }}>陈列示意图生成失败</div>
+            <div style={{ fontSize: 12, color: TOKENS.inkMuted, marginTop: 2, lineHeight: 1.5 }}>
+              稍后回到"上一次调改"再看，或重新发起调改触发生成
+            </div>
+          </div>
+        </Card>
+      ) : (
+        <Card pad={14} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Spin size={26} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: TOKENS.ink }}>正在帮你生成陈列示意图…</div>
+            <div style={{ fontSize: 12, color: TOKENS.inkMuted, marginTop: 2, lineHeight: 1.5 }}>
+              不用等在这里，过一会回来看就行
+            </div>
+          </div>
+        </Card>
+      )}
 
       <ListRow
         icon={I.Doc({ size: 20, color: TOKENS.red })}
