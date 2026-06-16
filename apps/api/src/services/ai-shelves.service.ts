@@ -25,22 +25,9 @@ import {
 import { logger } from '../lib/logger.js';
 import type { SceneDef } from './hq.service.js';
 
-/**
- * 从一组 sku items 里抽 distinct categoryLevel（用于 major_category / mid_category 顶层标签）。
- * Items 里的 `majorCategory` / `midCategory` 来自 hq_categories 的真实 L1/L2 名称
- * （见 buildSkuData：`categoryPath.split('/')`）。
- */
-function distinctSkuLevel(
-  items: ReadonlyArray<{ majorCategory?: string; midCategory?: string }>,
-  level: 'major' | 'mid',
-): string[] {
-  const key = level === 'major' ? 'majorCategory' : 'midCategory';
-  const seen = new Set<string>();
-  for (const it of items) {
-    const v = (it as Record<string, unknown>)[key];
-    if (typeof v === 'string' && v.length > 0) seen.add(v);
-  }
-  return Array.from(seen);
+/** YYYY-MM-DD in Asia/Shanghai（容器 TZ 通常是 UTC，UTC 0~8 时本地已经是次日，用 en-CA + TZ 保证不漂） */
+function todayInShanghai(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
 }
 
 interface BuildContext {
@@ -79,6 +66,56 @@ async function loadStoreCtx(storeId: string): Promise<StoreContext> {
   };
 }
 
+interface StoreProfile {
+  storeCode: string;
+  storeName: string;
+  storeArea: number | null;
+  isProjectStore: boolean;
+  poiCategory: string | null;
+  openDate: string | null;
+  province: string | null;
+  city: string | null;
+}
+
+/**
+ * Dify inputs.store_profile：门店档案投影（字段名按 Dify 端约定 camelCase）。
+ * - storeArea: stores.store_area_sqm (numeric → number)
+ * - openDate:  stores.opened_at (date → YYYY-MM-DD)
+ * - 其他字段直传字符串/布尔
+ */
+async function loadStoreProfile(storeId: string): Promise<StoreProfile> {
+  const res = await query<{
+    store_code: string;
+    store_name: string;
+    store_area_sqm: string | null;
+    is_project_store: boolean;
+    poi_category: string | null;
+    opened_at: Date | string | null;
+    province: string | null;
+    city: string | null;
+  }>(
+    `SELECT store_code, store_name, store_area_sqm, is_project_store, poi_category,
+            opened_at, province, city
+       FROM stores WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+    [storeId],
+  );
+  const r = res.rows[0];
+  if (!r) throw new Error('门店不存在');
+  return {
+    storeCode: r.store_code,
+    storeName: r.store_name,
+    storeArea: r.store_area_sqm == null ? null : Number(r.store_area_sqm),
+    isProjectStore: r.is_project_store,
+    poiCategory: r.poi_category,
+    openDate:
+      r.opened_at instanceof Date
+        ? `${r.opened_at.getFullYear()}-${String(r.opened_at.getMonth() + 1).padStart(2, '0')}-${String(r.opened_at.getDate()).padStart(2, '0')}`
+        : r.opened_at,
+    province: r.province,
+    city: r.city,
+  };
+}
+
 async function loadSceneDef(scene: number): Promise<SceneDef | null> {
   const res = await query<{
     scene: number;
@@ -104,22 +141,128 @@ async function loadSceneDef(scene: number): Promise<SceneDef | null> {
   };
 }
 
-/** 把 listStoreSkus 输出转成 Dify 期望的格式（与前端 fmt() 保持一致字段名） */
-async function buildSkuData(storeId: string, scene: number): Promise<{ items: unknown[] }> {
+/**
+ * Dify inputs.sku_attributes：场景全量 active 商品 + 20 字段属性（V026 三新列：tags / market_min_price / market_min_price_source）。
+ *   - 字段命名按用户给的示例：大部分 camelCase；`is_whitelisted`/`allocation_unit`/`introduced_at` 三个保持 snake_case
+ *   - tags 是 TEXT[]，node-pg 自动映成 string[]，被 serializeInputs 时变成自然 JSON 数组
+ *   - introduced_at 走 YYYY-MM-DD（容器 TZ UTC）→ pg 把 DATE 当 Date 实例返回，自己手动格式化
+ *   - 与 store_sku_data / benchmark_sku_data 故意拆开：sku_attributes 只承载主数据属性，销量指标在另两个字段
+ */
+async function buildSkuAttributes(scene: number): Promise<{ items: unknown[] }> {
+  const res = await query<{
+    sku_code: string;
+    product_name: string;
+    spec: string | null;
+    unit: string | null;
+    brand: string | null;
+    l1: string | null;
+    l2: string | null;
+    l3: string | null;
+    shelf_life_days: number | null;
+    tags: string[] | null;
+    wholesale_price: string | null;
+    suggested_retail_price: string | null;
+    market_min_price: string | null;
+    market_min_price_source: string | null;
+    is_new_product: boolean;
+    is_whitelisted: boolean;
+    is_returnable: boolean | null;
+    is_private_label: boolean;
+    allocation_unit: number | null;
+    introduced_at: Date | string | null;
+  }>(
+    `SELECT p.sku_code, p.product_name, p.spec, p.unit, p.brand,
+            fn_category_ancestor_name(p.category_id, 1::smallint) AS l1,
+            fn_category_ancestor_name(p.category_id, 2::smallint) AS l2,
+            fn_category_ancestor_name(p.category_id, 3::smallint) AS l3,
+            p.shelf_life_days, p.tags,
+            p.wholesale_price, p.suggested_retail_price,
+            p.market_min_price, p.market_min_price_source,
+            p.is_new_product, p.is_whitelisted, p.is_returnable, p.is_private_label,
+            p.allocation_unit, p.introduced_at
+       FROM hq_products p
+      WHERE p.deleted_at IS NULL
+        AND p.status = 'active'::product_status
+        AND fn_category_scene(p.category_id) = $1
+   ORDER BY p.sku_code`,
+    [scene],
+  );
+  const items = res.rows.map((r) => ({
+    skuCode: r.sku_code,
+    skuName: r.product_name,
+    spec: r.spec,
+    unit: r.unit,
+    brand: r.brand,
+    majorCategory: r.l1,
+    midCategory: r.l2,
+    subCategory: r.l3,
+    shelfLifeDays: r.shelf_life_days,
+    tags: r.tags ?? [],
+    wholesalePrice: r.wholesale_price == null ? null : Number(r.wholesale_price),
+    suggestedPrice: r.suggested_retail_price == null ? null : Number(r.suggested_retail_price),
+    marketMinPrice: r.market_min_price == null ? null : Number(r.market_min_price),
+    marketMinPriceSource: r.market_min_price_source,
+    isNew: r.is_new_product,
+    is_whitelisted: r.is_whitelisted,
+    isReturnable: r.is_returnable ?? false,
+    isPrivate: r.is_private_label,
+    allocation_unit: r.allocation_unit,
+    introduced_at:
+      r.introduced_at instanceof Date
+        ? `${r.introduced_at.getFullYear()}-${String(r.introduced_at.getMonth() + 1).padStart(2, '0')}-${String(r.introduced_at.getDate()).padStart(2, '0')}`
+        : r.introduced_at,
+  }));
+  return { items };
+}
+
+/**
+ * Dify inputs.store_sku_data：本店本场景销售指标（瘦版,只 4 个字段）。
+ * 跟 sku_attributes 用 skuCode 关联;Dify 端 join。
+ */
+async function loadStoreSkuMetrics(
+  storeId: string,
+  scene: number,
+): Promise<{ items: unknown[] }> {
   const skus = await listStoreSkus({ storeId, scene });
   const items = skus.map((s) => ({
     skuCode: s.skuCode,
-    skuName: s.productName,
-    spec: s.spec ?? '',
-    majorCategory: (s.categoryPath ?? '').split('/')[0] ?? '',
-    midCategory: (s.categoryPath ?? '').split('/')[1] ?? '',
-    subCategory: (s.categoryPath ?? '').split('/')[2] ?? '',
     sales30d: s.salesAmount30d != null ? s.salesAmount30d.toFixed(2) : '0',
     salesVolume30d: s.salesQty30d != null ? String(s.salesQty30d) : '0',
     psdChangetb: s.salesAmountChange30d != null ? String(s.salesAmountChange30d) : '0',
-    shelfLifeDays: null,
   }));
   return { items };
+}
+
+interface StructuredPoi {
+  category: string | null;
+  top_competitors: unknown[];
+  competitor_analysis: string | null;
+  crowd_source_analysis: string | null;
+}
+
+/**
+ * Dify inputs.poi_data：从 store_insights 直接读 4 字段（V015 已建好）。
+ *   - top_competitors 是 JSONB（pg-node 自动 parse 成 array），保持原结构透传
+ *   - 没有 insight 记录 → 全空（store_insights 是登录时按 store 兜底，但极端情况可能缺）
+ */
+async function loadStructuredPoi(storeId: string): Promise<StructuredPoi> {
+  const res = await query<{
+    category: string | null;
+    top_competitors: unknown[] | null;
+    competitor_analysis: string | null;
+    crowd_source_analysis: string | null;
+  }>(
+    `SELECT category, top_competitors, competitor_analysis, crowd_source_analysis
+       FROM store_insights WHERE store_id = $1 LIMIT 1`,
+    [storeId],
+  );
+  const r = res.rows[0];
+  return {
+    category: r?.category ?? null,
+    top_competitors: Array.isArray(r?.top_competitors) ? r!.top_competitors : [],
+    competitor_analysis: r?.competitor_analysis ?? null,
+    crowd_source_analysis: r?.crowd_source_analysis ?? null,
+  };
 }
 
 /**
@@ -142,25 +285,24 @@ async function buildSkuJsonForVirtualShelf(
   const existing = new Set(kept.map((s) => s.skuCode));
   const newCodes = delta.addSkuCodes.filter((c) => !existing.has(c));
 
-  const baseRows = kept.map((s) => {
-    const parts = (s.categoryPath ?? '').split('/');
-    return {
-      商品代码: s.skuCode,
-      商品名称: s.productName,
-      大类: parts[0] ?? '',
-      中类: parts[1] ?? '',
-      品牌: s.brand ?? '',
-      单位: s.unit ?? '',
-      宽cm: s.widthCm,
-      高cm: s.heightCm,
-      小类: parts[2] ?? '',
-      '30日销售量': s.salesQty30d ?? 0,
-      '30日销售额': s.salesAmount30d ?? 0,
-    };
-  });
+  const baseRows = kept.map((s) => ({
+    商品代码: s.skuCode,
+    商品名称: s.productName,
+    大类: s.categoryL1Name ?? '',
+    中类: s.categoryL2Name ?? '',
+    品牌: s.brand ?? '',
+    单位: s.unit ?? '',
+    宽cm: s.widthCm,
+    高cm: s.heightCm,
+    小类: s.categoryL3Name ?? '',
+    '30日销售量': s.salesQty30d ?? 0,
+    '30日销售额': s.salesAmount30d ?? 0,
+  }));
 
   if (newCodes.length === 0) return baseRows;
 
+  // 新品在本店 store_sku_snapshots 里还没有；从 hq_products 直接取，大/中/小类同样走
+  // fn_category_ancestor_name(category_id, level) 三个函数调用而不是 split。
   const newRows = await query<{
     sku_code: string;
     product_name: string;
@@ -168,31 +310,32 @@ async function buildSkuJsonForVirtualShelf(
     unit: string | null;
     width_cm: string | null;
     height_cm: string | null;
-    cat_path: string | null;
+    cat_l1: string | null;
+    cat_l2: string | null;
+    cat_l3: string | null;
   }>(
     `SELECT p.sku_code, p.product_name, p.brand, p.unit,
             p.width_cm, p.height_cm,
-            fn_category_path(p.category_id) AS cat_path
+            fn_category_ancestor_name(p.category_id, 1::smallint) AS cat_l1,
+            fn_category_ancestor_name(p.category_id, 2::smallint) AS cat_l2,
+            fn_category_ancestor_name(p.category_id, 3::smallint) AS cat_l3
        FROM hq_products p
       WHERE p.sku_code = ANY($1::text[]) AND p.deleted_at IS NULL`,
     [newCodes],
   );
-  const addedRows = newRows.rows.map((r) => {
-    const parts = (r.cat_path ?? '').split('/');
-    return {
-      商品代码: r.sku_code,
-      商品名称: r.product_name,
-      大类: parts[0] ?? '',
-      中类: parts[1] ?? '',
-      品牌: r.brand ?? '',
-      单位: r.unit ?? '',
-      宽cm: r.width_cm != null ? Number(r.width_cm) : null,
-      高cm: r.height_cm != null ? Number(r.height_cm) : null,
-      小类: parts[2] ?? '',
-      '30日销售量': 0,
-      '30日销售额': 0,
-    };
-  });
+  const addedRows = newRows.rows.map((r) => ({
+    商品代码: r.sku_code,
+    商品名称: r.product_name,
+    大类: r.cat_l1 ?? '',
+    中类: r.cat_l2 ?? '',
+    品牌: r.brand ?? '',
+    单位: r.unit ?? '',
+    宽cm: r.width_cm != null ? Number(r.width_cm) : null,
+    高cm: r.height_cm != null ? Number(r.height_cm) : null,
+    小类: r.cat_l3 ?? '',
+    '30日销售量': 0,
+    '30日销售额': 0,
+  }));
   return [...baseRows, ...addedRows];
 }
 
@@ -313,57 +456,70 @@ async function loadSurveyAnswers(
 // ---- 业务端点：拼 inputs ---------------------------------------------------
 
 /**
- * Dify align / selection 工作流当前期望的 inputs 字段（用户在 Dify Studio 同步给出）：
- *   通用：sku_data / major_category / mid_category / benchmark_sku_data / question_answers / poi_data
- *   align 多一个：photo
- * 其他历史字段（gapAnalysis_benchmarkOnly / sub_category / province / city / is_project_store /
- * env_crowd / env_competitor / current_date / corrections / new_product_skus / whitelist 等）
- * 都已从工作流定义里删除，传过去会被丢弃，传少了不会报错，但 Python 节点参数缺失会 TypeError。
+ * Dify align / selection 工作流 inputs（V026 起重构 / 与旧字段不兼容）：
+ *
+ *   sku_attributes      场景全量 active 商品 + 20 字段属性（含 tags / market_min_price 等 V026 新字段）
+ *   store_sku_data      本店本场景销售指标（4 字段，按 skuCode 与 sku_attributes 关联）
+ *   benchmark_sku_data  跨店归一化平均销量指标（4 字段，同上）
+ *   store_profile       门店档案（stores 表 8 字段投影）
+ *   poi_data            周边洞察（store_insights：category / top_competitors / competitor_analysis / crowd_source_analysis）
+ *   question_answers    店长问答（已有，{items:[{question, answer}]}）
+ *   current_date        Asia/Shanghai 时区今日 YYYY-MM-DD
+ *   align 多一个 photo
+ *
+ * 已删除的旧字段：sku_data / major_category / mid_category / whitelist / new_product_skus
+ *   - 白名单信息现在以每 SKU 的 is_whitelisted 标记表达（Dify 端自己 filter）
+ *   - 新品同理：每 SKU 的 isNew 标记
+ *   - 类目集合：每 SKU 都带 majorCategory / midCategory，Dify 自己 distinct
+ *
+ * 全部顶层字段在 Dify Studio 端 type=text；dify.service.ts:serializeInputs 会把对象/数组自动 JSON.stringify。
  */
+async function buildCommonInputs(ctx: BuildContext): Promise<Record<string, unknown>> {
+  const [skuAttr, storeSku, benchmarkRich, storeProfile, poi, qa] = await Promise.all([
+    buildSkuAttributes(ctx.scene),
+    loadStoreSkuMetrics(ctx.storeId, ctx.scene),
+    computeBenchmarkForScene(ctx.storeId, ctx.scene),
+    loadStoreProfile(ctx.storeId),
+    loadStructuredPoi(ctx.storeId),
+    loadSurveyAnswers(ctx.storeId, ctx.scene),
+  ]);
+  // benchmark.service.ts 还返回富 row（含 skuName / 三级 category / spec），这里 trim 到 4 字段对齐 store_sku_data
+  const benchmarkSku = {
+    items: benchmarkRich.map((b) => ({
+      skuCode: b.skuCode,
+      sales30d: b.sales30d,
+      salesVolume30d: b.salesVolume30d,
+      psdChangetb: b.psdChangetb,
+    })),
+  };
+  return {
+    sku_attributes: skuAttr,
+    store_sku_data: storeSku,
+    benchmark_sku_data: benchmarkSku,
+    store_profile: storeProfile,
+    poi_data: poi,
+    question_answers: qa,
+    current_date: todayInShanghai(),
+  };
+}
+
 export async function buildAlignInputs(
   ctx: BuildContext,
   photoUrl: string,
 ): Promise<Record<string, unknown>> {
-  const [sku, qa, benchmark] = await Promise.all([
-    buildSkuData(ctx.storeId, ctx.scene),
-    loadSurveyAnswers(ctx.storeId, ctx.scene),
-    computeBenchmarkForScene(ctx.storeId, ctx.scene),
-  ]);
-  const skuItems = sku.items as Array<{ majorCategory?: string; midCategory?: string }>;
+  const common = await buildCommonInputs(ctx);
   // 前端拿到的 photoUrl 是反代 URL（/api/v1/storage/oss-image?key=...）
   // Dify 在外网拉不到反代，必须把它转回 OSS 直链。
   return {
     photo: { transfer_method: 'remote_url', url: ossService.toExternalUrl(photoUrl), type: 'image' },
-    sku_data: sku,
-    // major_category = 当前 SKU 集涉及的大类 L1，mid_category = 中类 L2，distinct 去重逗号串。
-    // 之前 mid_category 错塞 L1 列表 → Dify 拿到错误的"中类"，对位/选品判断走偏。
-    major_category: distinctSkuLevel(skuItems, 'major').join(','),
-    mid_category: distinctSkuLevel(skuItems, 'mid').join(','),
-    // benchmark = 其他门店该场景 L1 类目的加权销量基准，
-    // 由 benchmark.service.ts 即时算出（latest snapshot + sales_amount 加权）。
-    benchmark_sku_data: { items: benchmark },
-    question_answers: qa,
-    poi_data: '',
+    ...common,
   };
 }
 
 export async function buildStrategyInputs(
   ctx: BuildContext,
 ): Promise<Record<string, unknown>> {
-  const [sku, qa, benchmark] = await Promise.all([
-    buildSkuData(ctx.storeId, ctx.scene),
-    loadSurveyAnswers(ctx.storeId, ctx.scene),
-    computeBenchmarkForScene(ctx.storeId, ctx.scene),
-  ]);
-  const skuItems = sku.items as Array<{ majorCategory?: string; midCategory?: string }>;
-  return {
-    sku_data: sku,
-    major_category: distinctSkuLevel(skuItems, 'major').join(','),
-    mid_category: distinctSkuLevel(skuItems, 'mid').join(','),
-    benchmark_sku_data: { items: benchmark },
-    question_answers: qa,
-    poi_data: '',
-  };
+  return buildCommonInputs(ctx);
 }
 
 export async function buildVirtualShelfInputs(args: {

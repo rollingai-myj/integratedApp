@@ -57,9 +57,8 @@ const importSchema = z.object({
   snapshotDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'snapshotDate 需为 YYYY-MM-DD'),
   rows: z.array(z.object({
     skuCode: z.string(),
+    /** 本期实际售价（V027 起 snapshot 唯一价格列；批发价已迁回 hq_products，建议价不入快照） */
     retailPrice: z.number().optional(),
-    originalPrice: z.number().optional(),
-    wholesalePrice: z.number().optional(),
     salesQty30d: z.number().int().optional(),
     salesAmount30d: z.number().optional(),
     salesQty90d: z.number().int().optional(),

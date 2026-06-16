@@ -1,8 +1,10 @@
 /**
- * HQ 总部主数据：四层品类树、商品档案、基准 SKU、门店档案
+ * HQ 总部主数据：四层品类树、商品档案、门店档案
  *
- * 新表：hq_categories / hq_products / hq_benchmark_skus / stores
- * 派生函数：fn_category_path / fn_category_scene（V012）
+ * 表：hq_categories / hq_products / stores
+ * 派生函数：fn_category_path / fn_category_scene（V012）/ fn_category_ancestor_name（V023）
+ * 注：白名单 V025 起合并为 hq_products.is_whitelisted 列（前身 V024 hq_whitelist、V004 hq_benchmark_skus）；
+ *     V026 起以 Dify inputs.sku_attributes 每 SKU 自带标记的形式表达，本文件不再暴露 list 接口。
  */
 import { query } from '../db/index.js';
 import { config } from '../config/env.js';
@@ -210,52 +212,6 @@ export async function listProducts(args: {
         ? `${r.introduced_at.getFullYear()}-${String(r.introduced_at.getMonth() + 1).padStart(2, '0')}-${String(r.introduced_at.getDate()).padStart(2, '0')}`
         : r.introduced_at,
     status: r.status,
-  }));
-}
-
-// ---- 基准 SKU ------------------------------------------------------------
-
-export interface BenchmarkRow {
-  productId: string | null;
-  skuCode: string;
-  productName: string | null;
-  segment: 'core' | 'innovation';
-  reason: string | null;
-  categoryPath: string | null;
-}
-
-export async function listBenchmarkSkus(args: {
-  segment?: 'core' | 'innovation';
-}): Promise<BenchmarkRow[]> {
-  const where = ['b.is_active', '(b.effective_to IS NULL OR b.effective_to >= CURRENT_DATE)'];
-  const params: unknown[] = [];
-  if (args.segment) {
-    params.push(args.segment);
-    where.push(`b.segment = $${params.length}::benchmark_segment`);
-  }
-  const res = await query<{
-    product_id: string | null;
-    sku_code: string;
-    product_name: string | null;
-    segment: 'core' | 'innovation';
-    reason: string | null;
-    cat_path: string | null;
-  }>(
-    `SELECT b.product_id, b.sku_code, p.product_name, b.segment, b.reason,
-            fn_category_path(p.category_id) AS cat_path
-       FROM hq_benchmark_skus b
-       LEFT JOIN hq_products p ON p.id = b.product_id
-      WHERE ${where.join(' AND ')}
-   ORDER BY b.segment, b.sku_code`,
-    params,
-  );
-  return res.rows.map((r) => ({
-    productId: r.product_id,
-    skuCode: r.sku_code,
-    productName: r.product_name,
-    segment: r.segment,
-    reason: r.reason,
-    categoryPath: r.cat_path,
   }));
 }
 

@@ -115,7 +115,8 @@ latitude/longitude (NUMERIC) → number
 
 - `hq_categories`: `id, parent_id, level (0-3), scene, category_code, category_name, ...`
 - `hq_products`: `id, sku_code, product_name, brand, spec, unit, series, shelf_life_days, length_mm, width_mm, height_mm, category_id, suggested_retail_price, official_image_url, ...`
-- `hq_benchmark_skus`: `id, product_id, sku_code, segment ('core'|'innovation'), reason, ...`
+- `hq_products.is_whitelisted` BOOLEAN（V025；前身 V004 `hq_benchmark_skus` → V024 `hq_whitelist` → V025 扁平化为列）—— V026 起以 `inputs.sku_attributes.items[].is_whitelisted` 每 SKU 自带标记的形式传给 Dify（不再单独的 whitelist 数组字段）
+- `hq_products.tags` TEXT[] / `market_min_price` NUMERIC / `market_min_price_source` TEXT（V026）—— `inputs.sku_attributes` 的 tags / marketMinPrice / marketMinPriceSource 直接来源
 - `stores`: `id, store_code, store_name, ownership, province, city, district, address, latitude, longitude, opened_at, is_project_store, status, ...`
 
 ### Service
@@ -201,15 +202,16 @@ latitude/longitude (NUMERIC) → number
 
 | 表 / 视图 | 用途 |
 |---|---|
-| `store_sku_snapshots` | 周期性价格 + 销量快照 |
-| `store_price_changes` | 调价事件流（含 `source`, `ai_advice`, `note`） |
-| `v_store_product_curve` | 视图：合并最新快照（manual 优先 erp_sync） |
+| `store_sku_snapshots` | **价盘单一真理源**（V027）。周期性 `retail_price` + 销量快照；调价历史 / 涨跌均从本表时间序列推导 |
+| ~~`store_price_changes`~~ | V027 起读写路径均废弃（表保留不删，留作未来真接 POS）—— 本 app 是模拟器，不写门店真实价 |
+| `v_store_product_curve` | 视图：snapshot 最新点去重（manual 优先 erp_sync）；V027 后投影列同步删 original / wholesale |
+| `hq_products` (master) | `wholesale_price` —— 价盘曲线 SKU 头部 JOIN；`suggested_retail_price` —— 只在选品/产品库，不进价盘 |
 
 ### Service
 
 [prices.service.ts](../apps/api/src/services/prices.service.ts)
 
-`getPriceCurve()`：从 snapshots + price_changes 两个源拼出 `PriceCurvePoint[]`，每个点带 `source: 'snapshot' | 'change'` 区分来源，`priceChangeId` 仅 change 行有。
+`getPriceCurve()` (V027)：snapshot 单源。每个 `PriceCurvePoint` = `{ snapshotDate, retailPrice, salesQty30d?, salesAmount30d?, grossMargin30d? }`。SKU 头部带一个 `wholesalePrice`（从 `hq_products` JOIN，全期同值）。
 
 ```
 retail_price (NUMERIC string) → retailPrice (number, Number() 转)
@@ -218,11 +220,13 @@ gross_margin_30d → grossMargin30d (number)
 snapshot_date (DATE) → snapshotDate ('YYYY-MM-DD')
 ```
 
+"涨/跌"对比由前端从 `points[]` 倒数两点 retail_price 之差推导，不存数据库字段。
+
 ### 前端
 
 - `pricesApi.curve()` → shared 类型 `PriceCurveResponse`
-- `pricesApi.changes()` → `ListPriceChangesResponse`
-- `pricesApi.adjust()` → `SubmitPriceChangeRequest` / `SubmitPriceChangeResponse`
+- ~~`pricesApi.changes()`~~ V027 起前端不再调用（端点保留孤儿）
+- ~~`pricesApi.adjust()`~~ V027 起前端不再调用；"模拟调价"是纯本地计算，不提交后端
 
 [packages/shared/src/index.ts:229-277](../packages/shared/src/index.ts) 类型与服务层 1:1 对齐。
 

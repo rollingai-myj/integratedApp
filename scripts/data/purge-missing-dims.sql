@@ -11,8 +11,7 @@ WHERE deleted_at IS NULL AND (unit IS NULL OR width_cm IS NULL);
 
 SELECT '待清商品数' AS info, COUNT(*) FROM _purge;
 
--- 9 张引用 product_id 的表
-DELETE FROM hq_benchmark_skus         WHERE product_id        IN (SELECT id FROM _purge);
+-- 8 张引用 product_id 的表（V025 起白名单是 hq_products 自身的 boolean 列，不再独立表）
 DELETE FROM hq_promo_batch_items      WHERE product_id        IN (SELECT id FROM _purge);
 DELETE FROM hq_promo_sku_texts        WHERE product_id        IN (SELECT id FROM _purge);
 DELETE FROM store_assortment_changes  WHERE product_id        IN (SELECT id FROM _purge);

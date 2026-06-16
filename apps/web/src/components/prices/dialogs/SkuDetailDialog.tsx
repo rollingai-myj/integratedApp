@@ -1,12 +1,15 @@
 /**
- * 价盘 · 商品详情 + 调价对话框（来自原 priceChange repo）
+ * 价盘 · 商品详情 + 模拟调价对话框
  *
- * 与原版的差异：
- *   - 入参从 `SKU` 改为 `StoreSkuRow`，内部用 `rowToSku` 适配
- *   - 价格曲线 (`CurveData`) 改成走 props 传入，由父组件用 React Query 拉
- *     `/prices/curve` 后用 `curveSkuToData` 适配（避免 dialog 自己关心数据源）
- *   - 竞品价格暂时不渲染 tab（后端未暴露 /prices/competitor-prices；后续 PR 接入再放开）
- *   - 调价提交从原版的 store action 改成 React Query mutation prop
+ * V027 起：本 app 是模拟器，不真改门店价。
+ *   - "应用调价"按钮 → 被动提示"请在您的经营系统中调价"（不再触发任何后端写入）
+ *   - "调整价格"按钮文案 → "模拟调价"
+ *   - 调价历史不再来自 store_price_changes，从 curve.periods 相邻段不同价推导
+ *
+ * 数据：
+ *   - row：StoreSkuRow，内部用 rowToSku(row, curve.raw) 适配 SKU
+ *   - curve：CurveData props，父组件用 curveSkuToData 适配
+ *   - 竞品价格暂时不渲染 tab（后端未暴露）
  */
 import {
   Bar,
@@ -18,7 +21,6 @@ import {
   YAxis,
 } from 'recharts';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { toast } from 'sonner';
 import {
   Dialog,
   DialogContent,
@@ -37,24 +39,15 @@ import {
   rowToSku,
   type SKU,
 } from '@/lib/prices/types';
-import type { PriceChangeRecord, StoreSkuRow } from '@myj/shared';
+import type { StoreSkuRow } from '@myj/shared';
 import type { SkuDiagnosis } from '@/lib/prices/diagnosis';
 
 interface Props {
   row: StoreSkuRow | null;
   curve: CurveData | null;          // 已适配好的曲线数据
   diagnosis?: SkuDiagnosis;          // 当前 SKU 的诊断（若有）
-  /**
-   * 当前 SKU 的调价流水（按 createdAt DESC）。
-   * 是"调价记录"的真实数据源 —— 同日多次调价不会被覆盖。父组件按
-   * detailRow.skuCode 过滤后注入；为空数组时不渲染时间线。
-   */
-  changes: PriceChangeRecord[];
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  /** 实际触发调价提交。父组件通过 useSubmitPriceChange 注入 */
-  onSubmit: (input: { skuCode: string; newPrice: number; oldPrice: number }) => Promise<void>;
-  submitting?: boolean;
 }
 
 const fmtShort = (d: Date) => `${d.getMonth() + 1}月${d.getDate()}号`;
@@ -192,13 +185,13 @@ export function SkuDetailDialog({
   row,
   curve,
   diagnosis,
-  changes,
   open,
   onOpenChange,
-  onSubmit,
-  submitting,
 }: Props) {
-  const sku: SKU | null = useMemo(() => (row ? rowToSku(row) : null), [row]);
+  const sku: SKU | null = useMemo(
+    () => (row ? rowToSku(row, curve?.raw) : null),
+    [row, curve],
+  );
   // 弹窗 portal 在 IOSDevice 之外，需手动同步 zoom 才能保持比例。
   const zoom = useIOSDeviceZoom()?.zoom ?? 1;
 
@@ -314,50 +307,41 @@ export function SkuDetailDialog({
 
   const handleStartAdjust = () => setEditing(true);
 
-  const apply = async () => {
-    if (!validation.ok || !sku || !row) return;
-    try {
-      await onSubmit({
-        skuCode: sku.code,
-        newPrice,
-        oldPrice: sku.currentPrice,
-      });
-      toast.success(`已调整为 ${fmtMoney(newPrice)}`);
-      onOpenChange(false);
-    } catch (err: any) {
-      toast.error(err?.message ?? '调价失败');
-    }
-  };
+  // V027：apply() 已删；保留 newPrice / validation 仅供模拟器 UI 显示利润预测
 
-  const unchanged = sku ? Math.abs(newPrice - sku.currentPrice) < 0.01 : true;
-
-  // 调价时间线 — 从 ops_store_price_change 流水推
-  //   - 同日多次调价完整保留（早期版本从 periods 反推会因 ON CONFLICT 覆盖丢失）
-  //   - 月均毛利富集：在 curve.periods 找匹配价格的段，只用 hasSalesData=true 的段
-  //   - 新价当下没销量时 profit/profitUp = undefined，渲染时只显示"日期 + 售价 X→Y"
+  // V027：调价时间线从 curve.periods 相邻段不同价推导
+  //   - snapshot 序列里前后两段价格不同 → 用户在经营系统里调过一次价
+  //   - 月均毛利变化：用新/旧段的 monthlyGrossProfit 对比（hasSalesData=true 的段才计）
   const periods = curve?.periods;
   const timeline = useMemo(() => {
-    if (!sku || changes.length === 0) return null;
-    const findPeriod = (price: number) =>
-      periods?.find((p) => Math.abs(p.price - price) < 0.01 && p.hasSalesData);
-    const list = changes
-      .filter((c) => c.oldPrice != null) // 首次定价（无前价）不属于"调价记录"
-      .map((c) => {
-        const newPeriod = findPeriod(c.newPrice);
-        const oldPeriod = findPeriod(c.oldPrice!);
-        return {
-          dateLabel: fmtShort(new Date(c.effectiveDate)),
-          from: c.oldPrice!,
-          to: c.newPrice,
-          profit: newPeriod?.monthlyGrossProfit,
-          profitUp:
-            newPeriod && oldPeriod
-              ? newPeriod.monthlyGrossProfit >= oldPeriod.monthlyGrossProfit
-              : undefined,
-        };
+    if (!sku || !periods || periods.length < 2) return null;
+    const list: Array<{
+      dateLabel: string;
+      from: number;
+      to: number;
+      profit: number | undefined;
+      profitUp: boolean | undefined;
+    }> = [];
+    for (let i = 1; i < periods.length; i++) {
+      const prev = periods[i - 1]!;
+      const curr = periods[i]!;
+      if (Math.abs(prev.price - curr.price) < 0.01) continue;
+      if (!curr.startDate) continue;
+      list.push({
+        dateLabel: fmtShort(new Date(curr.startDate)),
+        from: prev.price,
+        to: curr.price,
+        profit: curr.hasSalesData ? curr.monthlyGrossProfit : undefined,
+        profitUp:
+          curr.hasSalesData && prev.hasSalesData
+            ? curr.monthlyGrossProfit >= prev.monthlyGrossProfit
+            : undefined,
       });
+    }
+    // 按日期倒序（最近的调价在最上面）
+    list.reverse();
     return list.length > 0 ? list : null;
-  }, [sku, changes, periods]);
+  }, [sku, periods]);
 
   if (!sku) return null;
 
@@ -569,29 +553,26 @@ export function SkuDetailDialog({
           {editingContent}
         </div>
 
-        <DialogFooter className="shrink-0 flex-row gap-2 pt-0">
-          <Button variant="outline" className="flex-1 rounded-full" onClick={() => onOpenChange(false)}>
-            关闭
-          </Button>
-          {editing ? (
-            <Button
-              className="flex-1 rounded-full"
-              style={{ boxShadow: 'var(--shadow-brand)' }}
-              disabled={!validation.ok || unchanged || submitting}
-              onClick={apply}
-            >
-              {submitting ? '提交中…' : '应用调价'}
-            </Button>
-          ) : (
+        {editing && (
+          <div
+            className="shrink-0 px-1 pb-1 pt-0 text-center text-[11px] leading-relaxed whitespace-nowrap"
+            style={{ color: 'var(--muted-foreground)' }}
+          >
+            {/* V027：app 是模拟器，不真改门店价；whitespace-nowrap + 11px 把这行字锁在同一行 */}
+            请在经营系统中进行调价，后续可在此查看销售数据变化
+          </div>
+        )}
+        {!editing && (
+          <DialogFooter className="shrink-0 flex-row gap-2 pt-0">
             <Button
               className="flex-1 rounded-full"
               style={{ boxShadow: 'var(--shadow-brand)' }}
               onClick={handleStartAdjust}
             >
-              调整价格
+              模拟调价
             </Button>
-          )}
-        </DialogFooter>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );

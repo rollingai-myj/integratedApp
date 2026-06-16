@@ -93,7 +93,6 @@
 | **GET** `/hq/products` | required | `q?`, `categoryId?` (UUID), `scene?` (0-12), `skuCodes?` (CSV), `limit?` (1-500, 默认 50) | `{ products: ProductRow[] }` | 401, 400 | |
 | **GET** `/hq/products/:skuCode/official-image` | public | `w?` (像素宽，触发 OSS resize) | 302 redirect 到 OSS URL | 404 | 用于 `<img src>`，所以不验登录 |
 | **GET** `/hq/products/:skuCode/barcode` | public | — | 302 redirect 到条码图 | 404 | |
-| **GET** `/hq/benchmark-skus` | required | `segment?` (`core\|innovation`) | `{ benchmarks: BenchmarkRow[] }` | 401 | |
 | **PUT** `/hq/stores/:storeId` | super_admin | body: `{ code, name, province?, city?, address?, latitude?, longitude?, openedAt?, isProjectStore?, storeAreaSqm?, poiCategory? }` | `{ id }` | 401, 403, 400, 404 | 审计 |
 
 **`CategoryNode`** = `{ id, parentId, level (0-3), scene?, code, name, children? }`
@@ -178,11 +177,11 @@
 
 | Method + Path | Auth | Inputs | Outputs (200) | 备注 |
 |---|---|---|---|---|
-| **GET** `/prices/curve` | required + store | `skuCode?` 或 `skuCodes?` (CSV), `daysBack?` (默认 365，max 1825) | `{ curves: PriceCurveSku[] }` | merge snapshots + changes |
-| **GET** `/prices/changes` | required + store | `skuCode?`, `limit?` | `{ changes: PriceChangeRecord[] }` | |
-| **POST** `/prices/changes` | required + store | `{ skuCode, newPrice, oldPrice?, source?, effectiveDate?, note? }` | 201 `{ record }` | 审计 |
+| **GET** `/prices/curve` | required + store | `skuCode?` 或 `skuCodes?` (CSV), `daysBack?` (默认 365，max 1825) | `{ curves: PriceCurveSku[] }` | V027 起 snapshot 单源，不再合并 changes |
+| ~~**GET** `/prices/changes`~~ | required + store | `skuCode?`, `limit?` | `{ changes: PriceChangeRecord[] }` | V027 起前端不调用（端点孤儿保留） |
+| ~~**POST** `/prices/changes`~~ | required + store | `{ skuCode, newPrice, oldPrice?, source?, effectiveDate?, note? }` | 201 `{ record }` | V027 起前端不调用；"模拟调价"是纯本地计算 |
 
-`PriceCurveSku` = `{ skuCode, productName?, points: [{ snapshotDate, retailPrice?, originalPrice?, wholesalePrice?, salesQty30d?, salesAmount30d?, grossMargin30d?, source ('snapshot'\|'change'), priceChangeId? }] }` —— **关键字段** `source` 区分原点。
+`PriceCurveSku` = `{ skuCode, productName?, wholesalePrice?, points: [{ snapshotDate, retailPrice?, salesQty30d?, salesAmount30d?, grossMargin30d? }] }` —— **V027 起 snapshot 单源**：`wholesalePrice` 从 `hq_products` JOIN 进 SKU 头部（全期同值）；曲线点只剩 `retailPrice` + 销量指标，**没有 `source` / `priceChangeId`**（不再合并 changes）；"涨跌"前端从 `points[]` 倒数两点 retail 之差推导。
 
 ---
 
@@ -196,7 +195,7 @@
 | **GET** `/store/shelves` | required + store | — | `{ shelves: ShelfGroup[] }` | 跨所有场景 |
 | **POST** `/store/skus:import` | super_admin + store | `{ snapshotDate, rows: [...] }` | 201 `{ inserted, updated, skipped }` | 批量 upsert |
 
-`StoreSkuRow` = `{ productId, skuCode, name, brand?, spec?, unit?, categoryPath?, scene?, retailPrice?, originalPrice?, wholesalePrice?, salesQty30d?, salesAmount30d?, grossMargin30d?, stockQty?, snapshotDate, salesAmountChange30d?, salesQtyChange30d? }` —— **`salesXxxChange30d` 是百分比**，服务层运行时算出。
+`StoreSkuRow` = `{ productId, skuCode, name, brand?, spec?, unit?, categoryPath?, scene?, retailPrice?, wholesalePrice?, salesQty30d?, salesAmount30d?, grossMargin30d?, stockQty?, snapshotDate, salesAmountChange30d?, salesQtyChange30d?, lastPriceChangeAt? }` —— **`salesXxxChange30d` 是百分比**，服务层运行时算出。**V027 起** `retailPrice` 来自 snapshot 的"实际售价"；`wholesalePrice` 从 `hq_products` JOIN 进来（不再来自 snapshot）；`lastPriceChangeAt` 改为从 snapshot 时间序列 retail 跳变推导（不再 LEFT JOIN store_price_changes）。
 
 ---
 

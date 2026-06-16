@@ -1,12 +1,12 @@
 /**
  * 价盘 · 冷藏品工作页（来自原 priceChange repo /cold）
  *
- * 数据层：
- *   - SKU 列表：useStoreSkus（统一后端 /skus，session 取 storeId）
- *   - 价格曲线：usePriceCurve 一次性拉所有可见 SKU 的曲线
- *   - 调价：useSubmitPriceChange（只写流水，效果对比靠两期 snapshot）
- *   - 规则诊断：纯前端，根据曲线趋势判断（lib/prices/diagnosis.ts）
- *   - 调价历史：从所有 SKU 的 periods 推（相邻段对比月毛利涨跌）
+ * V027 起：本 app 是模拟器,不真改门店价。
+ *   - SKU 列表：useStoreSkus
+ *   - 价格曲线：usePriceCurve（V027 snapshot 单源）
+ *   - "调价"按钮 → "模拟调价"；详情底部 "应用调价" → 被动提示"请在您的经营系统中调价"
+ *   - 调价历史：从 curve.periods 相邻段不同价 推导（snapshot 时间序列）
+ *   - 规则诊断：纯前端基于曲线趋势（lib/prices/diagnosis.ts）
  */
 import { createFileRoute } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -29,11 +29,9 @@ import {
 } from '@/components/prices/dialogs/HistoryDialog';
 import { useMe } from '@/lib/auth';
 import {
-  usePriceChanges,
   usePriceCurve,
   useScenes,
   useStoreSkus,
-  useSubmitPriceChange,
 } from '@/lib/hooks';
 import {
   curveSkuToData,
@@ -48,7 +46,7 @@ import {
   ruleBasedDiagnosis,
   type SkuDiagnosis,
 } from '@/lib/prices/diagnosis';
-import type { PriceChangeRecord, StoreSkuRow } from '@myj/shared';
+import type { StoreSkuRow } from '@myj/shared';
 
 export const Route = createFileRoute('/prices/cold')({
   component: ColdPage,
@@ -103,14 +101,8 @@ function ColdPage() {
     [allRows],
   );
   const curveQuery = usePriceCurve(storeId, allSkuCodes, 90);
-  // 调价流水：是"调价历史 / 调价记录"的真实数据源（同日多次调价不会被覆盖）
-  const changesQuery = usePriceChanges(storeId);
-  const allChanges = useMemo<PriceChangeRecord[]>(
-    () => changesQuery.data?.changes ?? [],
-    [changesQuery.data],
-  );
 
-  // 曲线按 skuCode 索引 + 适配到原版 CurveData
+  // 曲线按 skuCode 索引 + 适配到原版 CurveData（V027：内含 raw PriceCurveSku 供 rowToSku 用）
   const curveByCode = useMemo(() => {
     const map = new Map<string, CurveData>();
     const rows = curveQuery.data?.curves ?? [];
@@ -126,29 +118,12 @@ function ColdPage() {
   const diagnoses = useMemo<Record<string, SkuDiagnosis>>(() => {
     const map: Record<string, SkuDiagnosis> = {};
     for (const r of allRows) {
-      const sku = rowToSku(r);
+      const sku = rowToSku(r, curveByCode.get(r.skuCode)?.raw);
       const diag = ruleBasedDiagnosis(sku, curveByCode.get(r.skuCode) ?? null);
       if (diag) map[r.skuCode] = diag;
     }
     return map;
   }, [allRows, curveByCode]);
-
-  // 提交
-  const submit = useSubmitPriceChange();
-  const onSubmitPriceChange = useCallback(
-    async (input: { skuCode: string; newPrice: number; oldPrice: number }) => {
-      if (!storeId) throw new Error('未选择门店');
-      await submit.mutateAsync({
-        storeId,
-        skuCode: input.skuCode,
-        newPrice: input.newPrice,
-        oldPrice: input.oldPrice,
-        source: 'manual',
-        note: '手动调价',
-      });
-    },
-    [storeId, submit],
-  );
 
   // UI 状态
   const [loading, setLoading] = useState(true);
@@ -156,29 +131,12 @@ function ColdPage() {
   const [sortKey, setSortKey] = useState<SortKey>('recent');
   const [detailRow, setDetailRow] = useState<StoreSkuRow | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [recentlyChanged, setRecentlyChanged] = useState<string[]>([]);
 
   // 初次进入：800ms loader（与原版"价签 loader"节奏一致）
   useEffect(() => {
     const t = setTimeout(() => setLoading(false), 800);
     return () => clearTimeout(t);
   }, []);
-
-  // 刚调过价的 1.6s 高亮
-  useEffect(() => {
-    if (recentlyChanged.length) {
-      const t = setTimeout(() => setRecentlyChanged([]), 1600);
-      return () => clearTimeout(t);
-    }
-  }, [recentlyChanged]);
-
-  // 提交成功后给行打"刚调过"标记
-  useEffect(() => {
-    if (submit.isSuccess && submit.variables?.skuCode) {
-      setRecentlyChanged([submit.variables.skuCode]);
-      submit.reset();
-    }
-  }, [submit]);
 
   // 过滤 + 排序
   const filtered = useMemo<StoreSkuRow[]>(() => {
@@ -195,14 +153,15 @@ function ColdPage() {
     if (sortKey === 'profit') {
       sorted.sort(
         (a: StoreSkuRow, b: StoreSkuRow) =>
-          monthlyProfit(rowToSku(b)) - monthlyProfit(rowToSku(a)),
+          monthlyProfit(rowToSku(b, curveByCode.get(b.skuCode)?.raw))
+          - monthlyProfit(rowToSku(a, curveByCode.get(a.skuCode)?.raw)),
       );
     } else if (sortKey === 'sales') {
       sorted.sort(
         (a: StoreSkuRow, b: StoreSkuRow) => (b.salesQty30d ?? 0) - (a.salesQty30d ?? 0),
       );
     } else {
-      // 最近调整：按最后一次调价时间倒序；从未调过价的（null）排在最后
+      // 最近调整：按 snapshot 推导的"最后一次 retail 跳变"日期倒序；未跳变（null）排末尾
       sorted.sort((a: StoreSkuRow, b: StoreSkuRow) => {
         const ta = a.lastPriceChangeAt ? Date.parse(a.lastPriceChangeAt) : 0;
         const tb = b.lastPriceChangeAt ? Date.parse(b.lastPriceChangeAt) : 0;
@@ -210,16 +169,24 @@ function ColdPage() {
       });
     }
     return sorted;
-  }, [allRows, query, sortKey]);
+  }, [allRows, query, sortKey, curveByCode]);
 
   // KPI 汇总
   const totalSales = useMemo(
-    () => allRows.reduce((a: number, r: StoreSkuRow) => a + monthlySales(rowToSku(r)), 0),
-    [allRows],
+    () => allRows.reduce(
+      (a: number, r: StoreSkuRow) =>
+        a + monthlySales(rowToSku(r, curveByCode.get(r.skuCode)?.raw)),
+      0,
+    ),
+    [allRows, curveByCode],
   );
   const totalProfit = useMemo(
-    () => allRows.reduce((a: number, r: StoreSkuRow) => a + monthlyProfit(rowToSku(r)), 0),
-    [allRows],
+    () => allRows.reduce(
+      (a: number, r: StoreSkuRow) =>
+        a + monthlyProfit(rowToSku(r, curveByCode.get(r.skuCode)?.raw)),
+      0,
+    ),
+    [allRows, curveByCode],
   );
 
   // SKU 索引（流水→详情时按 skuCode 找回 row）
@@ -229,37 +196,37 @@ function ColdPage() {
     return m;
   }, [allRows]);
 
-  // 历史 entries：从调价流水推（每次调价一条独立记录，同日多次也能完整展示）
-  // 月均毛利富集：在 curve.periods 里按价格找匹配段，只用有真实销量的段
+  // 历史 entries（V027：从 curve.periods 相邻段不同价推导）
+  // snapshot 时间序列里，相邻两段 price 不同 → 用户在经营系统里调过一次价
+  // 月均毛利变化用新/旧段的 monthlyGrossProfit 对比（hasSalesData=true 的段才计）
   const historyEntries = useMemo<HistoryEntry[]>(() => {
     const list: HistoryEntry[] = [];
-    for (const c of allChanges) {
-      // oldPrice 为 null 说明 fact 表查不到上一价，是首次定价而非调价 → 跳过
-      if (c.oldPrice == null) continue;
-      const row = skuByCode.get(c.skuCode);
-      if (!row) continue;
-      const periods = curveByCode.get(c.skuCode)?.periods ?? [];
-      const findPeriod = (price: number) =>
-        periods.find((p) => Math.abs(p.price - price) < 0.01 && p.hasSalesData);
-      const newPeriod = findPeriod(c.newPrice);
-      const oldPeriod = findPeriod(c.oldPrice);
-      list.push({
-        row,
-        startDate: c.effectiveDate,
-        endDate: null,
-        dateLabel: fmtShort(new Date(c.effectiveDate)),
-        from: c.oldPrice,
-        to: c.newPrice,
-        // 仅当新价已有销量快照时才填月均毛利；否则 HistoryDialog 不渲染那一行
-        profit: newPeriod?.monthlyGrossProfit,
-        profitUp:
-          newPeriod && oldPeriod
-            ? newPeriod.monthlyGrossProfit >= oldPeriod.monthlyGrossProfit
-            : undefined,
-      });
+    for (const r of allRows) {
+      const periods = curveByCode.get(r.skuCode)?.periods ?? [];
+      for (let i = 1; i < periods.length; i++) {
+        const prev = periods[i - 1]!;
+        const curr = periods[i]!;
+        if (Math.abs(prev.price - curr.price) < 0.01) continue;
+        if (!curr.startDate) continue;
+        list.push({
+          row: r,
+          startDate: curr.startDate,
+          endDate: null,
+          dateLabel: fmtShort(new Date(curr.startDate)),
+          from: prev.price,
+          to: curr.price,
+          profit: curr.hasSalesData ? curr.monthlyGrossProfit : undefined,
+          profitUp:
+            curr.hasSalesData && prev.hasSalesData
+              ? curr.monthlyGrossProfit >= prev.monthlyGrossProfit
+              : undefined,
+        });
+      }
     }
-    return list; // 后端已按 createdAt DESC
-  }, [allChanges, skuByCode, curveByCode]);
+    // 按 startDate 倒序（最近的调价在最上面）
+    list.sort((a, b) => (b.startDate ?? '').localeCompare(a.startDate ?? ''));
+    return list;
+  }, [allRows, curveByCode]);
   const historyCount = historyEntries.length;
 
   // 启动 loader
@@ -369,8 +336,8 @@ function ColdPage() {
               <SkuCard
                 key={r.id}
                 row={r}
+                curve={curveByCode.get(r.skuCode) ?? null}
                 diagnosis={diagnoses[r.skuCode]}
-                flashBrand={recentlyChanged.includes(r.skuCode)}
                 onTap={() => setDetailRow(r)}
                 onAdjust={() => setDetailRow(r)}
               />
@@ -384,11 +351,8 @@ function ColdPage() {
         row={detailRow}
         curve={detailRow ? curveByCode.get(detailRow.skuCode) ?? null : null}
         diagnosis={detailRow ? diagnoses[detailRow.skuCode] : undefined}
-        changes={detailRow ? allChanges.filter((c) => c.skuCode === detailRow.skuCode) : []}
         open={!!detailRow}
         onOpenChange={(v) => !v && setDetailRow(null)}
-        onSubmit={onSubmitPriceChange}
-        submitting={submit.isPending}
       />
       <HistoryDialog
         open={historyOpen}
@@ -436,18 +400,18 @@ function Kpi({ label, value, brand }: { label: string; value: string; brand?: bo
 
 function SkuCard({
   row,
+  curve,
   diagnosis,
-  flashBrand,
   onTap,
   onAdjust,
 }: {
   row: StoreSkuRow;
+  curve: CurveData | null;
   diagnosis?: SkuDiagnosis;
-  flashBrand: boolean;
   onTap: () => void;
   onAdjust: () => void;
 }) {
-  const sku = rowToSku(row);
+  const sku = rowToSku(row, curve?.raw);
   const changed = sku.hasAdjusted;
   const up = sku.currentPrice > sku.originalPrice;
   const suggestion = diagnosis?.suggestion;
@@ -455,10 +419,7 @@ function SkuCard({
 
   return (
     <div
-      className={[
-        'solid-card relative overflow-hidden p-3.5 active:opacity-90',
-        flashBrand ? 'row-flash-brand' : '',
-      ].join(' ')}
+      className="solid-card relative overflow-hidden p-3.5 active:opacity-90"
       style={{
         borderRadius: '22px',
         borderColor: changed ? 'var(--brand-20)' : undefined,
@@ -550,7 +511,7 @@ function SkuCard({
                 boxShadow: 'var(--shadow-brand)',
               }}
             >
-              调价
+              模拟调价
             </button>
           </div>
         </div>

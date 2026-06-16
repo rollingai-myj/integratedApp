@@ -4,7 +4,6 @@
  *   GET  /hq/products              商品档案搜索
  *   GET  /hq/products/:skuCode/official-image   官方图（302 → OSS）
  *   GET  /hq/products/:skuCode/barcode          条码图（302 → OSS）
- *   GET  /hq/benchmark-skus        基准 SKU 名单
  *   PUT  /hq/stores/:storeId       新增 / 更新门店档案（仅超管）
  */
 import { Router } from 'express';
@@ -14,7 +13,7 @@ import { AppError, ErrorCodes } from '../lib/errors.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireRole } from '../middleware/role.js';
 import {
-  getCategoryTree, listProducts, listBenchmarkSkus,
+  getCategoryTree, listProducts,
   resolveProductImageUrl, resolveBarcodeUrl, upsertStore,
 } from '../services/hq.service.js';
 import { writeAuditEvent } from '../services/audit.service.js';
@@ -79,17 +78,6 @@ hqRouter.get(
   asyncHandler(async (req, res) => {
     const url = resolveBarcodeUrl(String(req.params.skuCode));
     res.redirect(302, url);
-  }),
-);
-
-const benchmarkSchema = z.object({
-  segment: z.enum(['core', 'innovation']).optional(),
-});
-hqRouter.get(
-  '/hq/benchmark-skus', requireAuth,
-  asyncHandler(async (req, res) => {
-    const parsed = benchmarkSchema.parse(req.query);
-    res.json({ benchmarks: await listBenchmarkSkus({ segment: parsed.segment }) });
   }),
 );
 

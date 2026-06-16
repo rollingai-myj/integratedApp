@@ -54,6 +54,8 @@ export interface CurvePeriod {
 export interface CurveData {
   wholesalePrice: number;
   periods: CurvePeriod[];
+  /** V027：原始 PriceCurveSku 透传，rowToSku 用它推导 originalPrice anchor */
+  raw?: PriceCurveSku;
 }
 
 // ── 适配器 ─────────────────────────────────────────────────────────────
@@ -75,17 +77,33 @@ export const getSkuBarcodeUrl = (code: string | undefined): string | null => {
   return `https://rollingai-meiyijia.oss-cn-shanghai.aliyuncs.com/SKU_bar_code/${padded}.png`;
 };
 
-/** 数据库行 → 组件期望的 SKU 形状 */
-export function rowToSku(row: StoreSkuRow): SKU {
+/** 数据库行 → 组件期望的 SKU 形状
+ *
+ * V027 起：
+ *   - StoreSkuRow 不再有 originalPrice（snapshot 已删 original_price 列）
+ *   - "原价 anchor"由 curve 倒数第二点 retailPrice 推导（snapshot 时间序列）
+ *   - 调用方可选传 curve；不传时 originalPrice = currentPrice（涨跌指示器无变化）
+ *   - wholesalePrice 来自 hq_products JOIN（StoreSkuRow.wholesalePrice）
+ */
+export function rowToSku(row: StoreSkuRow, curve?: PriceCurveSku | null): SKU {
+  const currentPrice = Number(row.retailPrice ?? 0);
+  let originalPrice = currentPrice;
+  const points = curve?.points;
+  if (points && points.length >= 2) {
+    const prev = points[points.length - 2];
+    if (prev?.retailPrice != null) {
+      originalPrice = Number(prev.retailPrice);
+    }
+  }
   return {
     code: row.skuCode,
     name: row.productName,
     imgUrl: getSkuImageUrl(row.skuCode),
     spec: row.spec ?? '',
     brand: row.brand ?? '',
-    wholesalePrice: Number(row.wholesalePrice ?? 0),
-    currentPrice: Number(row.retailPrice ?? 0),
-    originalPrice: Number(row.originalPrice ?? row.retailPrice ?? 0),
+    wholesalePrice: Number(row.wholesalePrice ?? curve?.wholesalePrice ?? 0),
+    currentPrice,
+    originalPrice,
     ownStoreSales: Number(row.salesQty30d ?? 0),
     adjustments: [],
     hasAdjusted: row.lastPriceChangeAt != null,
@@ -98,10 +116,11 @@ export function rowToSku(row: StoreSkuRow): SKU {
  * 后端返回的是按天的 snapshot，原版组件吃的是"一个稳定售价段"。
  * 这里做客户端合并：相邻日同价合并成一段，跨段切换记录 start/end。
  *
+ * V027：snapshot 单源；批发价从 PriceCurveSku.wholesalePrice（全期同值）传入。
+ *
  * 月化毛利计算优先级：
  *   1. 该 snapshot 有 grossMargin30d 且 > 0 → 月化毛利 = 销量 × 售价 × 毛利率
- *   2. 否则用批发价回填：先看 snapshot.wholesalePrice，再 fallback 到入参（hq_products.wholesale_price）
- *      → 单件毛利 = 售价 - 批发价；月化毛利 = 销量 × 单件毛利
+ *   2. 否则用批发价（fallbackWholesale）回填 → 单件毛利 = 售价 - 批发价；月化毛利 = 销量 × 单件毛利
  *   3. 批发价也没有时 → 月化毛利 = 月销售额（salesAmount30d）作粗略代用
  */
 export function pointsToPeriods(
@@ -130,9 +149,7 @@ export function pointsToPeriods(
     const sales = Number(p.salesQty30d ?? 0);
     const salesAmount = Number(p.salesAmount30d ?? 0);
     const margin = p.grossMargin30d != null ? Number(p.grossMargin30d) : null;
-    const wholesale = p.wholesalePrice != null
-      ? Number(p.wholesalePrice)
-      : (fallbackWholesale > 0 ? fallbackWholesale : 0);
+    const wholesale = fallbackWholesale > 0 ? fallbackWholesale : 0;
     // 该点是否带真实销量：salesQty30d 显式非空且 > 0
     const pointHasSales = p.salesQty30d != null && Number(p.salesQty30d) > 0;
 
@@ -178,17 +195,17 @@ export function pointsToPeriods(
   }));
 }
 
-/** 一个 SKU 的曲线段 + 批发价聚合 */
+/** 一个 SKU 的曲线段 + 批发价聚合（V027：批发价从 PriceCurveSku 头部取） */
 export function curveSkuToData(
   curve: PriceCurveSku | undefined,
   fallbackWholesale: number,
 ): CurveData {
-  const periods = curve?.points ? pointsToPeriods(curve.points, fallbackWholesale) : [];
-  const lastPoint = curve?.points?.[curve.points.length - 1];
-  const wholesale = Number(lastPoint?.wholesalePrice ?? fallbackWholesale);
+  const wholesale = Number(curve?.wholesalePrice ?? fallbackWholesale);
+  const periods = curve?.points ? pointsToPeriods(curve.points, wholesale) : [];
   return {
     wholesalePrice: wholesale,
     periods,
+    raw: curve,
   };
 }
 

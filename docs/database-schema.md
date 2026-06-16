@@ -3,13 +3,15 @@
 > 给新加入项目的开发：每张表 / 每个字段是什么、什么时候被读、什么时候被写。优先用业务语言（不照搬 SQL 注释）。
 >
 > 数据源：
-> - 迁移文件：[apps/api/src/db/migrations/](../apps/api/src/db/migrations/) — V001 到 V013
-> - 视图：[V010__views.sql](../apps/api/src/db/migrations/V010__views.sql)
-> - SQL 函数：[V012__category_functions.sql](../apps/api/src/db/migrations/V012__category_functions.sql)
+> - 迁移文件：[apps/api/src/db/migrations/](../apps/api/src/db/migrations/) — V001 到 **V026**（最新：[V026__hq_products_market_min_and_tags.sql](../apps/api/src/db/migrations/V026__hq_products_market_min_and_tags.sql)）
+> - 视图：[V010__views.sql](../apps/api/src/db/migrations/V010__views.sql) + V020 把 `hq_promo_mix_groups` 改为 VIEW
+> - SQL 函数：[V012__category_functions.sql](../apps/api/src/db/migrations/V012__category_functions.sql) + [V023 `fn_category_ancestor_name`](../apps/api/src/db/migrations/V023__category_ancestor_name_fn.sql)
 > - V013 后的 prune：[V013__prune_unused_columns.sql](../apps/api/src/db/migrations/V013__prune_unused_columns.sql)
 > - 字段 → 接口形态：见 [data-flow.md](./data-flow.md)
 > - 字段 → HTTP 契约：见 [api-contracts.md](./api-contracts.md)
 > - 字段 → 前端状态：见 [state-management.md](./state-management.md)
+>
+> **schema 演进记录（V014+）**：V014 删 `store_ownership` / 砍 `stores.district`；V015 缩瘦 `store_insights` + 加 POI 缓存列；V016 加 `stores.store_area_sqm` / `poi_category`；V017 加 `hq_products.barcode` / `is_returnable` / `allocation_unit`；V018 物理尺寸 mm → cm；V019 锁 `hq_products.category_id` 必须 L3 + 触发器；V020 `hq_promo_mix_groups` 表 → VIEW；V021 删 `hq_promo_sku_texts`；V022 烘焙 unit + L3 修正；V023 加 `fn_category_ancestor_name`；V024 `hq_benchmark_skus` → `hq_whitelist`（中间态）；V025 白名单合并为 `hq_products.is_whitelisted` 列 + 拆表；V026 加 `tags` / `market_min_price` / `market_min_price_source`；**V027** `store_sku_snapshots` 删 `original_price` / `wholesale_price`（只保留实际售价 `retail_price`）+ 价盘曲线改 snapshot 单源 + `store_price_changes` 读写路径废弃（表保留）+ 前端"调价"语义改为"模拟调价"。
 
 ---
 
@@ -38,7 +40,7 @@
 |---|---|---|
 | 身份 / 权限 | users, user_sessions, user_roles, user_stores, user_feishu_identities, stores | auth, portal, admin-accounts, feishu-identity |
 | 系统横切 | sys_audit_events, sys_usage_sessions, sys_settings | audit, admin-stats |
-| 总部主数据 | hq_categories, hq_products, hq_benchmark_skus | hq, benchmark |
+| 总部主数据 | hq_categories, hq_products | hq, ai-shelves (Dify whitelist via hq_products.is_whitelisted) |
 | 促销 | hq_promo_batches, hq_promo_batch_items, hq_promo_mix_groups | promotions |
 | 门店现状 | store_scene_state, store_scene_shelves, store_sku_snapshots | scene, store-skus |
 | 门店洞察 | store_insights, store_competitors, store_competitor_products, store_competitor_price_snapshots, store_survey_questions, store_survey_answers | competitors, surveys |
@@ -87,7 +89,7 @@
 | 类型 | 取值 | 业务含义 |
 |---|---|---|
 | `product_status` | `active` / `delisted` | 商品是否在售 |
-| `benchmark_segment` | `core` / `innovation` | 基准 SKU 类别（核心款 / 创新款） |
+| ~~`benchmark_segment`~~ | ~~`core` / `innovation`~~ | **已删除（V024 起；V025 把白名单进一步合并为 `hq_products.is_whitelisted` 列）** |
 | ~~`store_ownership`~~ | ~~`direct` / `franchise`~~ | **已删除（V014 起）** |
 | `promotion_scope` | `all_stores` / `city` / `store_list` | 选品文案的作用域 |
 
@@ -114,7 +116,7 @@
 
 ---
 
-## 1 · 身份 / 会话 / 权限 (V002)*clear
+## 1 · 身份 / 会话 / 权限 (V002)
 
 ### `users`
 
@@ -233,7 +235,7 @@
 
 ---
 
-## 2 · 系统横切 / 全局设置 (V003 / V011)*clear
+## 2 · 系统横切 / 全局设置 (V003 / V011)
 
 ### `sys_audit_events`
 
@@ -314,7 +316,7 @@
 
 ---
 
-## 3 · 总部主数据 (V004 / V012)*clear
+## 3 · 总部主数据 (V004 / V012 / V017-V019 / V022-V026)
 
 ### `hq_categories`
 
@@ -351,10 +353,17 @@
 | product_name | TEXT | 商品名 | 初始化 | 前端 / 搜索 |
 | brand / spec / unit / series | TEXT | 品牌 / 规格 / 单位 / 系列 | 初始化 | 前端 / 选品 |
 | shelf_life_days | INT | 保质期天数 | 初始化 | 选品过滤 |
-| length_mm / width_mm / height_mm | NUMERIC(10,2) | 物理尺寸（毫米） | 初始化 | 货架规划 / 选品 |
+| length_cm / width_cm / height_cm | NUMERIC(10,2) | 物理尺寸（厘米，V018 起 mm → cm） | 初始化 | 货架规划 / 选品 |
+| barcode | VARCHAR(32) | 条码（V017） | 初始化 / 后台改 | 条码图重定向 / 入库扫码 |
+| is_returnable | BOOLEAN（可空） | 是否可退货（V017） | 初始化 / 后台改 | Dify inputs.sku_attributes.items[].isReturnable（null 兜底 false） |
+| allocation_unit | INT（可空） | 配货单位（V017） | 初始化 / 后台改 | Dify inputs.sku_attributes.items[].allocation_unit |
 | category_id | UUID FK(hq_categories) | 所属品类 | 初始化 | `fn_category_path` / `fn_category_scene` |
-| is_new_product | BOOLEAN | 是否新品 | 初始化 / 后台改 | 选品优先级 |
-| is_private_label | BOOLEAN | 是否自有品牌 | 初始化 | 采购 / 选品 |
+| is_new_product | BOOLEAN | 是否新品 | 初始化 / 后台改 | 选品优先级；Dify inputs.sku_attributes.items[].isNew |
+| is_private_label | BOOLEAN | 是否自有品牌 | 初始化 | 采购 / 选品；Dify inputs.sku_attributes.items[].isPrivate |
+| is_whitelisted | BOOLEAN NOT NULL DEFAULT false | 是否在上架待选池白名单内（V025 起，替代旧 hq_whitelist 表） | 初始化 / 后台改 | Dify inputs.sku_attributes.items[].is_whitelisted（V026 改成每 SKU 自带标记，不再有 whitelist 顶层字段） |
+| market_min_price | NUMERIC(12,2) | 外部市场最低零售价（元）（V026） | 初始化 / 后台改 | Dify inputs.sku_attributes.items[].marketMinPrice |
+| market_min_price_source | TEXT | 最低价来源（示例："好享来"）（V026） | 初始化 / 后台改 | Dify inputs.sku_attributes.items[].marketMinPriceSource |
+| tags | TEXT[] NOT NULL DEFAULT '{}' | 商品标签数组（示例：{'引流品','S级'}）（V026） | 初始化 / 后台改 | Dify inputs.sku_attributes.items[].tags；GIN 索引按标签筛选 |
 | wholesale_price | NUMERIC(12,2) | 批发价（进价） | 初始化 / 后台改 | 成本计算 |
 | suggested_retail_price | NUMERIC(12,2) | 总部建议零售价 | 初始化 / 后台改 | 促销基准；门店实价见 store_sku_snapshots |
 | introduced_at | DATE | 上市日期 | 初始化 | 新品判定 |
@@ -367,20 +376,10 @@
 
 ---
 
-### `hq_benchmark_skus`
+### ~~`hq_whitelist`~~
 
-> 总部圈定的核心 / 创新商品名单。选品推荐的对标。[V004.sql](../apps/api/src/db/migrations/V004__hq_master_data.sql)
-
-| 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
-|---|---|---|---|---|
-| id | UUID PK | 唯一标识 | 初始化 / 后台 | — |
-| product_id | UUID FK(hq_products) | 关联商品（可空，待解析） | 初始化 | JOIN 取商品属性 |
-| sku_code | VARCHAR(64) | SKU 码（product_id 空时作待解析键） | 初始化 | 人工关联 |
-| segment | benchmark_segment NOT NULL | core / innovation | 初始化 | `hq.listBenchmarkSkus` 按 segment 过滤 |
-| reason | TEXT | 入选理由 | 初始化 | 报表 |
-| effective_from / effective_to | DATE | 生效期间（NULL = 永久） | 初始化 | 时间过滤 |
-| is_active | BOOLEAN | 逻辑删 | 初始化 / 软删 | `listBenchmarkSkus` 过滤 |
-| created_by | UUID FK(users) | 创建者 | 初始化 | 审计 |
+> **已删除（V025 起）**：白名单合并为 `hq_products.is_whitelisted BOOLEAN`。V026 进一步把白名单/新品信息扁平到 Dify inputs.sku_attributes.items[] 每 SKU 自带标记，不再有 `inputs.whitelist` / `inputs.new_product_skus` 顶层字段。[V025.sql](../apps/api/src/db/migrations/V025__hq_products_is_whitelisted.sql)
+> 历史脉络：V004 `hq_benchmark_skus` (core/innovation) → V024 重命名为 `hq_whitelist` (按 L3 category_id 分场景) → V025 扁平化为 `hq_products.is_whitelisted` 列 → V026 直接放到 inputs.sku_attributes 每 SKU 上。
 
 ---
 
@@ -530,6 +529,8 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 ### `store_sku_snapshots`
 
 > 门店周级销售快照。**外部导入的唯一来源**（ERP 或超管手工）。**调价不写此表**；价盘的"价格曲线"由 snapshots + price_changes 合并而来。[V006.sql](../apps/api/src/db/migrations/V006__store_state.sql)
+>
+> **V027 起价格列瘦身**：本表只保留 `retail_price` —— "本期销售数据产生时门店的实际售价"。**批发价**走 `hq_products.wholesale_price`，**总部建议零售价**走 `hq_products.suggested_retail_price`（仅在选品/产品库使用，不进价盘曲线）。snapshot 时间序列同时承担"价格曲线"和"调价历史"两个角色 —— 没有独立的"调价事实"概念。
 
 | 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
 |---|---|---|---|---|
@@ -538,7 +539,9 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 | product_id | UUID FK(hq_products) | 商品 | 导入时按 sku_code 反查 | 销量追踪 |
 | sku_code | VARCHAR(64) | SKU 码 | INSERT | UNIQUE 约束的一部分 |
 | snapshot_date | DATE | 快照日期 | INSERT | 时序排序；最新一期取 |
-| retail_price / original_price / wholesale_price | NUMERIC(12,2) | 零售价 / 原价 / 批发价 | INSERT | 价格曲线 |
+| **retail_price** | NUMERIC(12,2) | **实际售价**（本期销售数据对应的成交价；调价后下一期才会变） | INSERT | 价盘曲线 · 销售额校验 |
+| ~~original_price~~ | ~~NUMERIC(12,2)~~ | ~~划线原价~~ **V027 删除** —— 业务上等同 `hq_products.suggested_retail_price`，回主数据读 | — | — |
+| ~~wholesale_price~~ | ~~NUMERIC(12,2)~~ | ~~批发价~~ **V027 删除** —— 回 `hq_products.wholesale_price` 读 | — | — |
 | sales_qty_30d / sales_amount_30d | INT / NUMERIC(14,2) | 30 日销量 / 销售额 | INSERT | **核心指标**：环比 / 排序 / 效果评估 |
 | sales_qty_90d / sales_amount_90d | INT / NUMERIC(14,2) | 90 日 | INSERT | 趋势分析 |
 | gross_margin_30d | NUMERIC(8,4) | 30 日毛利率 | INSERT | 选品决策 |
@@ -547,6 +550,13 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 | source | TEXT, DEFAULT 'manual' | 'erp_sync' / 'manual' | INSERT | 数据质量 |
 | imported_by | UUID FK(users) | 导入者 | INSERT | 审计 |
 | created_at / updated_at | TIMESTAMPTZ | 时间戳 | DB | — |
+
+**口径变更后的读取规则**（V027 起）：
+- "本店本期实际售价" → snapshot.retail_price（**所有展示路径的唯一源**）
+- "批发价 / 进价" → `hq_products.wholesale_price`（主数据 JOIN，全期同值；用于成本线/利润计算）
+- "总部建议零售价" → `hq_products.suggested_retail_price`（**与价盘曲线无关**，只在选品 inputs.sku_attributes 和产品库展示）
+- "上次价 / 涨跌"对比 → snapshot 时间序列的**相邻两点 retail_price 之差**推导，不来自任何独立字段或 `store_price_changes`
+- `store_price_changes` 表：参见下方 § store_price_changes —— **该表在 V027 起读路径和写路径都被废弃**，价盘视角下不存在
 
 **约束 #2**：唯一允许的写入是 `store.routes POST /store/skus:import`。系统**绝不**因调价、apply 等动作往本表写。
 
@@ -768,24 +778,28 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 ### `store_price_changes`
 
-> 调价流水。**唯一调价数据归属**。[V008.sql](../apps/api/src/db/migrations/V008__store_actions.sql)
+> 历史调价流水表。[V008.sql](../apps/api/src/db/migrations/V008__store_actions.sql)
+>
+> **V027 起：表保留 / 读路径全部废弃 / 写路径全部废弃**。本 app 是"模拟器 + 销售分析"工具,不接入门店 POS,无法真改门店价格 —— 用户在模拟器算完后须手动去经营系统调价,下一周 snapshot 导入自然反映出新价。**所有调价历史、涨跌对比、价盘曲线，都从 `store_sku_snapshots` 时间序列推导**，不消费本表。表保留不删,留作未来真接 POS 时再启用。
+>
+> 现存的 `POST /prices/changes` 端点 V027 起前端不再调用,变成孤儿。
 
-| 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
-|---|---|---|---|---|
-| id | UUID PK | 唯一 | DB | — |
-| store_id / product_id / sku_code | UUID FK / VARCHAR | 门店 / 商品 | `prices.submitPriceChange` | 价格曲线合并点 |
-| old_price | NUMERIC(12,2) | 调前价（缺省时读最近快照 retail_price 回填） | 同上 | 前端变化方向 |
-| new_price | NUMERIC(12,2) NOT NULL | 调后价 | 同上 | 价格曲线 |
-| source | price_change_source NOT NULL, DEFAULT 'manual' | manual / rule_engine | 同上 | 审计 |
-| ai_advice / ai_model | JSONB DEFAULT '{}' / TEXT | AI 建议扩展 / 模型 | 同上 | 追踪 |
-| note | TEXT | 备注 | 同上 | 前端 |
-| effective_date | DATE NOT NULL, DEFAULT CURRENT_DATE | 生效日 | 同上 | 时间线 |
-| changed_by / changed_by_display | UUID FK(users) / TEXT | 操作者 / 显示名 | 同上 | 审计 |
-| created_at | TIMESTAMPTZ | 调价时刻 | DB | **`store-skus.listStoreSkus()` 用 MAX(created_at) 作 `lastPriceChangeAt`** —— 价盘"最近调整"排序 |
+| 字段 | 类型 | 业务含义 |
+|---|---|---|
+| id | UUID PK | 唯一 |
+| store_id / product_id / sku_code | UUID FK / VARCHAR | 门店 / 商品 |
+| old_price | NUMERIC(12,2) | 调前价 |
+| new_price | NUMERIC(12,2) NOT NULL | 调后价 |
+| source | price_change_source NOT NULL, DEFAULT 'manual' | manual / rule_engine |
+| ai_advice / ai_model | JSONB DEFAULT '{}' / TEXT | AI 建议扩展 / 模型 |
+| note | TEXT | 备注 |
+| effective_date | DATE NOT NULL, DEFAULT CURRENT_DATE | 生效日 |
+| changed_by / changed_by_display | UUID FK(users) / TEXT | 操作者 / 显示名 |
+| created_at | TIMESTAMPTZ | 写入时刻 |
 
 **关键约束**：**不写** `store_sku_snapshots`（约束 #2 反向）。
 
-**索引**：`(store_id, product_id, created_at DESC)`。
+**索引**：`(store_id, product_id, created_at DESC)`（保留，未启用时也不收成本）。
 
 ---
 
@@ -897,6 +911,7 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 **业务上为什么要**：去重规则（manual 优先）多处消费时需要统一，集中在视图里。
 **谁查**：`store-skus.listStoreSkus` / `benchmark.computeBenchmarkForScene` / 价盘曲线
 **刷新**：普通 VIEW
+**V027 列变更**：投影列与 snapshots 同步删 `original_price` / `wholesale_price`，只剩 `retail_price` + 销量/库存指标。
 
 ---
 
@@ -959,7 +974,7 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 ---
 
-## 10 · SQL 函数 (V012)
+## 10 · SQL 函数 (V012 / V019 / V023)
 
 ### `fn_category_path(p_category_id UUID) → TEXT`
 
@@ -967,7 +982,7 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 **用法**：`SELECT fn_category_path(p.category_id) AS cat_path FROM hq_products p`
 **业务用途**：商品 → 可读品类路径
-**调用方**：`hq.listProducts` / `hq.listBenchmarkSkus` / `benchmark.computeBenchmarkForScene` / `store-skus.listStoreSkus`
+**调用方**：`hq.listProducts` / `store-skus.listStoreSkus`（V023 后 benchmark 内部已转用 `fn_category_ancestor_name`；分场景/分类筛选请用 `fn_category_scene` 或 `fn_category_ancestor_name`，不要再字符串 split 这条路径）
 **实现**：WITH RECURSIVE 走到根，过滤 level >= 1，string_agg 按 level 升序拼 `/`
 
 ---
@@ -978,8 +993,29 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 **用法**：`WHERE fn_category_scene(p.category_id) = $scene`
 **业务用途**：商品 → 场景 的唯一换算
-**调用方**：`hq.listProducts(scene=)` / `scene.service` 场景校验 / `store-skus.listStoreSkus`
+**调用方**：`hq.listProducts(scene=)` / `scene.service` 场景校验 / `store-skus.listStoreSkus` / `ai-shelves.buildSkuAttributes` / `ai-shelves.loadStoreSkuMetrics`（V026 起新选品/诊断入参链路全部走它）
 **实现**：WITH RECURSIVE 走到 level=0，SELECT scene LIMIT 1
+
+---
+
+### `fn_category_ancestor_name(p_category_id UUID, p_level SMALLINT) → TEXT`（V023）
+
+> 从任意品类节点沿 `parent_id` 链向上找指定 level 的祖先名（0=场景 / 1=大类 / 2=中类 / 3=小类）。
+
+**用法**：`SELECT fn_category_ancestor_name(p.category_id, 1::smallint) AS l1_name FROM hq_products p`
+**业务用途**：替代 `split_part(fn_category_path(...), '/', N)` —— path 字符串分割在跨场景同名品类时会串。
+**调用方**：`benchmark.computeBenchmarkForScene`（L1/L2/L3 三列）/ `store-skus.listStoreSkus`（categoryL1Name / L2Name / L3Name）/ `ai-shelves.buildSkuAttributes`（majorCategory/midCategory/subCategory）/ `ai-shelves.buildSkuJsonForVirtualShelf`（新品行 cat_l1/l2/l3）
+**实现**：WITH RECURSIVE chain → 取 level = p_level 的节点 category_name
+
+---
+
+### `fn_assert_product_category_leaf()` TRIGGER FN（V019）
+
+> hq_products 写入前钩子：强制 `category_id` 指向 `hq_categories.level = 3`（小类）。
+
+**用法**：自动跑（`BEFORE INSERT OR UPDATE OF category_id ON hq_products`）。不在业务代码里手动调。
+**业务用途**：根除"挂在 L1 冷藏品上"等旧脏数据复发；新插入/更新触发器即拦。
+**违规处理**：异常 `hq_products.category_id 必须指向小类(level=3)，当前 level=X` → 事务回滚。
 
 ---
 
@@ -1003,29 +1039,45 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 ### 2. 商品分类路径
 
-**SQL 函数 `fn_category_path()`**：WITH RECURSIVE 走父链，过滤 level >= 1，拼 "L1/L2/L3"。**不直接存路径**，避免维护成本；分类编辑后路径自动更新。
+**SQL 函数**：
+- `fn_category_path()` —— WITH RECURSIVE 拼 "L1/L2/L3"，给前端展示用；V023 起业务代码不再 split 它
+- `fn_category_ancestor_name(category_id, level)`（V023）—— 按 level 取祖先名，**业务代码统一用它**
+- `fn_category_scene(category_id)` —— 商品 → 场景（scene 业务码 1-12）的唯一换算
+- `fn_assert_product_category_leaf()`（V019 TRIGGER）—— 强制 `hq_products.category_id` 指向 L3
+
+**不存路径**：分类编辑后路径自动更新；函数都是 STABLE，可被 planner 缓存。
 
 ---
 
-### 3. 价格曲线的双源合并
+### 3. 价盘曲线 = snapshot 单源（V027 重写）
 
-**双源**：
-1. `store_sku_snapshots` 周级导入快照（含销量）
-2. `store_price_changes` 实时调价（不含销量）
+**单源**：`store_sku_snapshots.retail_price` —— 周级实际售价（含 30/90 日销量）。
 
-**合并**：`prices.getPriceCurve()` 各查一遍，结果每条点带 `source: 'snapshot' | 'change'` 字段；前端按 source 决定显示样式。
+**实现**：`prices.getPriceCurve()` 只查 snapshots，按 `snapshot_date` 升序，每条点形如 `{ snapshotDate, retailPrice, salesQty30d?, salesAmount30d?, grossMargin30d? }`。
 
-**为什么这样**：调价**不写**快照（约束 #2），但价格曲线又要展示调价 → 必须合并。
+**批发价**：`hq_products.wholesale_price` JOIN 进 SKU 头部（一个 SKU 一个值，全期同值），用于成本线 / 利润计算。
+
+**"上次价 / 涨跌"**：从 snapshot 时间序列相邻两点 retail_price 之差**前端推导**，不存数据库字段，不从 `store_price_changes` 读。
+
+**为什么是单源**：本 app 是"模拟器 + 销售分析"工具 —— 不真改门店价。用户在工具里"模拟调价"算完目标价后，须去自己经营系统手动调，**下一周 snapshot 导入自然吃到新价** → 时间序列上 retail_price 跳变 = "事实上的调价"。`store_price_changes` 表只是模拟操作的预留日志位（V027 起也不再写），价盘视角下不存在。
 
 ---
 
-### 4. 基准 SKU 按场景计算
+### 4. 基准 SKU 按场景计算（**V023+ 全面重写：归一化平均代替朴素加权**）
 
 **口径**（`benchmark.computeBenchmarkForScene`）：
-- 排除当前店（`WHERE store_id <> $1`）
-- 各店各商品最新一期快照（DISTINCT ON (store_id, product_id) ORDER BY snapshot_date DESC）
-- 按场景 L1 品类筛（`split_part(fn_category_path, '/', 1) = ANY(...)`)
-- 加权平均：销售额为权重，`SUM(qty * amt) / SUM(amt)`；amt=0 时退化为 AVG(qty)
+- **排除当前店**（`WHERE store_id <> $1`）+ active 门店 + active 商品
+- **场景筛选**：JOIN 时 `fn_category_scene(p.category_id) = $scene`（V023+ 走 category_id；不再字符串 split）
+- **每店每 SKU 取最近两期**：`ROW_NUMBER() OVER (PARTITION BY store_id, product_id ORDER BY snapshot_date DESC, ...)`，rn=1 latest / rn=2 prev
+- **门店本场景规模**：`store_scene_totals = SUM(latest_amt) BY store_id`（**只算本场景的 SKU**，避免烘焙 SKU 拿百货门店总额做分母）
+- **归一化平均**（按用户口径，2026-06-15 起）：
+  - `norm_avg_amt = AVG(item_amt / store_amt) × AVG(store_amt)` —— "SKU 在门店内占比的均值 × 门店在本场景规模的均值"
+  - `norm_avg_qty = AVG(item_qty / NULLIF(store_qty,0)) × AVG(NULLIF(store_qty,0))`
+  - **设计动机**：解耦"占比"与"门店规模"，避免"恰好在大店占比也高"导致的正相关偏估；两者独立时退化为朴素均值
+- **psd_change**（环比 %）：`(Σ paired_latest_amt − Σ prev_amt) / Σ prev_amt × 100`，prev=0 → null
+- **类目名**：`fn_category_ancestor_name(category_id, 1/2/3)` 三个函数调用（不再 split path）
+
+详见 [benchmark.service.ts](../apps/api/src/services/benchmark.service.ts) 头部注释。
 
 ---
 
@@ -1051,21 +1103,13 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 ---
 
-### 7. "上次调价时间" (RC-A, 2026-06-14)
+### 7. "上次调价时间"（V027 重写：走 snapshot 序列）
 
-**之前**：shared 类型声明了 `hasPriceChange: boolean` 但后端没返 → 前端排序失效。
-**修复**：`store-skus.listStoreSkus()` SELECT 加 LEFT JOIN `store_price_changes` 取 `MAX(created_at)`，投影为 `lastPriceChangeAt: string | null`；前端价盘"最近调整"按它 DESC 排。
+**V027 起**：`store_price_changes` 不读不写，"上次调价时间"改成"**最后一次 retail_price 跳变所在的 snapshot_date**"，从 snapshot 时间序列推导。
 
-```sql
-WITH ranked AS (...),
-     last_change AS (
-       SELECT product_id, MAX(created_at) AS last_at
-         FROM store_price_changes WHERE store_id = $1 GROUP BY product_id
-     )
-SELECT ..., lc.last_at AS last_price_change_at
-  FROM ranked latest LEFT JOIN ranked prev ON ...
-  LEFT JOIN last_change lc ON lc.product_id = latest.product_id ...
-```
+`store-skus.listStoreSkus()` 用窗口函数 `LAG(retail_price) OVER (PARTITION BY store_id, product_id ORDER BY snapshot_date)` 找到最近一次 `retail_price != lag_retail_price` 的 snapshot_date,投影为 `lastPriceChangeAt: string | null`；前端价盘"最近调整"按它 DESC 排。
+
+**历史**：RC-A（2026-06-14）一度是 LEFT JOIN `store_price_changes` 取 `MAX(created_at)`,V027 起改为 snapshot-derived。
 
 ---
 
@@ -1107,7 +1151,7 @@ SELECT ..., lc.last_at AS last_price_change_at
 
 ### 门店 SKU
 - **超管导入快照**：UPSERT `store_sku_snapshots`（同日同源覆盖）+ 审计 `sku_import`
-- **调价**：INSERT `store_price_changes`（**绝不**写 snapshots）+ 审计 `price_change`
+- ~~**调价**~~：V027 起前端"模拟调价"**不写后端**（纯本地算）；用户须去经营系统手动调价，下一周 snapshot 导入自然反映。`store_price_changes` 表保留不删但读写路径均废弃。
 
 ### 竞品 / 问卷
 - **加竞对店**：INSERT `store_competitors`
@@ -1131,14 +1175,18 @@ SELECT ..., lc.last_at AS last_price_change_at
 
 | 业务问题 | 查这 | 备注 |
 |---|---|---|
-| 某店某 SKU 现在卖多少钱 | v_store_product_curve (latest) **或** store_price_changes (最新调价) | 两者合并看曲线：`prices.getPriceCurve` |
-| 某 SKU 历史调价时间线 | store_price_changes（按 created_at DESC） | 调价唯一归属 |
+| 某店某 SKU 现在卖多少钱 | `v_store_product_curve.retail_price`（latest snapshot） | V027 起 snapshot 单源，`prices.getPriceCurve` 不再合并 changes |
+| 某 SKU 调价历史 | snapshot 时间序列里 retail_price 跳变的 snapshot_date | V027 起从 snapshot 派生，不读 `store_price_changes` |
+| 某 SKU 建议零售价 / 批发价 | `hq_products.suggested_retail_price` / `wholesale_price` | V027 起不再从 snapshot 读；全期同值；建议价不进价盘曲线 |
+| ~~某 SKU 历史调价时间线~~ | ~~store_price_changes~~ → snapshot 序列的 retail_price 跳变 | V027 起读写都废弃 |
 | 当前活跃促销有哪些 | v_promotion_active | 自动过滤 is_active=true |
 | 某店调改了多少次 | store_scene_remakes（缓存）或 store_scene_adjustments（流水） | remakes 是计数；adjustments 是详情 |
 | 某用户登录历史 | v_login_events | 从 sys_audit_events 筛 user_login |
 | 某竞品最新价 | v_active_competitor_price | 自动取最新快照 |
 | 海报采用后销量增长 | v_poster_product_sales | 前后两期快照对比 |
-| 某店某商品基准价 | `benchmark.computeBenchmarkForScene()`（跨店加权） | 不是单张表 |
+| 某店某商品基准 | `benchmark.computeBenchmarkForScene()`（跨店归一化平均，详 § 11.4） | 不是单张表 |
+| 上架待选池白名单 | `hq_products WHERE is_whitelisted AND fn_category_scene(category_id)=?` | V025 起一个 boolean 列；V026 起以 sku_attributes 每 SKU 自带 is_whitelisted 标记传给 Dify |
+| 商品标签 / 市场最低价 | `hq_products.tags TEXT[]` / `hq_products.market_min_price / market_min_price_source`（V026） | GIN 索引；Dify inputs.sku_attributes 直接读 |
 | 某人管哪些店 | user_stores（WHERE user_id=?） | 一人多店 |
 | 当前选中门店 | user_sessions.active_store_id | 每会话唯一 |
 | 海报"被卡在哪儿"了 | store_poster_generations.status + error_code + error_message | RC-D 后含 OpenRouter 真错因 |
@@ -1146,5 +1194,13 @@ SELECT ..., lc.last_at AS last_price_change_at
 
 ---
 
-**文档版本**：2026-06-14（对应 V001-V013，RC-A/B/C/D 修复后）  
+**文档版本**：2026-06-16（对应 V001-V027 全部已应用）
+**最近一次较大更新**：
+- V023 加 `fn_category_ancestor_name`（避免跨场景同名品类被字符串 split 串）
+- V024 → V025 → V026 白名单三步演进（独立表 → boolean 列 → Dify inputs.sku_attributes 每 SKU 自带标记）
+- V026 加 `hq_products.tags` / `market_min_price` / `market_min_price_source`
+- `benchmark.computeBenchmarkForScene` 全面重写为归一化平均（§ 11.4）
+- ai-shelves inputs 重构：`sku_data / major_category / mid_category / whitelist / new_product_skus` 全删，换成 `sku_attributes / store_sku_data` + 结构化 `poi_data` + `current_date`
+- **V027 产品定位重塑**：本 app 是"模拟器 + 销售分析"工具,不写门店真实价。`store_sku_snapshots` 删 `original_price` / `wholesale_price` 只保留 `retail_price`；价盘曲线改 snapshot 单源；`store_price_changes` 读写路径全部废弃（表保留）；前端"应用调价"改"模拟调价"+ 被动提示。
+
 **配套文档**：[api-contracts.md](./api-contracts.md) · [data-flow.md](./data-flow.md) · [state-management.md](./state-management.md)

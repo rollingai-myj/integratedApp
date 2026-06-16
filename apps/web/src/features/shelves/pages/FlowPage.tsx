@@ -4,7 +4,7 @@
  * 阶段：photo → diagnosing → diag → review → confirm → applied
  *
  * 真实链路（原版 PhotoPage 还原）：
- *  - photo：<input type="file" capture="environment"> 拍照/选图，多张 → 一次 multipart 上传
+ *  - photo：<input type="file" accept="image/*"> 走系统原生选择器（拍照 / 相册 / 文件），多张 → 一次 multipart 上传
  *           POST /scenes/:scene/photos → OSS + runtime.photos
  *  - diagnosing：并行触发三件事：
  *      ① /detect 商品识别（红框）             — 失败显示琥珀色降级横幅，不阻塞
@@ -457,7 +457,6 @@ export function FlowPage() {
               ref={fileRef}
               type="file"
               accept="image/*"
-              capture="environment"
               multiple
               style={{ display: 'none' }}
               onChange={onFileChange}
