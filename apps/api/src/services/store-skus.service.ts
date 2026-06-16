@@ -1,9 +1,15 @@
 /**
  * 门店经营 · 现状视角
  *
- * 表：store_sku_snapshots（外部导入，唯一合法写入入口；调价不写快照）
- * 视图：v_store_product_curve（同日多源去重）
+ * 表：store_sku_snapshots（外部导入唯一合法入口；V027 起价格列只剩 retail_price）
+ * 主数据：hq_products（wholesale_price JOIN 进 SKU 头部）
  * 查询：本店在售 SKU 最新一期 + 环比（用前一期）
+ *
+ * V027 起：
+ *   - `originalPrice` 字段被移除（snapshot 不再有 original_price）
+ *   - `wholesalePrice` 改从 `hq_products.wholesale_price` JOIN（不再来自 snapshot）
+ *   - `lastPriceChangeAt` 改用 LAG 窗口函数从 snapshot 时间序列推导
+ *     （= 最近一次 retail_price != lag(retail_price) 所在的 snapshot_date）
  */
 import { query, withTransaction } from '../db/index.js';
 import { AppError, ErrorCodes } from '../lib/errors.js';
@@ -20,10 +26,14 @@ export interface StoreSkuRow {
   widthCm: number | null;
   heightCm: number | null;
   categoryPath: string | null;
+  /** 大/中/小类名（按 category_id 走 parent_id 链回溯，避免名字串拆分串场景） */
+  categoryL1Name: string | null;
+  categoryL2Name: string | null;
+  categoryL3Name: string | null;
   scene: number | null;
-  /** 本店实际售价 */
+  /** 本期实际售价（snapshot.retail_price，V027 起 snapshot 唯一价格列） */
   retailPrice: number | null;
-  originalPrice: number | null;
+  /** 批发价（hq_products.wholesale_price，全期同值；V027 起从主数据 JOIN，不再来自 snapshot） */
   wholesalePrice: number | null;
   salesQty30d: number | null;
   salesAmount30d: number | null;
@@ -34,7 +44,8 @@ export interface StoreSkuRow {
   salesAmountChange30d: number | null;
   /** 同上，按销量件数 */
   salesQtyChange30d: number | null;
-  /** 本店在 store_price_changes 里最后一次调价的时刻；null = 从未调过价 */
+  /** 本店该 SKU 最近一次实际调价所在的 snapshot_date（V027 起从 retail_price 时间序列推导，
+   *  不再读 store_price_changes）；null = 时间窗内 retail 未跳变 */
   lastPriceChangeAt: string | null;
 }
 
@@ -62,38 +73,56 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
   }
   const whereExtra = filters.length ? `AND ${filters.join(' AND ')}` : '';
 
-  // 每店每商品的两期：latest = 最近一条；prev = 倒数第二条
-  // last_price_change_at 来自 store_price_changes：本店该 SKU 最后一次调价的时刻，
-  // 价盘"最近调整"排序就是按它倒序。
+  // V027：
+  //   - 价格列只取 retail_price；批发价 JOIN hq_products
+  //   - "上次调价时间"改用 LAG 窗口函数从 snapshot 序列推导：
+  //     last_price_change_at = MAX(snapshot_date) WHERE retail_price IS DISTINCT FROM lag(retail_price)
   const sql = `
-    WITH ranked AS (
-      SELECT s.*,
+    WITH dedup AS (
+      SELECT s.store_id, s.product_id, s.snapshot_date, s.retail_price,
+             s.sales_qty_30d, s.sales_amount_30d, s.gross_margin_30d, s.stock_qty,
              ROW_NUMBER() OVER (
-               PARTITION BY s.product_id
-               ORDER BY s.snapshot_date DESC,
-                        CASE s.source WHEN 'manual' THEN 1 ELSE 2 END,
-                        s.created_at DESC
-             ) AS rn
+               PARTITION BY s.store_id, s.product_id, s.snapshot_date
+               ORDER BY CASE s.source WHEN 'manual' THEN 1 ELSE 2 END, s.created_at DESC
+             ) AS rn_day
         FROM store_sku_snapshots s
        WHERE s.store_id = $1
     ),
+    ranked AS (
+      SELECT *,
+             ROW_NUMBER() OVER (
+               PARTITION BY product_id ORDER BY snapshot_date DESC
+             ) AS rn
+        FROM dedup WHERE rn_day = 1
+    ),
+    diffs AS (
+      SELECT product_id, snapshot_date, retail_price,
+             LAG(retail_price) OVER (
+               PARTITION BY product_id ORDER BY snapshot_date
+             ) AS prev_retail
+        FROM dedup WHERE rn_day = 1
+    ),
     last_change AS (
-      SELECT product_id, MAX(created_at) AS last_at
-        FROM store_price_changes
-       WHERE store_id = $1
+      SELECT product_id, MAX(snapshot_date) AS last_date
+        FROM diffs
+       WHERE prev_retail IS NOT NULL AND retail_price IS DISTINCT FROM prev_retail
        GROUP BY product_id
     )
     SELECT p.id AS product_id, p.sku_code, p.product_name,
            p.brand, p.spec, p.unit,
            p.length_cm, p.width_cm, p.height_cm,
+           p.wholesale_price,
            fn_category_path(p.category_id) AS cat_path,
+           fn_category_ancestor_name(p.category_id, 1::smallint) AS cat_l1,
+           fn_category_ancestor_name(p.category_id, 2::smallint) AS cat_l2,
+           fn_category_ancestor_name(p.category_id, 3::smallint) AS cat_l3,
            fn_category_scene(p.category_id) AS scene,
-           latest.retail_price, latest.original_price, latest.wholesale_price,
+           latest.retail_price,
            latest.sales_qty_30d, latest.sales_amount_30d, latest.gross_margin_30d,
            latest.stock_qty, latest.snapshot_date,
            prev.sales_qty_30d    AS prev_qty,
            prev.sales_amount_30d AS prev_amt,
-           lc.last_at            AS last_price_change_at
+           lc.last_date          AS last_price_change_at
       FROM ranked latest
       LEFT JOIN ranked prev ON prev.product_id = latest.product_id AND prev.rn = 2
       LEFT JOIN last_change lc ON lc.product_id = latest.product_id
@@ -111,11 +140,13 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
     length_cm: string | null;
     width_cm: string | null;
     height_cm: string | null;
+    wholesale_price: string | null;
     cat_path: string | null;
+    cat_l1: string | null;
+    cat_l2: string | null;
+    cat_l3: string | null;
     scene: number | null;
     retail_price: string | null;
-    original_price: string | null;
-    wholesale_price: string | null;
     sales_qty_30d: number | null;
     sales_amount_30d: string | null;
     gross_margin_30d: string | null;
@@ -142,9 +173,11 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
       widthCm: r.width_cm != null ? Number(r.width_cm) : null,
       heightCm: r.height_cm != null ? Number(r.height_cm) : null,
       categoryPath: r.cat_path,
+      categoryL1Name: r.cat_l1,
+      categoryL2Name: r.cat_l2,
+      categoryL3Name: r.cat_l3,
       scene: r.scene,
       retailPrice: r.retail_price ? Number(r.retail_price) : null,
-      originalPrice: r.original_price ? Number(r.original_price) : null,
       wholesalePrice: r.wholesale_price ? Number(r.wholesale_price) : null,
       salesQty30d: qty,
       salesAmount30d: amount,
@@ -162,10 +195,13 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
         qty != null && prevQty != null && prevQty > 0
           ? round1(((qty - prevQty) / prevQty) * 100)
           : null,
+      // V027：来源改成 snapshot_date（DATE），pg 把 DATE 转 Date 实例；前端按 YYYY-MM-DD 渲染
       lastPriceChangeAt:
         r.last_price_change_at instanceof Date
-          ? r.last_price_change_at.toISOString()
-          : r.last_price_change_at,
+          ? `${r.last_price_change_at.getFullYear()}-${String(r.last_price_change_at.getMonth() + 1).padStart(2, '0')}-${String(r.last_price_change_at.getDate()).padStart(2, '0')}`
+          : r.last_price_change_at
+            ? String(r.last_price_change_at).slice(0, 10)
+            : null,
     };
   });
 }
@@ -280,9 +316,8 @@ export async function replaceSceneShelfGroups(
 export interface SnapshotImportRow {
   skuCode: string;
   snapshotDate: string;
+  /** 本期实际售价（V027 起 snapshot 唯一价格列） */
   retailPrice?: number | null;
-  originalPrice?: number | null;
-  wholesalePrice?: number | null;
   salesQty30d?: number | null;
   salesAmount30d?: number | null;
   salesQty90d?: number | null;
@@ -325,13 +360,13 @@ export async function importStoreSnapshots(
       if (existing.rows[0]) {
         await client.query(
           `UPDATE store_sku_snapshots
-              SET retail_price = $1, original_price = $2, wholesale_price = $3,
-                  sales_qty_30d = $4, sales_amount_30d = $5,
-                  sales_qty_90d = $6, sales_amount_90d = $7,
-                  gross_margin_30d = $8, stock_qty = $9, imported_by = $10
-            WHERE id = $11`,
+              SET retail_price = $1,
+                  sales_qty_30d = $2, sales_amount_30d = $3,
+                  sales_qty_90d = $4, sales_amount_90d = $5,
+                  gross_margin_30d = $6, stock_qty = $7, imported_by = $8
+            WHERE id = $9`,
           [
-            r.retailPrice ?? null, r.originalPrice ?? null, r.wholesalePrice ?? null,
+            r.retailPrice ?? null,
             r.salesQty30d ?? null, r.salesAmount30d ?? null,
             r.salesQty90d ?? null, r.salesAmount90d ?? null,
             r.grossMargin30d ?? null, r.stockQty ?? null, importedBy,
@@ -343,13 +378,13 @@ export async function importStoreSnapshots(
         await client.query(
           `INSERT INTO store_sku_snapshots
              (store_id, product_id, sku_code, snapshot_date,
-              retail_price, original_price, wholesale_price,
+              retail_price,
               sales_qty_30d, sales_amount_30d, sales_qty_90d, sales_amount_90d,
               gross_margin_30d, stock_qty, source, imported_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'manual', $14)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'manual', $12)`,
           [
             storeId, productId, r.skuCode, r.snapshotDate,
-            r.retailPrice ?? null, r.originalPrice ?? null, r.wholesalePrice ?? null,
+            r.retailPrice ?? null,
             r.salesQty30d ?? null, r.salesAmount30d ?? null,
             r.salesQty90d ?? null, r.salesAmount90d ?? null,
             r.grossMargin30d ?? null, r.stockQty ?? null, importedBy,

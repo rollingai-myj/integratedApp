@@ -381,6 +381,7 @@ export async function priceCompare(args: {
   }
 
   // 关联：自家 SKU snapshot（同店最新一期） vs 竞品最新一期价
+  // V027 起：myOriginalPrice 改成 hq_products.suggested_retail_price（HQ 建议零售价，全期同值）
   const res = await query<{
     sku_code: string;
     product_name: string;
@@ -398,14 +399,14 @@ export async function priceCompare(args: {
   }>(
     `WITH my_latest AS (
        SELECT DISTINCT ON (snap.product_id) snap.product_id,
-              snap.retail_price, snap.original_price
+              snap.retail_price
          FROM store_sku_snapshots snap
         WHERE snap.store_id = $1
         ORDER BY snap.product_id, snap.snapshot_date DESC
      )
      SELECT p.sku_code, p.product_name,
-            ml.retail_price AS my_retail_price,
-            ml.original_price AS my_original_price,
+            ml.retail_price          AS my_retail_price,
+            p.suggested_retail_price AS my_original_price,
             COALESCE(
               json_agg(
                 json_build_object(
@@ -425,7 +426,7 @@ export async function priceCompare(args: {
        LEFT JOIN v_active_competitor_price vc
               ON vc.store_id = $1 AND vc.mapped_product_id = p.id
       WHERE p.status = 'active' ${skuFilter}
-      GROUP BY p.sku_code, p.product_name, ml.retail_price, ml.original_price
+      GROUP BY p.sku_code, p.product_name, ml.retail_price, p.suggested_retail_price
      HAVING bool_or(vc.competitor_product_id IS NOT NULL)
       ORDER BY p.sku_code`,
     params,

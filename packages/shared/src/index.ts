@@ -199,8 +199,8 @@ export interface ProductRow {
 }
 
 export interface StoreSkuRow extends ProductRow {
+  /** 本期实际售价（snapshot.retail_price，V027 起 snapshot 唯一价格列） */
   retailPrice: number | null;
-  originalPrice: number | null;
   salesQty30d: number | null;
   salesAmount30d: number | null;
   salesQty90d: number | null;
@@ -209,7 +209,8 @@ export interface StoreSkuRow extends ProductRow {
   stockQty: number | null;
   lastDeliveryAt: string | null;
   snapshotDate: string | null;
-  /** 本店该 SKU 最后一次调价的时刻（ISO 8601）；null = 从未调过价；价盘"最近调整"排序按它倒序 */
+  /** 本店该 SKU 最近一次"实际调价"的时刻（snapshot 序列里 retail_price 跳变所在的 snapshot_date）；
+   *  null = 时间窗内从未跳变；V027 起从 snapshot 时间序列推导，不再读 store_price_changes */
   lastPriceChangeAt: string | null;
 }
 
@@ -227,21 +228,25 @@ export interface ListStoreSkusResponse {
 // 模块 6 · 价盘 (Prices)
 // ============================================================================
 
+/**
+ * 价盘曲线点（V027 起 snapshot 单源）：
+ *   - retailPrice = snapshot.retail_price，"本期实际售价"
+ *   - 涨/跌 anchor 不存字段，由前端 derive 自相邻两点 retailPrice 之差
+ *   - 不再有 source / priceChangeId（不再合并 store_price_changes）
+ */
 export interface PriceCurvePoint {
   snapshotDate: string;
   retailPrice: number | null;
-  originalPrice: number | null;
-  wholesalePrice: number | null;
   salesQty30d: number | null;
   salesAmount30d: number | null;
   grossMargin30d: number | null;
-  source: string;
-  priceChangeId: string | null;
 }
 
 export interface PriceCurveSku {
   skuCode: string;
   productName: string | null;
+  /** 批发价（来自 hq_products，全期同值），用于成本线/利润计算 */
+  wholesalePrice: number | null;
   points: PriceCurvePoint[];
 }
 

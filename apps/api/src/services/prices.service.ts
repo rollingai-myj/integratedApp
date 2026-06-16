@@ -1,41 +1,32 @@
 /**
- * 价盘业务层
+ * 价盘业务层（V027 起：产品定位重塑）
  *
- * 表归属（refactor 后）：
- *   store_price_changes      调价流水（**调价数据唯一归属**）
- *   store_sku_snapshots      门店周快照（只接受 erp_sync / manual 导入，调价绝不写）
- *   hq_products              商品主数据
+ * 本 app 是"模拟器 + 销售分析"工具，不接入门店 POS，不写门店真实价。
+ * 用户在工具里"模拟调价"算出目标价后须手动去经营系统调，下一周 snapshot 导入自然反映。
  *
- * 关键决策（refactor-plan）：调价**只写流水，不写快照**。
- *   - 销量/销售额"效果"= 前后两期 snapshot 对比（time-series 真实变化）
- *   - 价格曲线 = snapshots 取价格点 + price_changes 取调价点，前端合并去重
+ * 表归属：
+ *   store_sku_snapshots      门店周快照（V027 起 retail_price 是唯一价格列，**价盘曲线/调价历史/涨跌对比唯一来源**）
+ *   hq_products              商品主数据；wholesale_price JOIN 进 SKU 头部（成本线/利润计算）
+ *   store_price_changes      表保留不删，但 V027 起读写路径均废弃；端点函数保留作孤儿
  */
 import { query, withTransaction } from '../db/index.js';
 import { AppError, ErrorCodes } from '../lib/errors.js';
 
-// ---- 价格曲线 ------------------------------------------------------------
+// ---- 价格曲线（V027：snapshot 单源） ----------------------------------------
 
-/**
- * 字段命名同 @myj/shared.PriceCurvePoint（snapshotDate / source / priceChangeId）。
- * `source` 取值约定：
- *   - 'snapshot' = 来自 store_sku_snapshots（带销量数据）
- *   - 'change'   = 来自 store_price_changes（无销量数据）
- */
 export interface PriceCurvePoint {
   snapshotDate: string;            // YYYY-MM-DD
   retailPrice: number | null;
-  originalPrice: number | null;
-  wholesalePrice: number | null;
   salesQty30d: number | null;
   salesAmount30d: number | null;
   grossMargin30d: number | null;
-  source: 'snapshot' | 'change';
-  priceChangeId: string | null;
 }
 
 export interface PriceCurveSku {
   skuCode: string;
   productName: string | null;
+  /** 批发价（来自 hq_products，全期同值），用于成本/利润计算 */
+  wholesalePrice: number | null;
   points: PriceCurvePoint[];
 }
 
@@ -55,111 +46,65 @@ export async function getPriceCurve(args: {
 }): Promise<PriceCurveSku[]> {
   const days = Math.min(args.daysBack ?? 365, 1825);
 
-  const snapParams: unknown[] = [args.storeId];
-  const snapFilters: string[] = ['s.store_id = $1'];
+  const params: unknown[] = [args.storeId];
+  const filters: string[] = ['s.store_id = $1'];
   if (args.skuCodes && args.skuCodes.length > 0) {
-    snapParams.push(args.skuCodes);
-    snapFilters.push(`s.sku_code = ANY($${snapParams.length}::text[])`);
+    params.push(args.skuCodes);
+    filters.push(`s.sku_code = ANY($${params.length}::text[])`);
   }
-  snapParams.push(days);
-  snapFilters.push(
-    `s.snapshot_date >= CURRENT_DATE - ($${snapParams.length}::int * INTERVAL '1 day')`,
+  params.push(days);
+  filters.push(
+    `s.snapshot_date >= CURRENT_DATE - ($${params.length}::int * INTERVAL '1 day')`,
   );
 
-  const snapRes = await query<{
+  // V027：snapshot 单源；hq_products JOIN 一次取 wholesale_price 进 SKU 头部
+  const res = await query<{
     sku_code: string;
-    product_name: string;
+    product_name: string | null;
+    wholesale_price: string | null;
     snapshot_date: string | Date;
     retail_price: string | null;
-    original_price: string | null;
-    wholesale_price: string | null;
     sales_qty_30d: number | null;
     sales_amount_30d: string | null;
     gross_margin_30d: string | null;
   }>(
-    `SELECT s.sku_code, p.product_name, s.snapshot_date,
-            s.retail_price, s.original_price, s.wholesale_price,
+    `SELECT s.sku_code, p.product_name, p.wholesale_price,
+            s.snapshot_date, s.retail_price,
             s.sales_qty_30d, s.sales_amount_30d, s.gross_margin_30d
        FROM store_sku_snapshots s
   LEFT JOIN hq_products p ON p.id = s.product_id AND p.deleted_at IS NULL
-      WHERE ${snapFilters.join(' AND ')}
+      WHERE ${filters.join(' AND ')}
    ORDER BY s.sku_code, s.snapshot_date`,
-    snapParams,
-  );
-
-  const changeParams: unknown[] = [args.storeId];
-  const changeFilters: string[] = ['c.store_id = $1'];
-  if (args.skuCodes && args.skuCodes.length > 0) {
-    changeParams.push(args.skuCodes);
-    changeFilters.push(`c.sku_code = ANY($${changeParams.length}::text[])`);
-  }
-  changeParams.push(days);
-  changeFilters.push(
-    `c.effective_date >= CURRENT_DATE - ($${changeParams.length}::int * INTERVAL '1 day')`,
-  );
-
-  const changeRes = await query<{
-    id: string;
-    sku_code: string;
-    product_name: string;
-    effective_date: string | Date;
-    new_price: string;
-  }>(
-    `SELECT c.id, c.sku_code, p.product_name, c.effective_date, c.new_price
-       FROM store_price_changes c
-  LEFT JOIN hq_products p ON p.id = c.product_id AND p.deleted_at IS NULL
-      WHERE ${changeFilters.join(' AND ')}
-   ORDER BY c.sku_code, c.effective_date, c.created_at`,
-    changeParams,
+    params,
   );
 
   const bySku = new Map<string, PriceCurveSku>();
-  const ensure = (skuCode: string, productName: string | null): PriceCurveSku => {
-    let entry = bySku.get(skuCode);
+  for (const r of res.rows) {
+    let entry = bySku.get(r.sku_code);
     if (!entry) {
-      entry = { skuCode, productName, points: [] };
-      bySku.set(skuCode, entry);
-    } else if (entry.productName == null && productName) {
-      entry.productName = productName;
+      entry = {
+        skuCode: r.sku_code,
+        productName: r.product_name,
+        wholesalePrice: r.wholesale_price != null ? Number(r.wholesale_price) : null,
+        points: [],
+      };
+      bySku.set(r.sku_code, entry);
     }
-    return entry;
-  };
-
-  for (const r of snapRes.rows) {
-    const entry = ensure(r.sku_code, r.product_name);
     entry.points.push({
       snapshotDate: ymd(r.snapshot_date),
       retailPrice: r.retail_price != null ? Number(r.retail_price) : null,
-      originalPrice: r.original_price != null ? Number(r.original_price) : null,
-      wholesalePrice: r.wholesale_price != null ? Number(r.wholesale_price) : null,
       salesQty30d: r.sales_qty_30d,
       salesAmount30d: r.sales_amount_30d != null ? Number(r.sales_amount_30d) : null,
       grossMargin30d: r.gross_margin_30d != null ? Number(r.gross_margin_30d) : null,
-      source: 'snapshot',
-      priceChangeId: null,
     });
-  }
-  for (const r of changeRes.rows) {
-    const entry = ensure(r.sku_code, r.product_name);
-    entry.points.push({
-      snapshotDate: ymd(r.effective_date),
-      retailPrice: Number(r.new_price),
-      originalPrice: null,
-      wholesalePrice: null,
-      salesQty30d: null,
-      salesAmount30d: null,
-      grossMargin30d: null,
-      source: 'change',
-      priceChangeId: r.id,
-    });
-  }
-  for (const sku of bySku.values()) {
-    sku.points.sort((a, b) => a.snapshotDate.localeCompare(b.snapshotDate));
   }
   return Array.from(bySku.values());
 }
 
-// ---- 调价（**只写流水**） ------------------------------------------------
+// ---- 历史端点保留作孤儿 -----------------------------------------------------
+// V027：表 store_price_changes 不再被前端读/写。下面三个函数保留：
+//   - submitPriceChange / listPriceChanges：如果路由被外部脚本调用，仍可工作
+//   - 前端 V027 起完全不调用这些端点；详见 [docs/database-schema.md] § store_price_changes
 
 export interface SubmitPriceChangeInput {
   skuCode: string;
@@ -200,20 +145,9 @@ export async function submitPriceChange(
     throw new AppError(404, ErrorCodes.NOT_FOUND, `SKU ${input.skuCode} 不存在`);
   }
 
-  // 缺省 oldPrice：取最近一次快照的 retail_price 作回退
-  let oldPrice = input.oldPrice;
-  if (oldPrice == null) {
-    const latest = await query<{ retail_price: string | null }>(
-      `SELECT retail_price FROM store_sku_snapshots
-        WHERE store_id = $1 AND product_id = $2
-     ORDER BY snapshot_date DESC LIMIT 1`,
-      [storeId, productId],
-    );
-    const v = latest.rows[0]?.retail_price;
-    oldPrice = v != null ? Number(v) : undefined;
-  }
+  // V027：缺省 oldPrice 直接 NULL（不再回查 snapshot.retail_price，避免给孤儿端点徒增依赖）
+  const oldPrice = input.oldPrice;
 
-  // **只写 store_price_changes**，绝不动 store_sku_snapshots
   return withTransaction(async (client) => {
     const ins = await client.query<{
       id: string;
@@ -303,4 +237,3 @@ export async function listPriceChanges(args: {
     createdAt: r.created_at,
   }));
 }
-

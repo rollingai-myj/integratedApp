@@ -25,8 +25,13 @@ export const Route = createRootRoute({
         // 禁用浏览器级捏合缩放：我们整站用 IOSDevice 的 CSS zoom 把 390 设计稿等比放大撑满
         // 视口，用户再触发浏览器缩放会让 visualViewport.width 偏离屏宽，CSS zoom 跟着算错，
         // 表现是"页面坍缩到屏幕上半部分"。两套缩放不能共存。
+        //
+        // interactive-widget=resizes-content：键盘弹出时让 Safari 同步缩 layout viewport
+        // （默认 resizes-visual 只缩 visual viewport，IOSDevice 容器跟着 visualViewport.height
+        // 缩了，但页面内 min-h-full 等基于 layout viewport 的尺寸不缩 → 登录页 hero 不让位、
+        // 视觉表现是键盘上方留出大片背景色块挡住表单）。
         content:
-          'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no',
+          'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, interactive-widget=resizes-content',
       },
       { title: '门店助手 · 美宜佳' },
       {
@@ -90,7 +95,7 @@ function RootDocument({ children }: { children: ReactNode }) {
         <meta charSet="utf-8" />
         <meta
           name="viewport"
-          content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no"
+          content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, interactive-widget=resizes-content"
         />
         <link rel="stylesheet" href={stylesCssUrl} />
         <script dangerouslySetInnerHTML={{ __html: IOS_DEVICE_BOOTSTRAP }} />

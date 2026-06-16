@@ -172,33 +172,6 @@ export function WorkspacePage() {
           </button>
         )}
 
-        {ov?.shelfConfigured && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            {[
-              { label: '已调改', value: String(ov.adjustmentCount), unit: '次' },
-              {
-                label: '上次效果',
-                value: ov.lastSalesDeltaPercent != null ? `${ov.lastSalesDeltaPercent >= 0 ? '+' : ''}${ov.lastSalesDeltaPercent}%` : '—',
-                unit: ov.lastSalesDeltaPercent != null ? '销售额' : '',
-                color: ov.lastSalesDeltaPercent != null
-                  ? (ov.lastSalesDeltaPercent >= 0 ? TOKENS.green : TOKENS.red)
-                  : TOKENS.inkMuted,
-              },
-            ].map((t) => (
-              <div key={t.label} style={{
-                background: '#fff', borderRadius: 14, padding: '14px 10px 13px', textAlign: 'center',
-                boxShadow: TOKENS.shadow1,
-              }}>
-                <div style={{ fontSize: 11, color: TOKENS.inkMuted, fontWeight: 700 }}>{t.label}</div>
-                <div style={{ fontSize: t.value.length > 4 ? 16 : 22, fontWeight: 800, color: t.color || TOKENS.ink, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
-                  {t.value}
-                  {t.unit && <span style={{ fontSize: 11, fontWeight: 600, color: TOKENS.inkMuted, marginLeft: 3 }}>{t.unit}</span>}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
         {lastSnap && (
           <Card pad={14} onClick={goLast}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

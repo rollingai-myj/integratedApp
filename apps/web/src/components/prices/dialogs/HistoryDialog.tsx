@@ -58,7 +58,7 @@ export function HistoryDialog({ open, onOpenChange, entries, onSelectSku }: Prop
             📜 调价历史记录
           </DialogTitle>
           <DialogDescription className="text-xs">
-            来自调价记录表 · 按时间倒序（共 {entries.length} 条）
+            从销量快照 retail_price 跳变推导 · 按时间倒序（共 {entries.length} 条）
           </DialogDescription>
         </DialogHeader>
 

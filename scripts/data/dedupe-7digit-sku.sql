@@ -57,8 +57,7 @@ UPDATE hq_products w SET
 FROM hq_products l JOIN _merge m ON l.id = m.loser_id
 WHERE w.id = m.winner_id;
 
--- 2. 9 张表 product_id loser → winner
-UPDATE hq_benchmark_skus         t SET product_id        = m.winner_id FROM _merge m WHERE t.product_id        = m.loser_id;
+-- 2. 8 张表 product_id loser → winner（V025 起白名单是 hq_products 的 boolean 列，不再独立表）
 UPDATE hq_promo_batch_items      t SET product_id        = m.winner_id FROM _merge m WHERE t.product_id        = m.loser_id;
 UPDATE hq_promo_sku_texts        t SET product_id        = m.winner_id FROM _merge m WHERE t.product_id        = m.loser_id;
 UPDATE store_assortment_changes  t SET product_id        = m.winner_id FROM _merge m WHERE t.product_id        = m.loser_id;
@@ -68,8 +67,7 @@ UPDATE store_price_changes       t SET product_id        = m.winner_id FROM _mer
 UPDATE store_sku_corrections     t SET product_id        = m.winner_id FROM _merge m WHERE t.product_id        = m.loser_id;
 UPDATE store_sku_snapshots       t SET product_id        = m.winner_id FROM _merge m WHERE t.product_id        = m.loser_id;
 
--- 3. 9 张表 sku_code 字符串 loser_sku → winner_sku（store_competitor_products 无 sku_code 字段）
-UPDATE hq_benchmark_skus         t SET sku_code = m.winner_sku FROM _merge m WHERE t.sku_code = m.loser_sku;
+-- 3. 8 张表 sku_code 字符串 loser_sku → winner_sku（store_competitor_products 无 sku_code 字段）
 UPDATE hq_promo_batch_items      t SET sku_code = m.winner_sku FROM _merge m WHERE t.sku_code = m.loser_sku;
 UPDATE hq_promo_sku_texts        t SET sku_code = m.winner_sku FROM _merge m WHERE t.sku_code = m.loser_sku;
 UPDATE store_assortment_changes  t SET sku_code = m.winner_sku FROM _merge m WHERE t.sku_code = m.loser_sku;
@@ -82,7 +80,6 @@ UPDATE store_sku_snapshots       t SET sku_code = m.winner_sku FROM _merge m WHE
 DELETE FROM hq_products WHERE id IN (SELECT loser_id FROM _merge);
 
 -- 5. 把仍是 7 位的 winner 升 8 位（理论 0 行；写出来保持脚本通用）
-UPDATE hq_benchmark_skus         SET sku_code = '0' || sku_code WHERE length(sku_code) = 7;
 UPDATE hq_promo_batch_items      SET sku_code = '0' || sku_code WHERE length(sku_code) = 7;
 UPDATE hq_promo_sku_texts        SET sku_code = '0' || sku_code WHERE length(sku_code) = 7;
 UPDATE store_assortment_changes  SET sku_code = '0' || sku_code WHERE length(sku_code) = 7;
