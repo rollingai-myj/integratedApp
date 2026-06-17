@@ -346,7 +346,9 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
   onToast: (text: string) => void;
 }) {
   const [recent, setRecent] = React.useState<RecentPoster[]>([]);
-  const [categories, setCategories] = React.useState<Array<{ name: string; items: CategoryItem[] }>>([]);
+  // 后端把"允许叠券"和"只用会员价"算成两条独立的品类树,这里两份都缓存,按 promoMode 选用
+  const [categoriesStack, setCategoriesStack] = React.useState<Array<{ name: string; items: CategoryItem[] }>>([]);
+  const [categoriesMemberOnly, setCategoriesMemberOnly] = React.useState<Array<{ name: string; items: CategoryItem[] }>>([]);
   const [activeCat, setActiveCat] = React.useState<string | null>(null);
   const [recoState, setRecoState] = React.useState<'loading' | 'ok' | 'empty' | 'error'>('loading');
   const [showRecent, setShowRecent] = React.useState(false);
@@ -379,10 +381,12 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
       try {
         const res: any = await fetchReco();
         if (cancelled) return;
-        const cats = (res?.categories ?? []) as Array<{ name: string; items: CategoryItem[] }>;
-        if (cats.length === 0) { setRecoState('empty'); return; }
-        setCategories(cats);
-        setActiveCat(cats[0].name);
+        const stack = (res?.categories ?? []) as Array<{ name: string; items: CategoryItem[] }>;
+        const memberOnly = (res?.categoriesMemberOnly ?? []) as Array<{ name: string; items: CategoryItem[] }>;
+        if (stack.length === 0 && memberOnly.length === 0) { setRecoState('empty'); return; }
+        setCategoriesStack(stack);
+        setCategoriesMemberOnly(memberOnly);
+        setActiveCat((stack[0] ?? memberOnly[0])?.name ?? null);
         setRecoState('ok');
       } catch (e) {
         console.error('[reco]', e);
@@ -392,10 +396,12 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
     return () => { cancelled = true; };
   }, [fetchReco]);
 
+  // 按当前 promoMode 选用对应的品类树 — 后端已经分两路算好,这里只切 source
+  const categories = promoMode === 'memberOnly' ? categoriesMemberOnly : categoriesStack;
+
   // 派生：sku -> DerivedBest|null
   // 当开启"今明有效"时，best 也按"模式候选池中今/明仍有效的最佳一条"挑选，
-  // 这样卡片显示的折扣力度/折后价就是实际可用的活动，并且两个模式的有效性
-  // 判定口径一致（item 在该模式下是否有任意今/明有效项）。
+  // 这样卡片显示的折扣力度/折后价就是实际可用的活动。
   const bestMap = React.useMemo(() => {
     const m = new Map<string, DerivedBest | null>();
     for (const c of categories) for (const it of c.items) {

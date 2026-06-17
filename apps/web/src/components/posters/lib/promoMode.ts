@@ -117,48 +117,26 @@ function buildDerivedFromOption(
 }
 
 /**
- * 根据模式从商品的 all_options 推导出"当前最佳"。
- * - stack: 默认用服务端算好的 best_* 字段；validOnly 时若 best 今/明已过期，
- *   在 all_options 里按 savingPercent 降序挑第一条今/明有效的
- * - memberOnly: 严格选 label === '会员价' 的备选档（shim 在 all_options 里专门塞一条
- *   label 写死为 '会员价' 的不叠 addon 备选档；非 member_price base 的 SKU 没有这档，
- *   会被过滤为 null → memberOnly 模式下不展示）。按 effectiveUnitPrice 升序挑第一条；
- *   validOnly 时先过滤掉今/明无效的候选。
- * 选不到返回 null。
+ * 从 CategoryItem 推出"当前最佳"档显示。
+ *
+ * 注:promoMode 不在这里分支了 — 后端把"允许叠券"和"只用会员价"算成两条独立的
+ * categories tree,Home.tsx 在外层按 mode 选 tree 后再喂给这里。所以这里只剩一份
+ * "用服务端 best_*,validOnly 时退而求其次挑 all_options 里今/明仍有效的最优档"逻辑。
+ *
+ * mode 参数保留只为签名兼容(调用点暂未全部清理)。
  */
 export function deriveBest(
   it: CategoryItemLike,
-  mode: PromoMode,
+  _mode: PromoMode,
   opts?: { validOnly?: boolean },
 ): DerivedBest | null {
   const validOnly = !!opts?.validOnly;
   const allOptions = Array.isArray(it.all_options) ? it.all_options : [];
 
-  if (mode === 'stack') {
-    const serverBestOk =
-      !!it.best_label && it.best_total != null && it.best_qty != null && it.best_effective_price != null;
-    if (!serverBestOk) {
-      if (!validOnly) return null;
-      const ranked = [...allOptions]
-        .filter(o => o && o.label && o.totalPrice > 0 && o.effectiveUnitPrice > 0)
-        .filter(o => isOptionValidTodayOrTomorrow(o))
-        .sort((a, b) => (b.savingPercent ?? 0) - (a.savingPercent ?? 0));
-      const pick = ranked[0];
-      return pick ? buildDerivedFromOption(it, pick) : null;
-    }
-    const serverBest: DerivedBest = {
-      label: it.best_label!,
-      qty: it.best_qty!,
-      total: it.best_total!,
-      effectivePrice: it.best_effective_price!,
-      savingPercent: it.best_saving_percent ?? 0,
-      displayText: it.display_text ?? '',
-      validFrom: it.best_valid_from,
-      validTo: it.best_valid_to,
-      validDates: it.best_valid_dates,
-    };
-    if (!validOnly) return serverBest;
-    if (isOptionValidTodayOrTomorrow(serverBest)) return serverBest;
+  const serverBestOk =
+    !!it.best_label && it.best_total != null && it.best_qty != null && it.best_effective_price != null;
+  if (!serverBestOk) {
+    if (!validOnly) return null;
     const ranked = [...allOptions]
       .filter(o => o && o.label && o.totalPrice > 0 && o.effectiveUnitPrice > 0)
       .filter(o => isOptionValidTodayOrTomorrow(o))
@@ -166,17 +144,24 @@ export function deriveBest(
     const pick = ranked[0];
     return pick ? buildDerivedFromOption(it, pick) : null;
   }
-
-  // memberOnly
-  let memberCandidates = allOptions
-    .filter(o => o && o.label === '会员价')
-    .filter(o => o.totalPrice > 0 && o.effectiveUnitPrice > 0);
-  if (validOnly) {
-    memberCandidates = memberCandidates.filter(o => isOptionValidTodayOrTomorrow(o));
-  }
-  memberCandidates.sort((a, b) => a.effectiveUnitPrice - b.effectiveUnitPrice);
-  const pick = memberCandidates[0];
-  if (!pick) return null;
-  return buildDerivedFromOption(it, pick);
+  const serverBest: DerivedBest = {
+    label: it.best_label!,
+    qty: it.best_qty!,
+    total: it.best_total!,
+    effectivePrice: it.best_effective_price!,
+    savingPercent: it.best_saving_percent ?? 0,
+    displayText: it.display_text ?? '',
+    validFrom: it.best_valid_from,
+    validTo: it.best_valid_to,
+    validDates: it.best_valid_dates,
+  };
+  if (!validOnly) return serverBest;
+  if (isOptionValidTodayOrTomorrow(serverBest)) return serverBest;
+  const ranked = [...allOptions]
+    .filter(o => o && o.label && o.totalPrice > 0 && o.effectiveUnitPrice > 0)
+    .filter(o => isOptionValidTodayOrTomorrow(o))
+    .sort((a, b) => (b.savingPercent ?? 0) - (a.savingPercent ?? 0));
+  const pick = ranked[0];
+  return pick ? buildDerivedFromOption(it, pick) : null;
 }
 

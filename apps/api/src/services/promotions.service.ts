@@ -131,14 +131,25 @@ interface OfferRow {
 }
 interface ProductCtxRow { sku_code: string; product_name: string; unit: string | null; category_name: string | null; }
 
-async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBestResult[] }> {
+interface RawCtxRow { sku_code: string; sku_name_original: string; unit: string | null; category_name: string | null; }
+
+interface PromoDataset {
+  batches: PromoBatch[];
+  offersBySku: Map<string, OfferRow[]>;
+  ctx: Map<string, ProductCtxRow>;
+  rawCtx: Map<string, RawCtxRow>;
+}
+
+async function fetchPromoDataset(): Promise<PromoDataset> {
   const batches = await listBatches();
   const offersRes = await query<OfferRow>(
     `SELECT id, batch_id, activity_type, sku_code, mechanic, mechanic_params,
             pool_label, original_price, is_stackable
        FROM v_active_offers`,
   );
-  if (offersRes.rows.length === 0) return { batches, results: [] };
+  if (offersRes.rows.length === 0) {
+    return { batches, offersBySku: new Map(), ctx: new Map(), rawCtx: new Map() };
+  }
 
   const skuCodes = Array.from(new Set(offersRes.rows.map((r) => r.sku_code)));
   // 主数据(hq_products + hq_categories) — 命中即权威
@@ -151,7 +162,7 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
   );
   const ctx = new Map(ctxRes.rows.map((r) => [r.sku_code, r]));
   // 兜底:本次上传里的档案行(member_price / weekend_beer 带'大类'),按 sku 取一条
-  const rawCtxRes = await query<{ sku_code: string; sku_name_original: string; unit: string | null; category_name: string | null }>(
+  const rawCtxRes = await query<RawCtxRow>(
     `SELECT DISTINCT ON (sku_code) sku_code, sku_name_original, unit, category_name
        FROM hq_promo_raw_items
       WHERE sku_code = ANY($1) AND category_name IS NOT NULL
@@ -165,9 +176,25 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
     if (!offersBySku.has(o.sku_code)) offersBySku.set(o.sku_code, []);
     offersBySku.get(o.sku_code)!.push(o);
   }
+  return { batches, offersBySku, ctx, rawCtx };
+}
 
+/**
+ * 把 dataset 里的 offers 算成最优档结果集。
+ * - mode = 'stack' (默认): 全部 activity_type 都参与,允许叠 add-on
+ * - mode = 'memberOnly': 解析时就过滤掉 member_price 以外的 offer 行,
+ *   等于"只把会员价那部分喂给 computeBest";非 member_price base 的 SKU 直接跳过
+ *
+ * 注:这两条路是独立计算的,不是同一个 best 上的字段切换。
+ */
+function buildResultsFromDataset(data: PromoDataset, mode: 'stack' | 'memberOnly'): PromoBestResult[] {
+  const { offersBySku, ctx, rawCtx } = data;
   const results: PromoBestResult[] = [];
-  for (const [sku, rows] of offersBySku) {
+  for (const [sku, allRows] of offersBySku) {
+    const rows = mode === 'memberOnly'
+      ? allRows.filter((r) => r.activity_type === 'member_price')
+      : allRows;
+    if (rows.length === 0) continue;
     const pricerOffers: PricerOffer[] = rows.map((r) => ({
       activityType: r.activity_type as PricerOffer['activityType'],
       mechanic: r.mechanic as PricerOffer['mechanic'],
@@ -198,27 +225,30 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
       bestBundleTotal: best.bundleTotal,
       bestQty: best.qty,
       bestSavingPercent: best.savingPercent,
-      memberOnly: best.memberOnly ? {
-        bundleTotal: best.memberOnly.bundleTotal,
-        unitPrice: best.memberOnly.unitPrice,
-        qty: best.memberOnly.qty,
-        savingPercent: best.memberOnly.savingPercent,
-      } : null,
       poolLabel: baseOffer.poolLabel,
-      poolSize: null,  // 池子大小本期不算（UI 可后续按 pool_label 自行 group by）
+      poolSize: null,
     });
   }
   results.sort((a, b) => b.bestSavingPercent - a.bestSavingPercent);
-  return { batches, results };
+  return results;
 }
 
 export async function listActivePromotions(): Promise<ActivePromotionsResponse> {
-  return buildResults();
+  const data = await fetchPromoDataset();
+  return {
+    batches: data.batches,
+    results: buildResultsFromDataset(data, 'stack'),
+    resultsMemberOnly: buildResultsFromDataset(data, 'memberOnly'),
+  };
 }
 
 export async function recommendForUser(userId: string): Promise<RecommendPromotionsResponse> {
-  const { batches, results } = await buildResults();
-  if (results.length === 0) return { batches, results };
+  const data = await fetchPromoDataset();
+  const stack = buildResultsFromDataset(data, 'stack');
+  const memberOnly = buildResultsFromDataset(data, 'memberOnly');
+  if (stack.length === 0 && memberOnly.length === 0) {
+    return { batches: data.batches, results: stack, resultsMemberOnly: memberOnly };
+  }
   const usedRes = await query<{ category_name: string; cnt: number }>(
     `SELECT c.category_name, COUNT(*)::int AS cnt
        FROM store_poster_tasks t
@@ -231,13 +261,17 @@ export async function recommendForUser(userId: string): Promise<RecommendPromoti
     [userId],
   );
   const rank = new Map(usedRes.rows.map((r) => [r.category_name, r.cnt]));
-  const sorted = [...results].sort((a, b) => {
+  const rerank = (rs: PromoBestResult[]) => [...rs].sort((a, b) => {
     const ra = rank.get(a.categoryName ?? '') ?? 0;
     const rb = rank.get(b.categoryName ?? '') ?? 0;
     if (ra !== rb) return rb - ra;
     return b.bestSavingPercent - a.bestSavingPercent;
   });
-  return { batches, results: sorted };
+  return {
+    batches: data.batches,
+    results: rerank(stack),
+    resultsMemberOnly: rerank(memberOnly),
+  };
 }
 
 export async function setBatchVoided(batchId: string, voided: boolean): Promise<PromoBatch> {

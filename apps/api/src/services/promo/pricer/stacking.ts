@@ -27,14 +27,6 @@ function bundleTotal(p: PromoMechanicParams, original: number): { total: number;
   }
 }
 
-export interface MemberOnlyBest {
-  baseIdx: number;
-  bundleTotal: number;
-  qty: number;
-  unitPrice: number;
-  savingPercent: number;
-}
-
 export function computeBest(
   offers: PricerOffer[],
   _poolPeers: Record<string, number[]>,
@@ -45,9 +37,6 @@ export function computeBest(
   qty: number;
   unitPrice: number;
   savingPercent: number;
-  /** 仅 base=member_price 不叠 addon 的最优档,供前端「只用会员价」模式使用;
-   *  若 best 本来就是 member_price alone,此字段仍填同一档,呈现层去重即可。 */
-  memberOnly: MemberOnlyBest | null;
 } | null {
   if (offers.length === 0) return null;
   const bases: number[] = [];
@@ -91,19 +80,5 @@ export function computeBest(
       }
     }
   }
-  if (!best) return null;
-
-  // 二轮:为「只用会员价」模式单独算一次「base=member_price + 不叠 addon」的最低单价档
-  let memberOnly: MemberOnlyBest | null = null;
-  for (const bi of bases) {
-    const b = offers[bi]!;
-    if (b.activityType !== 'member_price') continue;
-    const baseRes = bundleTotal(b.mechanicParams, b.originalPrice);
-    const unit = baseRes.total / baseRes.qty;
-    const saving = (b.originalPrice - unit) / b.originalPrice;
-    if (!memberOnly || unit < memberOnly.unitPrice) {
-      memberOnly = { baseIdx: bi, bundleTotal: baseRes.total, qty: baseRes.qty, unitPrice: unit, savingPercent: saving };
-    }
-  }
-  return { ...best, memberOnly };
+  return best;
 }

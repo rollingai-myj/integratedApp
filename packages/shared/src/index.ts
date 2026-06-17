@@ -495,14 +495,6 @@ export interface PromoBestResult {
   bestQty: number;
   /** 节省占比 0~1 fraction(前端要 ×100 转百分比展示) */
   bestSavingPercent: number;
-  /** 「只用会员价」模式专用:base=member_price 不叠任何 addon 的最优档;
-   *  base 非 member 时为 null;前端用它在 all_options 里塞一档 label='会员价' 的备选 */
-  memberOnly: {
-    bundleTotal: number;
-    unitPrice: number;
-    qty: number;
-    savingPercent: number;
-  } | null;
   /** 池子上下文，仅 B/D 机制有 */
   poolLabel: string | null;
   poolSize: number | null;
@@ -510,12 +502,17 @@ export interface PromoBestResult {
 
 export interface ActivePromotionsResponse {
   batches: PromoBatch[];
+  /** 算上所有可叠优惠的最优档 */
   results: PromoBestResult[];
+  /** 只解析 member_price 一路、忽略 brand_coupon/regular_coupon 等的最优档；
+   *  前端「只用会员价」切换 = 切到这条结果集，不是只改卡片显示 */
+  resultsMemberOnly: PromoBestResult[];
 }
 
 export interface RecommendPromotionsResponse {
   batches: PromoBatch[];
   results: PromoBestResult[];
+  resultsMemberOnly: PromoBestResult[];
 }
 
 export interface UploadResult {
