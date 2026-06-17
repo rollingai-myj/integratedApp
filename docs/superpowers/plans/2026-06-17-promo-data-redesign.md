@@ -1977,44 +1977,92 @@ git commit -m "feat(promo): routes 改 multipart 上传 + void/unvoid 替换 act
 - Consumes: route + service exports
 - Test fixture：`6月下营销活动（会员价+叠券）.xlsx`（仓库根目录已有）
 
-- [ ] **Step 1: 写测试**
+- [ ] **Step 1: 重置 myj_test schema + 写测试**
+
+```bash
+DB_NAME=myj_test bash apps/api/scripts/db-reset.sh
+```
+
+测试文件全部重写，跟其它 `*.integration.test.ts` 一致的 pattern（`createApp` + 内嵌 HTTP server + raw fetch + `sso_token` cookie + `login('admin','Admin@1234')`），不引入新依赖：
 
 ```ts
 // apps/api/src/routes/promotions.integration.test.ts
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import request from 'supertest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Server } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { app } from '../app.js';
-import { query } from '../db/index.js';
-import { issueAccessToken } from '../services/auth.token.service.js';
+import { createApp } from '../app.js';
+import { pool, query } from '../db/index.js';
 
+const enabled = process.env.INTEGRATION_DB === '1';
+const d = enabled ? describe : describe.skip;
 const FIXTURE = path.resolve(process.cwd(), '../../6月下营销活动（会员价+叠券）.xlsx');
 
-describe('POST /promotions/batches:upload', () => {
-  let cookie: string;
-  beforeAll(async () => {
-    await query(`DELETE FROM hq_promo_batches`);  // 老数据丢弃
-    const userId = '11111111-1111-4111-8111-111111111111';  // dev seed 超管
-    const token = await issueAccessToken({ id: userId, role: 'super_admin' });
-    cookie = `myj_token=${token}`;
+let server: Server;
+let base = '';
+
+interface Ctx { cookie: string }
+
+function cookieOf(setCookie: string | null): Ctx {
+  expect(setCookie).toBeTruthy();
+  const m = /sso_token=([^;]+)/.exec(setCookie!);
+  expect(m).toBeTruthy();
+  return { cookie: `sso_token=${m![1]}` };
+}
+
+async function login(account: string, password: string): Promise<Ctx> {
+  const res = await fetch(`${base}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ account, password }),
   });
-  afterAll(async () => { await query(`DELETE FROM hq_promo_batches`); });
+  expect(res.status).toBe(200);
+  return cookieOf(res.headers.get('set-cookie'));
+}
+
+d('Phase 6 · promotions multi-sheet upload (integration)', () => {
+  let adminCtx: Ctx;
+
+  beforeAll(async () => {
+    const app = createApp();
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, () => resolve());
+    });
+    const addr = server.address();
+    if (typeof addr === 'object' && addr) base = `http://127.0.0.1:${addr.port}`;
+    if (!enabled) return;
+    await query(`DELETE FROM hq_promo_batches`);
+    adminCtx = await login('admin', 'Admin@1234');
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (enabled) await query(`DELETE FROM hq_promo_batches`);
+    await pool.end();
+  });
 
   it('上传真实 Excel: 5 sheet 全解析 + 批次 + 档案 + offer 入库', async () => {
     const buf = fs.readFileSync(FIXTURE);
-    const res = await request(app)
-      .post('/api/v1/promotions/batches:upload')
-      .set('Cookie', cookie)
-      .attach('file', buf, '6月下营销活动.xlsx')
-      .expect(201);
+    const blob = new Blob([buf], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const fd = new FormData();
+    fd.set('file', blob, '6月下营销活动.xlsx');
 
-    expect(res.body.batch).toBeDefined();
-    expect(res.body.batch.rowTotal.member_price).toBeGreaterThan(1000);
-    expect(res.body.batch.rowTotal.weekend_beer).toBeGreaterThan(50);
-    expect(res.body.batch.rowTotal.brand_coupon).toBeGreaterThan(300);
-    expect(res.body.batch.rowTotal.tuesday_member).toBeGreaterThan(20);
-    expect(res.body.batch.rowTotal.regular_coupon).toBeGreaterThan(30);
+    const res = await fetch(`${base}/api/v1/promotions/batches:upload`, {
+      method: 'POST',
+      headers: { cookie: adminCtx.cookie },
+      body: fd,
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+
+    expect(body.batch).toBeDefined();
+    expect(body.batch.rowTotal.member_price).toBeGreaterThan(1000);
+    expect(body.batch.rowTotal.weekend_beer).toBeGreaterThan(50);
+    expect(body.batch.rowTotal.brand_coupon).toBeGreaterThan(300);
+    expect(body.batch.rowTotal.tuesday_member).toBeGreaterThan(20);
+    expect(body.batch.rowTotal.regular_coupon).toBeGreaterThan(30);
 
     const rawCount = await query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM hq_promo_raw_items`);
     expect(rawCount.rows[0]!.c).toBeGreaterThan(1100);
@@ -2023,20 +2071,21 @@ describe('POST /promotions/batches:upload', () => {
     expect(offerCount.rows[0]!.c).toBeGreaterThan(1000);
 
     // 抽查：百威系列池里应有 ≥10 个 sku
-    const pool = await query<{ c: number }>(
+    const poolCount = await query<{ c: number }>(
       `SELECT COUNT(*)::int AS c FROM hq_promo_offers WHERE pool_label LIKE 'brand_coupon/百威系列%'`,
     );
-    expect(pool.rows[0]!.c).toBeGreaterThanOrEqual(10);
+    expect(poolCount.rows[0]!.c).toBeGreaterThanOrEqual(10);
   }, 30_000);
 
   it('GET /promotions/active 返回 results', async () => {
-    const res = await request(app)
-      .get('/api/v1/promotions/active')
-      .set('Cookie', cookie)
-      .expect(200);
-    expect(Array.isArray(res.body.batches)).toBe(true);
+    const res = await fetch(`${base}/api/v1/promotions/active`, {
+      headers: { cookie: adminCtx.cookie },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body.batches)).toBe(true);
     // 注意：v_active_offers 受 current_date 过滤 — 若今天不在活动窗,results 可能空
-    expect(Array.isArray(res.body.results)).toBe(true);
+    expect(Array.isArray(body.results)).toBe(true);
   });
 });
 ```
@@ -2044,12 +2093,14 @@ describe('POST /promotions/batches:upload', () => {
 - [ ] **Step 2: 跑测试**
 
 ```bash
-npm run -w apps/api test -- promotions.integration
+INTEGRATION_DB=1 DATABASE_URL=postgresql://myj:myj@localhost:5432/myj_test npm run -w apps/api test -- promotions.integration
 ```
 
 Expected: PASS（实际数：会员价 1030, 啤酒日 73, 满减券 364, 周二 27, 常规 35 — 都在 expect 阈值之上）
 
 > 若 `current_date` 不在 2026-06-01 ~ 2026-06-30 窗内,第二个 it 的 `results` 可能为空——这是预期,不要为此改测试断言。
+>
+> 不带 `INTEGRATION_DB=1` 时所有 it 都 skip（沿用 phase 5 的 gate），符合 monorepo CI 兼容。
 
 - [ ] **Step 3: Commit**
 
