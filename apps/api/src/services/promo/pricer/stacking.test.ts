@@ -34,7 +34,7 @@ describe('computeBest', () => {
     expect(r.bundleTotal).toBeCloseTo(9.9 * 0.5);
   });
 
-  it('B base + D add-on：套餐总价不变，由调用方在池子层算满减', () => {
+  it('B base + D add-on：按每元 D/T 比例摊到单 sku(满25减5 = 20% off)', () => {
     const addon: PricerOffer = {
       activityType: 'brand_coupon',
       mechanic: 'pool_threshold',
@@ -45,7 +45,8 @@ describe('computeBest', () => {
     };
     const r = computeBest([baseMember, addon], {})!;
     expect(r.addonIdx).toBe(1);
-    // 单池满减不在单 sku 算，本测试只验证 add-on 被选中
+    // 9.9 × (1 - 5/25) = 9.9 × 0.8 = 7.92
+    expect(r.bundleTotal).toBeCloseTo(7.92);
   });
 
   it('两个 base 候选: 会员价 (B1 总价 9.9 / 2 件) vs 啤酒日 (B4 买3送1)', () => {

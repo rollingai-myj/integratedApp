@@ -61,8 +61,14 @@ export function computeBest(
       let total = baseRes.total;
       if (a.mechanic === 'percent_discount' && a.mechanicParams.kind === 'percent_discount') {
         total = baseRes.total * a.mechanicParams.pay_ratio;
+      } else if (a.mechanic === 'pool_threshold' && a.mechanicParams.kind === 'pool_threshold') {
+        // 近似:假设凑单恰好达到 threshold(满 T 减 D),按每元 D/T 的比例摊到本 SKU。
+        // 实际收银是池子级触发的,但 UI 要让"允许叠券"价格能直观体现出叠后更低,
+        // 否则切换 mode 看不出区别 — 这跟单池满减只在池子层算的本意是不一样的,
+        // 是一个有意的展示侧近似。
+        const { threshold, discount } = a.mechanicParams;
+        if (threshold > 0) total = baseRes.total * (1 - discount / threshold);
       }
-      // pool_threshold 不在单 sku 计算，调用方在池子层算
       candidates.push({ addonIdx: ai, total });
     }
     for (const c of candidates) {
