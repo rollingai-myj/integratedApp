@@ -25,6 +25,16 @@ export async function uploadPromotion(
   const windowEnd   = parsed.rawItems.reduce((d, r) => r.validTo   > d ? r.validTo   : d, parsed.rawItems[0]!.validTo);
 
   return withTransaction(async (client) => {
+    // 串行化并发上传 — 否则两个并发上传都看到对方还没插入的旧批次状态,
+    // 各自 UPDATE 旧批次后都 INSERT 新批次,留下两条 is_voided=false 的鬼批
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('hq_promo_batches.upload'))`);
+
+    // 上传 = 全量替换:新批次入库前先把其它未作废批次全部作废,
+    // 同一时刻只有一份生效文件
+    await client.query(
+      `UPDATE hq_promo_batches SET is_voided = true, updated_at = now() WHERE is_voided = false`,
+    );
+
     const bRes = await client.query<{ id: string; created_at: string }>(
       `INSERT INTO hq_promo_batches
          (file_name, source_file_url, uploaded_by, activity_window_start, activity_window_end,
@@ -232,6 +242,8 @@ function buildResultsFromDataset(data: PromoDataset, mode: 'stack' | 'memberOnly
       baseActivityType: baseOffer.activityType,
       addonActivityType: addonOffer?.activityType ?? null,
       addonOfferId: addonRow?.id ?? null,
+      addonPoolLabel: addonOffer?.poolLabel ?? null,
+      addonMechanicParams: addonOffer?.mechanicParams ?? null,
       bestUnitPrice: best.unitPrice,
       bestBundleTotal: best.bundleTotal,
       bestQty: best.qty,

@@ -488,6 +488,11 @@ export interface PromoBestResult {
   /** add-on 活动类型(若 best 选了叠加券，前端用它拼组合 label) */
   addonActivityType: PromoActivityType | null;
   addonOfferId: string | null;
+  /** add-on 自己的 pool_label(brand_coupon 有,如 'brand_coupon/怡宝饮料';tuesday_member 等无 pool 的为 null);
+   *  前端按它做"怡宝饮料 品牌满减券"凑单组卡的分组依据 */
+  addonPoolLabel: string | null;
+  /** add-on 机制参数(brand_coupon 是 pool_threshold,前端用它的 threshold/discount 显示"满 T 减 D") */
+  addonMechanicParams: PromoMechanicParams | null;
   /** 单品摊销最低支付金额（套餐总价 / 件数） */
   bestUnitPrice: number;
   /** 套餐总价（base 算出来的 Q 件总价；A 机制 = 单件价） */
