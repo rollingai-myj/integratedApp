@@ -423,86 +423,93 @@ export interface PosterSalesTrackingResponse {
   items: PosterSalesTrackingItem[];
 }
 
-// ============================================================================
 // 模块 8 · 促销 (Promotions)
-// ============================================================================
 
-export interface PromotionUpload {
+export type PromoActivityType =
+  | 'member_price' | 'weekend_beer' | 'brand_coupon'
+  | 'tuesday_member' | 'regular_coupon';
+
+export type PromoMechanic =
+  | 'flat_price' | 'bundle_price' | 'percent_discount' | 'pool_threshold';
+
+export type PromoBundleSubtype =
+  | 'fixed_total' | 'nth_ratio' | 'add_extra' | 'buy_m_get_n';
+
+export type PromoMechanicParams =
+  | { kind: 'flat_price'; target_price: number }
+  | { kind: 'bundle_price'; subtype: 'fixed_total'; qty_required: number; total_price: number }
+  | { kind: 'bundle_price'; subtype: 'nth_ratio'; qty_required: number; nth: number; ratio: number }
+  | { kind: 'bundle_price'; subtype: 'add_extra'; qty_required: number; add_amount: number }
+  | { kind: 'bundle_price'; subtype: 'buy_m_get_n'; m: number; n: number }
+  | { kind: 'percent_discount'; pay_ratio: number }
+  | { kind: 'pool_threshold'; threshold: number; discount: number };
+
+export interface PromoBatch {
   id: string;
   fileName: string;
   sourceFileUrl: string | null;
-  rowTotal: number;
-  productCount: number;
-  groupCount: number;
-  isActive: boolean;
-  activatedAt: string | null;
-  notes: string | null;
   uploadedBy: string | null;
+  isVoided: boolean;
+  activityWindowStart: string | null;
+  activityWindowEnd: string | null;
+  parseWarnings: Array<{ sheet: string; row: number; reason: string; raw?: unknown }>;
+  rowTotal: Record<PromoActivityType, number>;
+  parsedTotal: Record<PromoActivityType, number>;
+  parsedAt: string | null;
+  notes: string | null;
   createdAt: string;
 }
 
-export interface ProductPromotionDealOption {
-  label: string;
-  requiredQty: number;
-  totalPrice: number;
-  effectiveUnitPrice: number;
-  savingPercent: number;
-  channel?: string;
-  sources?: string[];
-  promoType?: string;
-  detail?: string;
-  validFrom?: string | null;
-  validTo?: string | null;
-  validDates?: string[] | null;
-  validDayOfWeek?: number[] | null;
+export interface PromoOffer {
+  id: string;
+  batchId: string;
+  activityType: PromoActivityType;
+  skuCode: string;
+  mechanic: PromoMechanic;
+  mechanicParams: PromoMechanicParams;
+  poolLabel: string | null;
+  originalPrice: number;
+  validWeekdayMask: number;
+  validFrom: string;
+  validTo: string;
+  isStackable: boolean;
 }
 
-export interface ProductPromotion {
-  id: string;
-  uploadId: string;
-  rowIndex: number;
+export interface PromoBestResult {
   skuCode: string;
   productName: string;
   unit: string | null;
   categoryName: string | null;
-  originalPrice: number | null;
-  bestLabel: string | null;
-  bestRequiredQty: number | null;
-  bestTotalPrice: number | null;
-  bestEffectiveUnitPrice: number | null;
-  bestSavingPercent: number | null;
-  allOptions: ProductPromotionDealOption[] | null;
-  validFrom: string | null;
-  validTo: string | null;
-  validDates: string[] | null;
-  mixGroupCode: string | null;
-  displayText: string | null;
-}
-
-export interface PromotionGroupRow {
-  id: string;
-  uploadId: string;
-  mixGroupCode: string;
-  displayName: string | null;
-  categoryName: string | null;
-  skuCodes: string[];
-  productCount: number;
-  bestLabel: string | null;
-  bestTotalPrice: number | null;
-  bestSavingPercent: number | null;
-  representativeImageUrl: string | null;
+  originalPrice: number;
+  /** base + 至多一个 add-on 组合 */
+  baseOfferId: string;
+  addonOfferId: string | null;
+  /** 单品摊销最低支付金额（套餐总价 / 件数） */
+  bestUnitPrice: number;
+  /** 套餐总价（base 算出来的 Q 件总价；A 机制 = 单件价） */
+  bestBundleTotal: number;
+  bestQty: number;
+  bestSavingPercent: number;
+  /** 拼装好的默认文案 */
+  defaultCopy: string;
+  /** 池子上下文，仅 B/D 机制有 */
+  poolLabel: string | null;
+  poolSize: number | null;
 }
 
 export interface ActivePromotionsResponse {
-  upload: PromotionUpload | null;
-  products: ProductPromotion[];
-  groups: PromotionGroupRow[];
+  batches: PromoBatch[];
+  results: PromoBestResult[];
 }
 
 export interface RecommendPromotionsResponse {
-  upload: PromotionUpload | null;
-  products: ProductPromotion[];
-  groups: PromotionGroupRow[];
+  batches: PromoBatch[];
+  results: PromoBestResult[];
+}
+
+export interface UploadResult {
+  batch: PromoBatch;
+  warnings: Array<{ sheet: string; row: number; reason: string; raw?: unknown }>;
 }
 
 // ============================================================================
