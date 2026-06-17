@@ -1,13 +1,15 @@
 /**
- * 门店洞察 + 调研问卷（聊一聊）路由
+ * 门店洞察 + 调研问卷(聊一聊)路由
  *
  *  GET  /insights                       本店周边洞察
  *  PUT  /insights                       手动写入洞察
- *  POST /insights/ai/report             AI 生成周边洞察报告（流式）
- *  GET  /insights/surveys/questions     问卷题目（scene 可空 = 全店）
+ *  GET  /insights/surveys/questions     问卷题目(scene 可空 = 全店)
  *  PUT  /insights/surveys/questions     保存/重置题目
- *  POST /insights/surveys/questions/ai  AI 生成题目（流式，仅场景问卷）
+ *  POST /insights/surveys/questions/ai  AI 生成题目(流式,仅场景问卷,bootstrap 的兜底)
  *  PUT  /insights/surveys/answers       提交答案
+ *
+ * 注:V028 起 4 字段洞察由后端 ensureStoreInsight (登录/切店触发) 自动生成,
+ *    原 POST /insights/ai/report 流式端点已删除(无 frontend 消费者)。
  */
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
@@ -21,9 +23,7 @@ import {
   getStoreInsight, upsertStoreInsight,
 } from '../services/surveys.service.js';
 import { writeAuditEvent } from '../services/audit.service.js';
-import {
-  buildInsightInputs, buildQuestionsInputs, streamToClient,
-} from '../services/ai-shelves.service.js';
+import { buildQuestionsInputs, streamToClient } from '../services/ai-shelves.service.js';
 import { buildDifyUser } from '../lib/dify-user.js';
 
 export const insightsRouter = Router();
@@ -64,19 +64,6 @@ insightsRouter.put(
       targetStoreId: req.user!.currentStoreId!,
     }).catch(() => {});
     res.json(out);
-  }),
-);
-
-insightsRouter.post(
-  '/insights/ai/report', requireAuth, requireStore,
-  asyncHandler(async (req, res) => {
-    const inputs = await buildInsightInputs({ storeId: req.user!.currentStoreId! });
-    void writeAuditEvent({
-      eventKind: 'insight_generate',
-      actorUserId: req.user!.id, isAiCall: true, aiWorkflow: 'insight',
-      targetStoreId: req.user!.currentStoreId!,
-    }).catch(() => {});
-    await streamToClient('insight', inputs, buildDifyUser(req.user!), res);
   }),
 );
 

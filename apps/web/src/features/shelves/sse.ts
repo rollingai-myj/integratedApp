@@ -93,143 +93,26 @@ export function tryParseDifyValue(raw: unknown): unknown {
   }
 }
 
-// ---- align workflow（诊断） 输出解析 -------------------------------------
+// ---- align / selection 类型(extractor 已迁后端 ai-shelves.service.ts) ------
+// V028: 解析逻辑搬到 ai-shelves.service.ts(extractDiagnosis / extractStrategy /
+//        extractVirtualShelf);前端只保留 shape 用于 setState 类型对齐(raw_outputs.parsed
+//        从轮询拿)。questions extractor 保留 — QAPage bootstrap 兜底仍走 SSE。
 
 export interface DiagnosisResult {
-  /** 客群分析 */
-  paragraphCustomer: string;
-  /** 竞争分析 */
-  paragraphCompetition: string;
-  /** 现状分析 */
-  paragraphStatus: string;
+  /** 客群分析 */ paragraphCustomer: string;
+  /** 竞争分析 */ paragraphCompetition: string;
+  /** 现状分析 */ paragraphStatus: string;
 }
-
-/**
- * Dify align 工作流返回 outputs.Diagnosis（JSON 字符串），内部 { diagnosis: { paragraph_* } }
- * 兜底兼容：直接放 outputs.paragraph_*；嵌在 outputs.text 里的情况
- */
-export function extractDiagnosis(outputs: Record<string, unknown>): DiagnosisResult | null {
-  const candidates: unknown[] = [
-    outputs.Diagnosis,
-    outputs.diagnosis,
-    outputs.result,
-    outputs.text,
-    outputs,
-  ];
-  for (const c of candidates) {
-    const v = tryParseDifyValue(c);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
-    const o = v as Record<string, unknown>;
-    // 可能是 { diagnosis: { paragraph_* } }，也可能直接是 { paragraph_* }
-    const inner = (o.diagnosis && typeof o.diagnosis === 'object' && !Array.isArray(o.diagnosis))
-      ? (o.diagnosis as Record<string, unknown>)
-      : o;
-    const customer = String(inner.paragraph_customer ?? inner.paragraphCustomer ?? '');
-    const competition = String(inner.paragraph_competition ?? inner.paragraphCompetition ?? '');
-    const status = String(inner.paragraph_status ?? inner.paragraphStatus ?? '');
-    if (customer || competition || status) {
-      return {
-        paragraphCustomer: customer,
-        paragraphCompetition: competition,
-        paragraphStatus: status,
-      };
-    }
-  }
-  return null;
-}
-
-// ---- selection workflow（选品方案） 输出解析 -----------------------------
 
 export interface StrategyItem {
   skuCode: string;
   skuName: string;
   spec: string;
-  /** 原版动作字符串：含「上架」「停止进货」「补充上架」等，下游用 classifyAction 归一 */
+  /** 含「上架」「停止进货」「补充上架」等,下游 classifyAction 归一 */
   action: string;
   tags: string[];
   reason: string;
   avg90DaySales: string;
-}
-
-export interface StrategyResult {
-  name: string;
-  description: string;
-  items: StrategyItem[];
-}
-
-/** 把 6/7 位 sku code 左补 0 到 8 位（原版 padSkuCode） */
-function padSkuCode(v: unknown): string {
-  const s = String(v ?? '').trim();
-  if (/^\d+$/.test(s) && s.length < 8) return s.padStart(8, '0');
-  return s;
-}
-
-function looksLikeStrategy(o: unknown): o is Record<string, unknown> {
-  if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
-  const r = o as Record<string, unknown>;
-  return (
-    Array.isArray(r.skus) ||
-    Array.isArray(r['SKU列表']) ||
-    typeof r.name === 'string' ||
-    typeof r['策略名称'] === 'string'
-  );
-}
-
-function coerceStrategyList(v: unknown): Record<string, unknown>[] | null {
-  const parsed = tryParseDifyValue(v);
-  if (parsed == null) return null;
-  if (Array.isArray(parsed)) return parsed as Record<string, unknown>[];
-  if (looksLikeStrategy(parsed)) return [parsed];
-  return null;
-}
-
-function normalizeStrategy(item: Record<string, unknown>): StrategyResult {
-  const skusRaw =
-    (Array.isArray(item.skus) ? item.skus
-    : Array.isArray(item['SKU列表']) ? item['SKU列表']
-    : []) as Array<Record<string, unknown>>;
-  return {
-    name: String(item.name ?? item['策略名称'] ?? ''),
-    description: String(item.description ?? item['策略描述'] ?? ''),
-    items: skusRaw.map((s) => ({
-      skuCode: padSkuCode(s.skuCode ?? s['商品代码']),
-      skuName: String(s.skuName ?? s['商品名称'] ?? ''),
-      spec: String(s.spec ?? s['规格'] ?? ''),
-      action: String(s.action ?? s['建议动作'] ?? ''),
-      tags: Array.isArray(s.tags) ? (s.tags as string[]).map(String) : [],
-      reason: String(s.reason ?? s['理由'] ?? ''),
-      avg90DaySales: String(s.avg90DaySales ?? s['日均销量'] ?? ''),
-    })),
-  };
-}
-
-export function extractStrategy(outputs: Record<string, unknown>): StrategyResult | null {
-  // 按 legacy difyApi.ts 的优先级扫描
-  for (const key of ['Selection', 'ShelfAiResult', 'SelectionResult', 'result', 'text', 'output']) {
-    const list = coerceStrategyList(outputs[key]);
-    if (list && list.length) return normalizeStrategy(list[0]!);
-  }
-  // outputs 自身就是策略对象
-  const self = coerceStrategyList(outputs);
-  if (self && self.length) return normalizeStrategy(self[0]!);
-  // 兜底：扫描所有值
-  for (const v of Object.values(outputs)) {
-    const list = coerceStrategyList(v);
-    if (list && list.length) return normalizeStrategy(list[0]!);
-  }
-  return null;
-}
-
-// ---- virtual-shelf workflow 输出解析 -------------------------------------
-
-/** virtual-shelf 输出结构由 Dify 工作流自定义，前端 VirtualShelfRenderer 直接消费 raw */
-export function extractVirtualShelf(outputs: Record<string, unknown>): unknown {
-  // 优先常见 key，否则透传整个 outputs
-  for (const key of ['VirtualShelf', 'virtual_shelf', 'result', 'text']) {
-    const v = tryParseDifyValue(outputs[key]);
-    if (v != null) return v;
-  }
-  return outputs;
 }
 
 // ---- questions workflow 输出解析 -----------------------------------------

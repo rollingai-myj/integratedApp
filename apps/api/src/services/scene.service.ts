@@ -129,14 +129,22 @@ export async function getStoreSceneOverview(storeId: string): Promise<SceneOverv
 
 // ---- runtime ---------------------------------------------------------------
 
+export type AiTaskStatus = 'idle' | 'processing' | 'completed' | 'failed';
+
 export interface SceneRuntime {
   scene: number;
   status: 'empty' | 'photo_uploaded' | 'detected' | 'reviewing' | 'confirmed';
   photos: unknown[];
   detectionData: Record<string, unknown>;
-  virtualStatus: 'idle' | 'processing' | 'completed' | 'failed';
+  virtualStatus: AiTaskStatus;
   virtualRawOutputs: unknown;
   virtualContext: unknown;
+  /** V028: align 工作流(三段诊断) 后台状态 — 替换原前端 SSE IIFE */
+  diagnoseStatus: AiTaskStatus;
+  diagnoseRawOutputs: unknown;
+  /** V028: selection 工作流(选品策略) 后台状态 — 替换原前端 SSE IIFE */
+  strategyStatus: AiTaskStatus;
+  strategyRawOutputs: unknown;
   lastSnapshot: unknown;
   envCrowd: string | null;
   envCompetitor: string | null;
@@ -153,6 +161,10 @@ function rowToRuntime(r: any): SceneRuntime {
     virtualStatus: r.virtual_status,
     virtualRawOutputs: r.virtual_raw_outputs,
     virtualContext: r.virtual_context,
+    diagnoseStatus: r.diagnose_status,
+    diagnoseRawOutputs: r.diagnose_raw_outputs,
+    strategyStatus: r.strategy_status,
+    strategyRawOutputs: r.strategy_raw_outputs,
     lastSnapshot: r.last_snapshot,
     envCrowd: r.env_crowd,
     envCompetitor: r.env_competitor,
@@ -168,6 +180,8 @@ export async function getSceneRuntime(
   const res = await query(
     `SELECT scene, status, photos, detection_data,
             virtual_status, virtual_raw_outputs, virtual_context,
+            diagnose_status, diagnose_raw_outputs,
+            strategy_status, strategy_raw_outputs,
             last_snapshot, env_crowd, env_competitor, draft, updated_at
        FROM store_scene_state
       WHERE store_id = $1 AND scene = $2 LIMIT 1`,
@@ -180,9 +194,13 @@ export interface UpsertRuntimeInput {
   status?: SceneRuntime['status'];
   photos?: unknown[];
   detectionData?: Record<string, unknown>;
-  virtualStatus?: SceneRuntime['virtualStatus'];
+  virtualStatus?: AiTaskStatus;
   virtualRawOutputs?: unknown;
   virtualContext?: unknown;
+  diagnoseStatus?: AiTaskStatus;
+  diagnoseRawOutputs?: unknown;
+  strategyStatus?: AiTaskStatus;
+  strategyRawOutputs?: unknown;
   lastSnapshot?: unknown;
   envCrowd?: string | null;
   envCompetitor?: string | null;
@@ -207,6 +225,12 @@ export async function upsertSceneRuntime(
       patch.virtualRawOutputs !== undefined ? patch.virtualRawOutputs : existing?.virtualRawOutputs ?? null,
     virtualContext:
       patch.virtualContext !== undefined ? patch.virtualContext : existing?.virtualContext ?? null,
+    diagnoseStatus: patch.diagnoseStatus ?? existing?.diagnoseStatus ?? 'idle',
+    diagnoseRawOutputs:
+      patch.diagnoseRawOutputs !== undefined ? patch.diagnoseRawOutputs : existing?.diagnoseRawOutputs ?? null,
+    strategyStatus: patch.strategyStatus ?? existing?.strategyStatus ?? 'idle',
+    strategyRawOutputs:
+      patch.strategyRawOutputs !== undefined ? patch.strategyRawOutputs : existing?.strategyRawOutputs ?? null,
     lastSnapshot:
       patch.lastSnapshot !== undefined ? patch.lastSnapshot : existing?.lastSnapshot ?? null,
     envCrowd: patch.envCrowd !== undefined ? patch.envCrowd : existing?.envCrowd ?? null,
@@ -217,10 +241,15 @@ export async function upsertSceneRuntime(
   await query(
     `INSERT INTO store_scene_state
        (store_id, scene, status, photos, detection_data, virtual_status,
-        virtual_raw_outputs, virtual_context, last_snapshot,
-        env_crowd, env_competitor, draft, updated_by)
+        virtual_raw_outputs, virtual_context,
+        diagnose_status, diagnose_raw_outputs,
+        strategy_status, strategy_raw_outputs,
+        last_snapshot, env_crowd, env_competitor, draft, updated_by)
      VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6,
-             $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12::jsonb, $13)
+             $7::jsonb, $8::jsonb,
+             $9, $10::jsonb,
+             $11, $12::jsonb,
+             $13::jsonb, $14, $15, $16::jsonb, $17)
      ON CONFLICT (store_id, scene) DO UPDATE
        SET status = EXCLUDED.status,
            photos = EXCLUDED.photos,
@@ -228,6 +257,10 @@ export async function upsertSceneRuntime(
            virtual_status = EXCLUDED.virtual_status,
            virtual_raw_outputs = EXCLUDED.virtual_raw_outputs,
            virtual_context = EXCLUDED.virtual_context,
+           diagnose_status = EXCLUDED.diagnose_status,
+           diagnose_raw_outputs = EXCLUDED.diagnose_raw_outputs,
+           strategy_status = EXCLUDED.strategy_status,
+           strategy_raw_outputs = EXCLUDED.strategy_raw_outputs,
            last_snapshot = EXCLUDED.last_snapshot,
            env_crowd = EXCLUDED.env_crowd,
            env_competitor = EXCLUDED.env_competitor,
@@ -241,6 +274,10 @@ export async function upsertSceneRuntime(
       merged.virtualStatus,
       merged.virtualRawOutputs !== null ? JSON.stringify(merged.virtualRawOutputs) : null,
       merged.virtualContext !== null ? JSON.stringify(merged.virtualContext) : null,
+      merged.diagnoseStatus,
+      merged.diagnoseRawOutputs !== null ? JSON.stringify(merged.diagnoseRawOutputs) : null,
+      merged.strategyStatus,
+      merged.strategyRawOutputs !== null ? JSON.stringify(merged.strategyRawOutputs) : null,
       merged.lastSnapshot !== null ? JSON.stringify(merged.lastSnapshot) : null,
       merged.envCrowd, merged.envCompetitor,
       merged.draft !== null ? JSON.stringify(merged.draft) : null,
@@ -358,6 +395,10 @@ export async function applyAdjustment(args: {
               virtual_status = 'idle'::scene_virtual_status,
               virtual_raw_outputs = NULL,
               virtual_context = NULL,
+              diagnose_status = 'idle'::scene_virtual_status,
+              diagnose_raw_outputs = NULL,
+              strategy_status = 'idle'::scene_virtual_status,
+              strategy_raw_outputs = NULL,
               updated_at = now()
         WHERE store_id = $1 AND scene = $2`,
       [args.storeId, args.scene],
