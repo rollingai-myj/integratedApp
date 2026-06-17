@@ -142,6 +142,7 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
   if (offersRes.rows.length === 0) return { batches, results: [] };
 
   const skuCodes = Array.from(new Set(offersRes.rows.map((r) => r.sku_code)));
+  // 主数据(hq_products + hq_categories) — 命中即权威
   const ctxRes = await query<ProductCtxRow>(
     `SELECT p.sku_code, p.product_name, p.unit, c.category_name
        FROM hq_products p
@@ -150,6 +151,15 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
     [skuCodes],
   );
   const ctx = new Map(ctxRes.rows.map((r) => [r.sku_code, r]));
+  // 兜底:本次上传里的档案行(member_price / weekend_beer 带'大类'),按 sku 取一条
+  const rawCtxRes = await query<{ sku_code: string; sku_name_original: string; unit: string | null; category_name: string | null }>(
+    `SELECT DISTINCT ON (sku_code) sku_code, sku_name_original, unit, category_name
+       FROM hq_promo_raw_items
+      WHERE sku_code = ANY($1) AND category_name IS NOT NULL
+   ORDER BY sku_code, created_at DESC`,
+    [skuCodes],
+  );
+  const rawCtx = new Map(rawCtxRes.rows.map((r) => [r.sku_code, r]));
 
   const offersBySku = new Map<string, OfferRow[]>();
   for (const o of offersRes.rows) {
@@ -172,11 +182,12 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
     const baseOffer = pricerOffers[best.baseIdx]!;
     const addonOffer = best.addonIdx != null ? pricerOffers[best.addonIdx]! : null;
     const c = ctx.get(sku);
+    const raw = rawCtx.get(sku);
     results.push({
       skuCode: sku,
-      productName: c?.product_name ?? sku,
-      unit: c?.unit ?? null,
-      categoryName: c?.category_name ?? null,
+      productName: c?.product_name ?? raw?.sku_name_original ?? sku,
+      unit: c?.unit ?? raw?.unit ?? null,
+      categoryName: c?.category_name ?? raw?.category_name ?? null,
       originalPrice: baseOffer.originalPrice,
       baseOfferId: rows[best.baseIdx]!.id,
       addonOfferId: best.addonIdx != null ? rows[best.addonIdx]!.id : null,

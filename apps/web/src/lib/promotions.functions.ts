@@ -36,6 +36,12 @@ interface CategoryItem {
   best_valid_to?: string | null;
   best_valid_dates?: string[] | null;
   all_options?: null;
+  // 凑单组字段(仅 is_group=true 时填充;池子里 N 个 sku 共享同一条促销规则)
+  is_group?: boolean;
+  group_id?: string | null;
+  brand_label?: string | null;
+  group_members?: Array<{ sku: string; productName: string }> | null;
+  best_applies_to_skus?: string[] | null;
 }
 
 export interface PersonalizedPromotionsResult {
@@ -113,11 +119,51 @@ export async function getPersonalizedPromotions(): Promise<PersonalizedPromotion
       }
     }
 
+    // 先按 poolLabel 聚一遍 — size > 1 的池子要发一张'凑单组'卡(放在该 category 的最前面)
+    const poolGroups = new Map<string, PromoBestResult[]>();
+    for (const p of results) {
+      if (!p.poolLabel) continue;
+      if (!poolGroups.has(p.poolLabel)) poolGroups.set(p.poolLabel, []);
+      poolGroups.get(p.poolLabel)!.push(p);
+    }
+
     const byCategory = new Map<string, CategoryItem[]>();
     const pushTo = (g: string, item: CategoryItem) => {
       if (!byCategory.has(g)) byCategory.set(g, []);
       byCategory.get(g)!.push(item);
     };
+
+    // 1) 凑单组卡(每个 size > 1 的池子一张) — 注:成员单品仍会另出单品卡,故意不去重
+    for (const [poolLabel, members] of poolGroups) {
+      if (members.length < 2) continue;
+      const rep = members.reduce((a, b) => (b.bestSavingPercent > a.bestSavingPercent ? b : a));
+      const origSum = members.reduce((s, m) => s + (m.originalPrice ?? 0), 0);
+      const item: CategoryItem = {
+        sku: `group:${poolLabel}`,
+        product_name: poolLabel.split('/')[1] ?? poolLabel,
+        unit: rep.unit ?? null,
+        original_price: origSum > 0 ? origSum : null,
+        category: rep.categoryName ?? null,
+        best_label: rep.defaultCopy,
+        best_qty: members.length,
+        best_total: rep.bestBundleTotal,
+        best_effective_price: rep.bestUnitPrice,
+        best_saving_percent: rep.bestSavingPercent,
+        display_text: rep.defaultCopy,
+        best_valid_from: null,
+        best_valid_to: null,
+        best_valid_dates: null,
+        all_options: null,
+        is_group: true,
+        group_id: poolLabel,
+        brand_label: poolLabel.split('/')[1] ?? poolLabel,
+        group_members: members.map((m) => ({ sku: m.skuCode, productName: m.productName })),
+        best_applies_to_skus: members.map((m) => m.skuCode),
+      };
+      pushTo(mapCategoryToGroup(item.category ?? ''), item);
+    }
+
+    // 2) 全部单品卡
     for (const p of results) {
       const item = rowToCategoryItem(p);
       pushTo(mapCategoryToGroup(item.category ?? ''), item);

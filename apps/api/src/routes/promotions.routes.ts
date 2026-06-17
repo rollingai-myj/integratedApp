@@ -24,10 +24,12 @@ promotionsRouter.post(
   upload.single('file'),
   asyncHandler(async (req, res) => {
     if (!req.file) throw new AppError(400, ErrorCodes.BAD_REQUEST, '缺少 file 字段');
+    // multer 按 RFC2047 / latin1 解 multipart filename;中文文件名要按 utf8 重解一遍
+    const fileName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
     const result = await uploadPromotion(
       {
         fileBuffer: req.file.buffer,
-        fileName: req.file.originalname,
+        fileName,
         sourceFileUrl: typeof req.body.sourceFileUrl === 'string' ? req.body.sourceFileUrl : undefined,
         notes: typeof req.body.notes === 'string' ? req.body.notes : undefined,
       },
