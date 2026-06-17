@@ -29,7 +29,7 @@ import {
 import { TOKENS } from '../ui/tokens';
 import { I } from '../ui/icons';
 import { scenesApi, detectApi, storeApi, type DetectBox, type StoreSku, type SceneRuntime } from '../api';
-import { readWorkflowFinished, extractDiagnosis, extractStrategy, type DiagnosisResult, type StrategyItem as AiStrategyItem } from '../sse';
+import type { DiagnosisResult, StrategyItem as AiStrategyItem } from '../sse';
 import { classifyStrategyKind, type StrategyKind } from '../lib/strategyAction';
 import { SKIP_REASONS } from '../data';
 import { SkuDetailDialog, type SkuDetailLike } from '../components/SkuDetailDialog';
@@ -38,18 +38,18 @@ import { SkuThumb } from '../components/SkuThumb';
 type Stage = 'photo' | 'diagnosing' | 'diag' | 'review' | 'confirm' | 'applied';
 type Decision = 'accept' | 'skip';
 
+/**
+ * V028: draft 只持 frontend 私有状态(stage/decisions/...)。
+ * diagnose / strategy 的结果与状态由后端 ensureXxx 落到 runtime.{diagnose,strategy}_*,
+ * 前端轮询拿,不再二次往 draft 写。aiError 仍留:detect 报错走 detectError,Dify 报错走 aiError。
+ */
 interface DraftShape {
   stage: Stage;
   reviewIndex?: number;
   decisions?: Decision[];
   skipReasons?: (string | null)[];
-  diagnosis?: DiagnosisResult | null;
-  strategy?: AiStrategyItem[] | null;
   detectBoxes?: DetectBox[] | null;
   detectError?: string | null;
-  /** 诊断/选品后台运行状态，参考 virtualStatus 的语义：退出再进来据此恢复 spinner 或结果 */
-  diagnoseStatus?: 'idle' | 'processing' | 'completed' | 'failed';
-  strategyStatus?: 'idle' | 'processing' | 'completed' | 'failed';
   aiError?: string | null;
 }
 
@@ -69,11 +69,14 @@ export function FlowPage() {
   const runtimeQ = useQuery({
     queryKey: ['scenes', scene, 'runtime'],
     queryFn: () => scenesApi.runtime(scene),
-    // 诊断/选品在后台运行（IIFE 把结果写回 draft）：stage=diagnosing 时 5s 拉一次
-    // 取代原本"只有同一个 tab session 才能拿到结果"的局限，进而支持页面间退出再进入
+    // V028: 诊断/选品状态来自 runtime.diagnose_status / strategy_status (后端 ensureXxx 落库)
+    // 任一为 'processing' 就 5s 轮询一次。关 tab / 刷新照样能恢复。
     refetchInterval: (q) => {
-      const d = (q.state.data as { draft?: DraftShape } | undefined)?.draft;
-      return d?.stage === 'diagnosing' ? 5_000 : false;
+      const r = q.state.data as
+        | { diagnoseStatus?: string; strategyStatus?: string }
+        | undefined;
+      const inFlight = r?.diagnoseStatus === 'processing' || r?.strategyStatus === 'processing';
+      return inFlight ? 5_000 : false;
     },
   });
   const draft = (runtimeQ.data?.draft ?? null) as DraftShape | null;
@@ -115,8 +118,6 @@ export function FlowPage() {
       setPhotos(photosFromServer.map((p) => ({ url: p.url })));
     }
     if (!draft) return;
-    if (draft.diagnosis) setDiagnosis(draft.diagnosis);
-    if (draft.strategy) setStrategy(draft.strategy);
     if (draft.detectBoxes) { setDetectBoxes(draft.detectBoxes); setDetectDone(true); }
     if (draft.detectError) setDetectError(draft.detectError);
     if (draft.aiError) setAiError(draft.aiError);
@@ -132,14 +133,34 @@ export function FlowPage() {
     }
   }, [hydrated, runtimeQ.isSuccess, runtimeQ.isFetching, draft, photosFromServer]);
 
-  // 后台 IIFE 写回 draft.diagnosis / draft.strategy 时（轮询拉到新值），同步到本地 state
-  // 这样跨页面 navigation 回来后，新挂载的 FlowPage 会看到结果并由下方 effect 推进 stage
+  // V028: 轮询 runtime 命中 'completed' 时,从 raw_outputs.parsed 同步到本地 state。
+  // 跨页面 navigation 回来后,新挂载的 FlowPage 会通过这里恢复诊断/选品结果。
   useEffect(() => {
-    if (!diagnosis && draft?.diagnosis) setDiagnosis(draft.diagnosis);
-  }, [diagnosis, draft?.diagnosis]);
+    if (diagnosis) return;
+    const raw = runtimeQ.data?.diagnoseRawOutputs as { parsed?: DiagnosisResult } | null | undefined;
+    if (runtimeQ.data?.diagnoseStatus === 'completed' && raw?.parsed) {
+      setDiagnosis(raw.parsed);
+    }
+  }, [diagnosis, runtimeQ.data?.diagnoseStatus, runtimeQ.data?.diagnoseRawOutputs]);
   useEffect(() => {
-    if (!strategy && draft?.strategy) setStrategy(draft.strategy);
-  }, [strategy, draft?.strategy]);
+    if (strategy) return;
+    const raw = runtimeQ.data?.strategyRawOutputs as { parsed?: { items?: AiStrategyItem[] } } | null | undefined;
+    if (runtimeQ.data?.strategyStatus === 'completed' && raw?.parsed?.items) {
+      setStrategy(raw.parsed.items);
+    }
+  }, [strategy, runtimeQ.data?.strategyStatus, runtimeQ.data?.strategyRawOutputs]);
+
+  // V028: 失败状态从 runtime 拿,统一进 aiError 展示
+  useEffect(() => {
+    const diagErr = (runtimeQ.data?.diagnoseRawOutputs as { error?: string } | null)?.error;
+    const stratErr = (runtimeQ.data?.strategyRawOutputs as { error?: string } | null)?.error;
+    if (runtimeQ.data?.diagnoseStatus === 'failed' && diagErr) {
+      setAiError(`诊断失败:${diagErr}`);
+    } else if (runtimeQ.data?.strategyStatus === 'failed' && stratErr) {
+      setAiError((prev) => prev ?? `方案生成失败:${stratErr}`);
+    }
+  }, [runtimeQ.data?.diagnoseStatus, runtimeQ.data?.strategyStatus,
+      runtimeQ.data?.diagnoseRawOutputs, runtimeQ.data?.strategyRawOutputs]);
 
   // ---- 草稿写入（增量 merge） --------------------------------------------
 
@@ -233,19 +254,15 @@ export function FlowPage() {
     setDiagnosis(null);
     setStrategy(null);
 
-    // status='processing' + 清掉上一轮残留：让 LastPage 风格的轮询能识别"运行中"
+    // V028: stage 推进 + 清残留(diagnose/strategy 状态走 runtime,不再写 draft)
     saveDraft.mutate({
       stage: 'diagnosing',
-      diagnoseStatus: 'processing',
-      strategyStatus: 'processing',
-      diagnosis: null,
-      strategy: null,
       aiError: null,
       detectBoxes: null,
       detectError: null,
     });
 
-    // detect：用第一张原图（fetch 拿回 blob → 调 detectApi）
+    // detect：用第一张原图(fetch 拿回 blob → 调 detectApi) — 非 Dify, 保留前端 IIFE
     void (async () => {
       try {
         const r = await fetch(firstPhotoUrl);
@@ -265,36 +282,16 @@ export function FlowPage() {
       }
     })();
 
-    // diagnose SSE —— 即使页面被切走，IIFE 仍在 browser 后台跑；完成后写回 draft
-    void (async () => {
-      try {
-        const resp = await scenesApi.streamDiagnose(scene, firstPhotoUrl);
-        const outputs = await readWorkflowFinished(resp);
-        const diag = extractDiagnosis(outputs);
-        setDiagnosis(diag);
-        saveDraft.mutate({ diagnosis: diag, diagnoseStatus: 'completed' });
-      } catch (e) {
-        const msg = `诊断失败：${(e as Error).message}`;
-        setAiError(msg);
-        saveDraft.mutate({ diagnoseStatus: 'failed', aiError: msg });
-      }
-    })();
-
-    // strategy SSE
-    void (async () => {
-      try {
-        const resp = await scenesApi.streamStrategy(scene);
-        const outputs = await readWorkflowFinished(resp);
-        const strat = extractStrategy(outputs);
-        const items = strat?.items ?? [];
-        setStrategy(items);
-        saveDraft.mutate({ strategy: items, strategyStatus: 'completed' });
-      } catch (e) {
-        const msg = `方案生成失败：${(e as Error).message}`;
-        setAiError((prev) => prev ?? msg);
-        saveDraft.mutate({ strategyStatus: 'failed', aiError: msg });
-      }
-    })();
+    // V028: Dify align / selection 触发后台任务,不读 SSE。后端 ensureXxx 落
+    // runtime.{diagnose,strategy}_status / _raw_outputs;轮询自动拉。
+    void scenesApi.triggerDiagnose(scene, firstPhotoUrl).catch((e) => {
+      setAiError(`诊断触发失败:${(e as Error).message}`);
+    });
+    void scenesApi.triggerStrategy(scene).catch((e) => {
+      setAiError((prev) => prev ?? `方案触发失败:${(e as Error).message}`);
+    });
+    // 触发后立即 invalidate 让 refetchInterval 拉一次,把 status 切到 'processing'
+    void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
   };
 
   // 诊断结果出来就直接进 diag 展示（不等选品）；选品结果在按钮区域单独显示加载/启用状态。
@@ -399,32 +396,10 @@ export function FlowPage() {
       void qc.invalidateQueries({ queryKey: ['scenes', 'overview'] });
       void qc.invalidateQueries({ queryKey: ['scenes', scene] });
       setStage('applied');
-      // 顺手触发虚拟陈列生成（不等结果）；带 2 次重试 + virtualStatus 状态机
-      // Dify virtual-shelf 工作流耗时 5~10 分钟，期间靠 virtualStatus='processing' 让 LastPage 显示加载态
-      void (async () => {
-        await scenesApi.saveRuntime(scene, { virtualStatus: 'processing' }).catch(() => {});
-        void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
-        const MAX_ATTEMPTS = 3;
-        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-          try {
-            const resp = await scenesApi.streamVirtualShelf(scene);
-            const outputs = await readWorkflowFinished(resp);
-            await scenesApi.saveRuntime(scene, {
-              virtualStatus: 'completed',
-              virtualRawOutputs: outputs,
-            });
-            void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
-            return;
-          } catch (err) {
-            if (attempt < MAX_ATTEMPTS) {
-              await new Promise((r) => setTimeout(r, 5_000 * attempt));
-              continue;
-            }
-            await scenesApi.saveRuntime(scene, { virtualStatus: 'failed' }).catch(() => {});
-            void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
-          }
-        }
-      })();
+      // V028: virtual-shelf 不再前端触发 — apply 路由内部已 fire-and-forget 触发 ensureVirtualShelf。
+      // LastPage 通过 runtime.virtualStatus 轮询拿状态(5~10 分钟级,关 tab 仍然继续)。
+      // 这里 invalidate 一次让 LastPage 即刻看到 virtual_status='processing'。
+      void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
     },
   });
 

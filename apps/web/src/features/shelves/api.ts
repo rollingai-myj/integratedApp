@@ -84,14 +84,22 @@ export interface StoreSku {
   salesQtyChange30d: number | null;
 }
 
+export type AiTaskStatus = 'idle' | 'processing' | 'completed' | 'failed';
+
 export interface SceneRuntime {
   scene: number;
   status: 'empty' | 'photo_uploaded' | 'detected' | 'reviewing' | 'confirmed';
   photos: Array<{ url: string }>;
   detectionData: Record<string, unknown>;
-  virtualStatus: 'idle' | 'processing' | 'completed' | 'failed';
+  virtualStatus: AiTaskStatus;
   virtualRawOutputs: unknown;
   virtualContext: unknown;
+  /** V028: align(三段诊断) 后台任务状态,替换原前端 SSE IIFE */
+  diagnoseStatus: AiTaskStatus;
+  diagnoseRawOutputs: unknown;
+  /** V028: selection(选品策略) 后台任务状态 */
+  strategyStatus: AiTaskStatus;
+  strategyRawOutputs: unknown;
   lastSnapshot: unknown;
   envCrowd: string | null;
   envCompetitor: string | null;
@@ -190,17 +198,22 @@ export const scenesApi = {
     return (await res.json()) as { urls: string[] };
   },
 
-  /** SSE：Dify align 工作流（货架对齐 + 三段诊断）。返回原始 Response，给 readWorkflowFinished 消费 */
-  streamDiagnose: (scene: number, photoUrl: string, signal?: AbortSignal): Promise<Response> =>
-    sseFetch(`${BASE}/scenes/${scene}/ai/diagnose`, { photoUrl }, signal),
+  /**
+   * V028: 触发 Dify align(三段诊断) 后台任务。返回 202 立即,前端轮询 runtime.diagnoseStatus。
+   * 不再 SSE 透传 — 关 tab/刷新页面任务仍在 API 进程跑。
+   */
+  triggerDiagnose: (scene: number, photoUrl: string) =>
+    request<{ accepted: boolean }>(`/scenes/${scene}/ai/diagnose`, {
+      method: 'POST', body: { photoUrl },
+    }),
 
-  /** SSE：Dify selection 工作流（选品方案） */
-  streamStrategy: (scene: number, signal?: AbortSignal): Promise<Response> =>
-    sseFetch(`${BASE}/scenes/${scene}/ai/strategy`, {}, signal),
+  /** V028: 触发 Dify selection(选品策略) 后台任务。前端轮询 runtime.strategyStatus。 */
+  triggerStrategy: (scene: number) =>
+    request<{ accepted: boolean }>(`/scenes/${scene}/ai/strategy`, { method: 'POST' }),
 
-  /** SSE：Dify virtual-shelf 工作流（陈列示意图） */
-  streamVirtualShelf: (scene: number, signal?: AbortSignal): Promise<Response> =>
-    sseFetch(`${BASE}/scenes/${scene}/ai/virtual-shelf`, {}, signal),
+  /** V028: 触发 Dify virtual-shelf 后台任务。前端轮询 runtime.virtualStatus。 */
+  triggerVirtualShelf: (scene: number) =>
+    request<{ accepted: boolean }>(`/scenes/${scene}/ai/virtual-shelf`, { method: 'POST' }),
 };
 
 /** 调商品识别 detect 端点 —— Blob → base64 + JSON POST */

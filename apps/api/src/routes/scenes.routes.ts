@@ -28,13 +28,11 @@ import {
 import { ossService } from '../services/oss.service.js';
 import { writeAuditEvent } from '../services/audit.service.js';
 import {
-  buildAlignInputs, buildStrategyInputs, buildVirtualShelfInputs,
-  streamToClient,
+  ensureDiagnose, ensureStrategy, ensureVirtualShelf,
 } from '../services/ai-shelves.service.js';
 import { computeBenchmarkForScene } from '../services/benchmark.service.js';
 import { config } from '../config/env.js';
 import { logger } from '../lib/logger.js';
-import { buildDifyUser } from '../lib/dify-user.js';
 
 export const scenesRouter = Router();
 
@@ -347,6 +345,8 @@ scenesRouter.post(
       summary: adjustment.summaryText ?? '',
       payload: { scene, addedCount: adjustment.addedCount, removedCount: adjustment.removedCount },
     }).catch(() => {});
+    // V028: 应用调改即触发后台 virtual-shelf 任务,前端不必再单独调 triggerVirtualShelf
+    void ensureVirtualShelf(req.user!.currentStoreId!, scene);
     res.status(201).json(adjustment);
   }),
 );
@@ -445,11 +445,12 @@ scenesRouter.post(
   }),
 );
 
-// ---- AI 业务端点（流式 SSE）--------------------------------------------
+// ---- AI 业务端点(V028: 202 trigger fire-and-forget,前端轮询 runtime 状态) ----
+//
+// 旧 SSE 透传模式(浏览器 IIFE 读流)被替换成"触发后台 ensureXxx → 立刻 202"。
+// 用户关 tab / 刷新页面任务仍在 API 进程跑;前端通过 GET /scenes/:scene/runtime
+// 轮询 diagnose_status / strategy_status / virtual_status 字段拿状态。
 
-// photoUrl 可以是 OSS 完整 https URL，也可以是 dev 的本地相对路径（前端补 origin 后给 Dify）
-// 即使本机路径 Dify 拉不到图，也照常调 Dify（让台上有运行记录）；
-// 工作流会跑 fallback 分支或返回空 outputs，前端 extractDiagnosis 兜底显示"AI 未返回内容"
 const diagnoseSchema = z.object({ photoUrl: z.string().min(1) });
 
 scenesRouter.post(
@@ -458,17 +459,15 @@ scenesRouter.post(
     const scene = parseScene(req);
     await assertSceneExists(scene);
     const body = diagnoseSchema.parse(req.body);
-    const inputs = await buildAlignInputs(
-      { storeId: req.user!.currentStoreId!, scene, userId: req.user!.id },
-      body.photoUrl,
-    );
+    const storeId = req.user!.currentStoreId!;
     void writeAuditEvent({
       eventKind: 'scene_ai_diagnose',
       actorUserId: req.user!.id, isAiCall: true, aiWorkflow: 'align',
-      targetStoreId: req.user!.currentStoreId!,
-      payload: { scene },
+      targetStoreId: storeId, payload: { scene },
     }).catch(() => {});
-    await streamToClient('align', inputs, buildDifyUser(req.user!), res);
+    // fire-and-forget — ensureDiagnose 内部自带 in-flight 去重 + status 状态机
+    void ensureDiagnose(storeId, scene, body.photoUrl);
+    res.status(202).json({ accepted: true });
   }),
 );
 
@@ -477,16 +476,14 @@ scenesRouter.post(
   asyncHandler(async (req, res) => {
     const scene = parseScene(req);
     await assertSceneExists(scene);
-    const inputs = await buildStrategyInputs({
-      storeId: req.user!.currentStoreId!, scene, userId: req.user!.id,
-    });
+    const storeId = req.user!.currentStoreId!;
     void writeAuditEvent({
       eventKind: 'scene_ai_strategy',
       actorUserId: req.user!.id, isAiCall: true, aiWorkflow: 'selection',
-      targetStoreId: req.user!.currentStoreId!,
-      payload: { scene },
+      targetStoreId: storeId, payload: { scene },
     }).catch(() => {});
-    await streamToClient('selection', inputs, buildDifyUser(req.user!), res);
+    void ensureStrategy(storeId, scene);
+    res.status(202).json({ accepted: true });
   }),
 );
 
@@ -495,15 +492,13 @@ scenesRouter.post(
   asyncHandler(async (req, res) => {
     const scene = parseScene(req);
     await assertSceneExists(scene);
-    const inputs = await buildVirtualShelfInputs({
-      storeId: req.user!.currentStoreId!, scene,
-    });
+    const storeId = req.user!.currentStoreId!;
     void writeAuditEvent({
       eventKind: 'scene_virtual_generate',
       actorUserId: req.user!.id, isAiCall: true, aiWorkflow: 'virtual_shelf',
-      targetStoreId: req.user!.currentStoreId!,
-      payload: { scene },
+      targetStoreId: storeId, payload: { scene },
     }).catch(() => {});
-    await streamToClient('virtual-shelf', inputs, buildDifyUser(req.user!), res);
+    void ensureVirtualShelf(storeId, scene);
+    res.status(202).json({ accepted: true });
   }),
 );

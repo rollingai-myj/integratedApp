@@ -62,10 +62,19 @@ export function LastPage() {
   const virtualReady = rt?.virtualStatus === 'completed';
   const virtualFailed = rt?.virtualStatus === 'failed';
 
-  // 从 sku_lct 推每个货架的宽度（cm）：取每个 shelf_id 上所有 end_x 的最大值并向上取整
-  // 没有真实 store_scene_shelves 的 widths 兜底；context.shelfWidths 留空会默认 [120] 导致比例失真
+  // V028: virtualRawOutputs 现在被后端包成 { raw: <Dify outputs>, parsed: <extracted> }。
+  // 兼容老格式(直接是 Dify outputs)做 unwrap。
+  const virtualOutputs = (() => {
+    const v = rt?.virtualRawOutputs as Record<string, unknown> | null | undefined;
+    if (!v) return null;
+    if ('raw' in v && v.raw && typeof v.raw === 'object') return v.raw as Record<string, unknown>;
+    return v;
+  })();
+
+  // 从 sku_lct 推每个货架的宽度(cm):取每个 shelf_id 上所有 end_x 的最大值并向上取整
+  // 没有真实 store_scene_shelves 的 widths 兜底;context.shelfWidths 留空会默认 [120] 导致比例失真
   const shelfWidths = (() => {
-    const raw = rt?.virtualRawOutputs as Record<string, unknown> | null | undefined;
+    const raw = virtualOutputs;
     if (!raw) return [120];
     let groups: Array<{ skus?: Array<{ shelf_id: number; end_x: number }> }> = [];
     const sku_lct = raw.sku_lct;
@@ -225,7 +234,7 @@ export function LastPage() {
           ) : (
             <Card pad={10}>
               <VirtualShelfRenderer
-                rawOutputs={rt?.virtualRawOutputs}
+                rawOutputs={virtualOutputs}
                 context={{
                   shelfWidths,
                   // 把本次"上架"的 SKU codes 喂给 parser，让 isNewListing 真能被点亮

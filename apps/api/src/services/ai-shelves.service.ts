@@ -33,7 +33,8 @@ function todayInShanghai(): string {
 interface BuildContext {
   storeId: string;
   scene: number;
-  userId: string;
+  /** 仅审计用,build*Inputs 内部不消费;ensureXxx 走 fire-and-forget 路径时无 user 上下文,可省 */
+  userId?: string;
 }
 
 interface StoreContext {
@@ -590,23 +591,6 @@ export async function buildQuestionsInputs(args: {
   };
 }
 
-export async function buildInsightInputs(args: {
-  storeId: string;
-}): Promise<Record<string, unknown>> {
-  const store = await loadStoreCtx(args.storeId);
-  if (!store.location) {
-    return { competitor: { items: [] }, crowdSource: { items: [] } };
-  }
-  const { competitor, crowdSource } = await getOrFetchPoi({
-    storeId: args.storeId,
-    location: store.location,
-  });
-  return {
-    competitor: summarizePois(competitor),
-    crowdSource: summarizePois(crowdSource),
-  };
-}
-
 // ---- 登录触发：确保 store_insights + 各场景问卷 完整 -----------------------
 
 /**
@@ -862,6 +846,269 @@ export async function runStoreLoginBootstrap(storeId: string): Promise<void> {
   await ensureStoreInsight(storeId);
   for (const scene of ENABLED_SCENES) {
     await ensureSceneQuestions(storeId, scene);
+  }
+}
+
+// ============================================================================
+// V028: align / selection / virtual-shelf 三个 Dify 工作流的后台 ensureXxx 范式
+//
+// 替换前端 fetch SSE → 浏览器 IIFE 读流 模式 — 关 tab/刷新页面会丢任务状态。
+// 沿用 ensureStoreInsight / ensureSceneQuestions 的 fire-and-forget + 自吞错误 + in-flight
+// Set 去重 + status enum 持久化 + raw outputs JSONB 落库 范式。
+// ============================================================================
+
+// ---- 输出解析(与 frontend sse.ts 同构,确保 string/object 双形态都能解) -----
+
+function padSkuCode(v: unknown): string {
+  const s = String(v ?? '').trim();
+  if (/^\d+$/.test(s) && s.length < 8) return s.padStart(8, '0');
+  return s;
+}
+
+interface DiagnosisResult {
+  paragraphCustomer: string;
+  paragraphCompetition: string;
+  paragraphStatus: string;
+}
+
+function extractDiagnosis(outputs: Record<string, unknown>): DiagnosisResult | null {
+  const candidates: unknown[] = [
+    outputs.Diagnosis, outputs.diagnosis, outputs.result, outputs.text, outputs,
+  ];
+  for (const c of candidates) {
+    const v = tryParseDifyValue(c);
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+    const o = v as Record<string, unknown>;
+    const inner = (o.diagnosis && typeof o.diagnosis === 'object' && !Array.isArray(o.diagnosis))
+      ? (o.diagnosis as Record<string, unknown>)
+      : o;
+    const customer = String(inner.paragraph_customer ?? inner.paragraphCustomer ?? '');
+    const competition = String(inner.paragraph_competition ?? inner.paragraphCompetition ?? '');
+    const status = String(inner.paragraph_status ?? inner.paragraphStatus ?? '');
+    if (customer || competition || status) {
+      return { paragraphCustomer: customer, paragraphCompetition: competition, paragraphStatus: status };
+    }
+  }
+  return null;
+}
+
+interface StrategyItem {
+  skuCode: string;
+  skuName: string;
+  spec: string;
+  action: string;
+  tags: string[];
+  reason: string;
+  avg90DaySales: string;
+}
+interface StrategyResult { name: string; description: string; items: StrategyItem[] }
+
+function looksLikeStrategy(o: unknown): o is Record<string, unknown> {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+  const r = o as Record<string, unknown>;
+  return (
+    Array.isArray(r.skus) || Array.isArray(r['SKU列表']) ||
+    typeof r.name === 'string' || typeof r['策略名称'] === 'string'
+  );
+}
+function coerceStrategyList(v: unknown): Record<string, unknown>[] | null {
+  const parsed = tryParseDifyValue(v);
+  if (parsed == null) return null;
+  if (Array.isArray(parsed)) return parsed as Record<string, unknown>[];
+  if (looksLikeStrategy(parsed)) return [parsed];
+  return null;
+}
+function normalizeStrategy(item: Record<string, unknown>): StrategyResult {
+  const skusRaw = (Array.isArray(item.skus) ? item.skus
+    : Array.isArray(item['SKU列表']) ? item['SKU列表']
+    : []) as Array<Record<string, unknown>>;
+  return {
+    name: String(item.name ?? item['策略名称'] ?? ''),
+    description: String(item.description ?? item['策略描述'] ?? ''),
+    items: skusRaw.map((s) => ({
+      skuCode: padSkuCode(s.skuCode ?? s['商品代码']),
+      skuName: String(s.skuName ?? s['商品名称'] ?? ''),
+      spec: String(s.spec ?? s['规格'] ?? ''),
+      action: String(s.action ?? s['建议动作'] ?? ''),
+      tags: Array.isArray(s.tags) ? (s.tags as string[]).map(String) : [],
+      reason: String(s.reason ?? s['理由'] ?? ''),
+      avg90DaySales: String(s.avg90DaySales ?? s['日均销量'] ?? ''),
+    })),
+  };
+}
+
+function extractStrategy(outputs: Record<string, unknown>): StrategyResult | null {
+  for (const key of ['Selection', 'ShelfAiResult', 'SelectionResult', 'result', 'text', 'output']) {
+    const list = coerceStrategyList(outputs[key]);
+    if (list && list.length) return normalizeStrategy(list[0]!);
+  }
+  const self = coerceStrategyList(outputs);
+  if (self && self.length) return normalizeStrategy(self[0]!);
+  for (const v of Object.values(outputs)) {
+    const list = coerceStrategyList(v);
+    if (list && list.length) return normalizeStrategy(list[0]!);
+  }
+  return null;
+}
+
+function extractVirtualShelf(outputs: Record<string, unknown>): unknown {
+  for (const key of ['VirtualShelf', 'virtual_shelf', 'result', 'text']) {
+    const v = tryParseDifyValue(outputs[key]);
+    if (v != null) return v;
+  }
+  return outputs;
+}
+
+// ---- 通用状态写入辅助 ---------------------------------------------------
+
+type AiStatusColumn = 'diagnose' | 'strategy' | 'virtual';
+const STATUS_COL: Record<AiStatusColumn, { status: string; raw: string }> = {
+  diagnose: { status: 'diagnose_status', raw: 'diagnose_raw_outputs' },
+  strategy: { status: 'strategy_status', raw: 'strategy_raw_outputs' },
+  virtual:  { status: 'virtual_status',  raw: 'virtual_raw_outputs'  },
+};
+
+async function setAiStatus(
+  storeId: string, scene: number, col: AiStatusColumn,
+  status: 'processing' | 'completed' | 'failed' | 'idle',
+  rawOutputs: unknown,
+): Promise<void> {
+  const c = STATUS_COL[col];
+  await query(
+    `UPDATE store_scene_state
+        SET ${c.status} = $1::scene_virtual_status,
+            ${c.raw}    = $2::jsonb,
+            updated_at  = now()
+      WHERE store_id = $3 AND scene = $4`,
+    [status, rawOutputs == null ? null : JSON.stringify(rawOutputs), storeId, scene],
+  );
+}
+
+async function readAiStatus(
+  storeId: string, scene: number, col: AiStatusColumn,
+): Promise<string | null> {
+  const c = STATUS_COL[col];
+  const res = await query<{ s: string | null }>(
+    `SELECT ${c.status} AS s FROM store_scene_state
+      WHERE store_id = $1 AND scene = $2 LIMIT 1`,
+    [storeId, scene],
+  );
+  return res.rows[0]?.s ?? null;
+}
+
+// ---- ensureDiagnose / ensureStrategy / ensureVirtualShelf -----------------
+
+const diagnoseInFlight = new Set<string>();
+const strategyInFlight = new Set<string>();
+const virtualShelfInFlight = new Set<string>();
+
+/**
+ * 触发 Dify align (三段诊断) 后台任务。
+ * 幂等:status='processing' 或 'completed' 直接跳过 — 想重跑需先 applyAdjustment 或显式重置。
+ * 失败:status='failed' + raw_outputs={error: msg}
+ */
+export async function ensureDiagnose(
+  storeId: string, scene: number, photoUrl: string,
+): Promise<void> {
+  const key = `${storeId}:${scene}`;
+  if (diagnoseInFlight.has(key)) return;
+  diagnoseInFlight.add(key);
+  try {
+    const status = await readAiStatus(storeId, scene, 'diagnose');
+    if (status === 'processing' || status === 'completed') return;
+
+    await setAiStatus(storeId, scene, 'diagnose', 'processing', null);
+    const inputs = await buildAlignInputs({ storeId, scene }, photoUrl);
+
+    let outputs: Record<string, unknown>;
+    try {
+      outputs = await difyService.invoke('align', inputs, { userId: `ensure-diagnose:${storeId}:${scene}` });
+    } catch (err) {
+      logger.warn({ err, storeId, scene }, 'ensureDiagnose: Dify align 调用失败');
+      await setAiStatus(storeId, scene, 'diagnose', 'failed', { error: (err as Error).message });
+      return;
+    }
+    const parsed = extractDiagnosis(outputs);
+    await setAiStatus(storeId, scene, 'diagnose', 'completed', { raw: outputs, parsed });
+    logger.info({ storeId, scene }, 'ensureDiagnose: 已完成');
+  } catch (err) {
+    logger.warn({ err, storeId, scene }, 'ensureDiagnose 异常');
+    await setAiStatus(storeId, scene, 'diagnose', 'failed', { error: (err as Error).message })
+      .catch(() => {});
+  } finally {
+    diagnoseInFlight.delete(key);
+  }
+}
+
+/**
+ * 触发 Dify selection (选品策略) 后台任务。
+ * 用照片不需要,跟 ensureDiagnose 同时由前端"开始调改"触发。
+ */
+export async function ensureStrategy(storeId: string, scene: number): Promise<void> {
+  const key = `${storeId}:${scene}`;
+  if (strategyInFlight.has(key)) return;
+  strategyInFlight.add(key);
+  try {
+    const status = await readAiStatus(storeId, scene, 'strategy');
+    if (status === 'processing' || status === 'completed') return;
+
+    await setAiStatus(storeId, scene, 'strategy', 'processing', null);
+    const inputs = await buildStrategyInputs({ storeId, scene });
+
+    let outputs: Record<string, unknown>;
+    try {
+      outputs = await difyService.invoke('selection', inputs, { userId: `ensure-strategy:${storeId}:${scene}` });
+    } catch (err) {
+      logger.warn({ err, storeId, scene }, 'ensureStrategy: Dify selection 调用失败');
+      await setAiStatus(storeId, scene, 'strategy', 'failed', { error: (err as Error).message });
+      return;
+    }
+    const parsed = extractStrategy(outputs);
+    await setAiStatus(storeId, scene, 'strategy', 'completed', { raw: outputs, parsed });
+    logger.info({ storeId, scene, itemCount: parsed?.items.length ?? 0 }, 'ensureStrategy: 已完成');
+  } catch (err) {
+    logger.warn({ err, storeId, scene }, 'ensureStrategy 异常');
+    await setAiStatus(storeId, scene, 'strategy', 'failed', { error: (err as Error).message })
+      .catch(() => {});
+  } finally {
+    strategyInFlight.delete(key);
+  }
+}
+
+/**
+ * 触发 Dify virtual-shelf (虚拟陈列示意图) 后台任务。
+ * 用 applyAdjustment 之后的调改差量;耗时 5~10 分钟,virtualStatus='processing' 期间
+ * LastPage 显示加载态;成功 → completed + raw_outputs,前端读 raw_outputs.parsed 渲染。
+ */
+export async function ensureVirtualShelf(storeId: string, scene: number): Promise<void> {
+  const key = `${storeId}:${scene}`;
+  if (virtualShelfInFlight.has(key)) return;
+  virtualShelfInFlight.add(key);
+  try {
+    const status = await readAiStatus(storeId, scene, 'virtual');
+    if (status === 'processing') return;
+    // virtual 允许 completed 重跑(applyAdjustment 已 reset 到 idle)
+
+    await setAiStatus(storeId, scene, 'virtual', 'processing', null);
+    const inputs = await buildVirtualShelfInputs({ storeId, scene });
+
+    let outputs: Record<string, unknown>;
+    try {
+      outputs = await difyService.invoke('virtual-shelf', inputs, { userId: `ensure-virtual:${storeId}:${scene}` });
+    } catch (err) {
+      logger.warn({ err, storeId, scene }, 'ensureVirtualShelf: Dify virtual-shelf 调用失败');
+      await setAiStatus(storeId, scene, 'virtual', 'failed', { error: (err as Error).message });
+      return;
+    }
+    const parsed = extractVirtualShelf(outputs);
+    await setAiStatus(storeId, scene, 'virtual', 'completed', { raw: outputs, parsed });
+    logger.info({ storeId, scene }, 'ensureVirtualShelf: 已完成');
+  } catch (err) {
+    logger.warn({ err, storeId, scene }, 'ensureVirtualShelf 异常');
+    await setAiStatus(storeId, scene, 'virtual', 'failed', { error: (err as Error).message })
+      .catch(() => {});
+  } finally {
+    virtualShelfInFlight.delete(key);
   }
 }
 
