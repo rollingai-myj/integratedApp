@@ -73,6 +73,36 @@ describe('parseMechanic', () => {
     expect(m.params).toEqual({ kind: 'pool_threshold', threshold: thr, discount: disc });
   });
 
+  it.each(['任意第2罐半价', '本品第2杯半价', '任意第2桶半价', '第2碗半价', '第2份半价', '第2条半价'])(
+    'bundle nth_ratio (expanded units): %s',
+    (txt) => {
+      const m = parseMechanic(txt)!;
+      expect(m.params).toMatchObject({ subtype: 'nth_ratio', qty_required: 2, nth: 2, ratio: 0.5 });
+    },
+  );
+
+  it.each([
+    ['8元/任意2杯', 2, 8],
+    ['5.9元/任意2条', 2, 5.9],
+    ['15元/任意2桶', 2, 15],
+  ])('bundle fixed_total (expanded units): %s', (txt, qty, total) => {
+    const m = parseMechanic(txt)!;
+    expect(m.params).toMatchObject({ subtype: 'fixed_total', qty_required: qty, total_price: total });
+  });
+
+  it.each([
+    ['加1元多任意1罐', 2, 1],
+    ['加2元多任意1桶', 2, 2],
+  ])('bundle add_extra (expanded units): %s', (txt, qty, add) => {
+    const m = parseMechanic(txt)!;
+    expect(m.params).toMatchObject({ subtype: 'add_extra', qty_required: qty, add_amount: add });
+  });
+
+  it('bundle buy_m_get_n: 买3罐送1罐', () => {
+    const m = parseMechanic('买3罐送1罐')!;
+    expect(m.params).toMatchObject({ subtype: 'buy_m_get_n', m: 3, n: 1 });
+  });
+
   it('返回 null：不可识别', () => {
     expect(parseMechanic('hello world')).toBeNull();
   });

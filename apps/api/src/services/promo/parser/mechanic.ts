@@ -40,11 +40,11 @@ const PATTERNS: Array<{ name: string; test: (t: string) => MechanicMatch | null 
       };
     },
   },
-  // bundle buy_m_get_n: 买 M 送 N / 本品买 M 送 N
+  // bundle buy_m_get_n: 买 M 送 N / 本品买 M 送 N / 买 M罐 送 N罐
   {
     name: 'buy_m_get_n',
     test: (t) => {
-      const m = t.match(/(?:本品)?买\s*([一二两三四五\d]+)\s*送\s*([一二两三四五\d]+)/);
+      const m = t.match(/(?:本品)?买\s*([一二两三四五\d]+)\s*[支瓶包盒袋件个罐杯桶碗份条]?\s*送\s*([一二两三四五\d]+)\s*[支瓶包盒袋件个罐杯桶碗份条]?/);
       if (!m) return null;
       const M = cnDigit(m[1]!); const N = cnDigit(m[2]!);
       if (M == null || N == null) return null;
@@ -59,7 +59,7 @@ const PATTERNS: Array<{ name: string; test: (t: string) => MechanicMatch | null 
   {
     name: 'nth_ratio',
     test: (t) => {
-      const m = t.match(/(?:本品|任意)?第\s*([一二两三四五\d]+)\s*[支瓶包盒袋件个]半价/);
+      const m = t.match(/(?:本品|任意)?第\s*([一二两三四五\d]+)\s*[支瓶包盒袋件个罐杯桶碗份条]半价/);
       if (!m) return null;
       const k = cnDigit(m[1]!);
       if (k == null) return null;
@@ -74,7 +74,7 @@ const PATTERNS: Array<{ name: string; test: (t: string) => MechanicMatch | null 
   {
     name: 'add_extra',
     test: (t) => {
-      const m = t.match(/加\s*(\d+(?:\.\d+)?)\s*元多(?:任意)?\s*([一二两三四五\d]+)\s*[支瓶包盒袋件个]/);
+      const m = t.match(/加\s*(\d+(?:\.\d+)?)\s*元多(?:任意)?\s*([一二两三四五\d]+)\s*[支瓶包盒袋件个罐杯桶碗份条]/);
       if (!m) return null;
       const add = parseFloat(m[1]!); const more = cnDigit(m[2]!);
       if (more == null) return null;
@@ -105,7 +105,7 @@ const PATTERNS: Array<{ name: string; test: (t: string) => MechanicMatch | null 
     name: 'fixed_total_price_first',
     test: (t) => {
       // "9.9元/任意2盒" "8元/任意2瓶" "15元/任意2罐"
-      const m = t.match(/(\d+(?:\.\d+)?)\s*元\s*\/\s*(?:任意)?\s*([一二两三四五\d]+)\s*[支瓶包盒袋件个罐]/);
+      const m = t.match(/(\d+(?:\.\d+)?)\s*元\s*\/\s*(?:任意)?\s*([一二两三四五\d]+)\s*[支瓶包盒袋件个罐杯桶碗份条]/);
       if (!m) return null;
       const q = cnDigit(m[2]!);
       if (q == null) return null;
