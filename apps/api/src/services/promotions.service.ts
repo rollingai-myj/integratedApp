@@ -186,7 +186,9 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
       skuCode: sku,
       productName: c?.product_name ?? raw?.sku_name_original ?? sku,
       unit: c?.unit ?? raw?.unit ?? null,
-      categoryName: c?.category_name ?? raw?.category_name ?? null,
+      // 优先 Excel 大类(粗粒度,跟前端 CATEGORY_GROUP_MAP 一一对应);
+      // 缺 大类 列(brand_coupon sheet)才回落到 hq_categories(细粒度,常 fall to 其他)
+      categoryName: raw?.category_name ?? c?.category_name ?? null,
       originalPrice: baseOffer.originalPrice,
       baseOfferId: rows[best.baseIdx]!.id,
       baseActivityType: baseOffer.activityType,
@@ -196,6 +198,12 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
       bestBundleTotal: best.bundleTotal,
       bestQty: best.qty,
       bestSavingPercent: best.savingPercent,
+      memberOnly: best.memberOnly ? {
+        bundleTotal: best.memberOnly.bundleTotal,
+        unitPrice: best.memberOnly.unitPrice,
+        qty: best.memberOnly.qty,
+        savingPercent: best.memberOnly.savingPercent,
+      } : null,
       poolLabel: baseOffer.poolLabel,
       poolSize: null,  // 池子大小本期不算（UI 可后续按 pool_label 自行 group by）
     });

@@ -119,6 +119,17 @@ function rowToCategoryItem(p: PromoBestResult): CategoryItem {
     productName: p.productName,
     fallback: null,
   });
+  // 「只用会员价」模式专用备选档:label 严格为 '会员价'(strict),即使 best 本身就是
+  // member alone 也独立挂一条,promoMode.ts 走 `=== '会员价'` 拿这条。
+  const memberOnlyOption = p.memberOnly ? [{
+    label: '会员价',
+    requiredQty: p.memberOnly.qty,
+    totalPrice: p.memberOnly.bundleTotal,
+    effectiveUnitPrice: p.memberOnly.unitPrice,
+    savingPercent: (p.memberOnly.savingPercent ?? 0) * 100,
+    validFrom: null as string | null,
+    validTo: null as string | null,
+  }] : [];
   return {
     sku: p.skuCode,
     product_name: p.productName,
@@ -134,15 +145,18 @@ function rowToCategoryItem(p: PromoBestResult): CategoryItem {
     best_valid_from: null,
     best_valid_to: null,
     best_valid_dates: null,
-    all_options: [{
-      label,
-      requiredQty: p.bestQty,
-      totalPrice: p.bestBundleTotal,
-      effectiveUnitPrice: p.bestUnitPrice,
-      savingPercent: savePct,
-      validFrom: null,
-      validTo: null,
-    }],
+    all_options: [
+      {
+        label,
+        requiredQty: p.bestQty,
+        totalPrice: p.bestBundleTotal,
+        effectiveUnitPrice: p.bestUnitPrice,
+        savingPercent: savePct,
+        validFrom: null,
+        validTo: null,
+      },
+      ...memberOnlyOption,
+    ],
   };
 }
 
@@ -216,15 +230,26 @@ export async function getPersonalizedPromotions(): Promise<PersonalizedPromotion
         best_valid_from: null,
         best_valid_to: null,
         best_valid_dates: null,
-        all_options: [{
-          label: repLabel,
-          requiredQty: rep.bestQty,
-          totalPrice: rep.bestBundleTotal,
-          effectiveUnitPrice: rep.bestUnitPrice,
-          savingPercent: repSavePct,
-          validFrom: null,
-          validTo: null,
-        }],
+        all_options: [
+          {
+            label: repLabel,
+            requiredQty: rep.bestQty,
+            totalPrice: rep.bestBundleTotal,
+            effectiveUnitPrice: rep.bestUnitPrice,
+            savingPercent: repSavePct,
+            validFrom: null,
+            validTo: null,
+          },
+          ...(rep.memberOnly ? [{
+            label: '会员价',
+            requiredQty: rep.memberOnly.qty,
+            totalPrice: rep.memberOnly.bundleTotal,
+            effectiveUnitPrice: rep.memberOnly.unitPrice,
+            savingPercent: (rep.memberOnly.savingPercent ?? 0) * 100,
+            validFrom: null,
+            validTo: null,
+          }] : []),
+        ],
         is_group: true,
         group_id: poolLabel,
         brand_label: poolLabel.split('/')[1] ?? poolLabel,

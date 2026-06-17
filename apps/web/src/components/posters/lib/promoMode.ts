@@ -120,10 +120,10 @@ function buildDerivedFromOption(
  * 根据模式从商品的 all_options 推导出"当前最佳"。
  * - stack: 默认用服务端算好的 best_* 字段；validOnly 时若 best 今/明已过期，
  *   在 all_options 里按 savingPercent 降序挑第一条今/明有效的
- * - memberOnly: 筛选 base 为 member_price 的选项（label 以「会员价」开头，含组合如
- *   「会员价 + 满减券」「会员价 + 周二会员日」），按 effectiveUnitPrice 升序挑第一条；
- *   validOnly 时先过滤掉今/明无效的候选。注：用 startsWith 而非 includes，
- *   排除「周末啤酒日 + 周二会员日」这类 base 不是会员价但 label 含「会员日」的组合。
+ * - memberOnly: 严格选 label === '会员价' 的备选档（shim 在 all_options 里专门塞一条
+ *   label 写死为 '会员价' 的不叠 addon 备选档；非 member_price base 的 SKU 没有这档，
+ *   会被过滤为 null → memberOnly 模式下不展示）。按 effectiveUnitPrice 升序挑第一条；
+ *   validOnly 时先过滤掉今/明无效的候选。
  * 选不到返回 null。
  */
 export function deriveBest(
@@ -169,7 +169,7 @@ export function deriveBest(
 
   // memberOnly
   let memberCandidates = allOptions
-    .filter(o => o && o.label && o.label.startsWith('会员价'))
+    .filter(o => o && o.label === '会员价')
     .filter(o => o.totalPrice > 0 && o.effectiveUnitPrice > 0);
   if (validOnly) {
     memberCandidates = memberCandidates.filter(o => isOptionValidTodayOrTomorrow(o));

@@ -495,6 +495,14 @@ export interface PromoBestResult {
   bestQty: number;
   /** 节省占比 0~1 fraction(前端要 ×100 转百分比展示) */
   bestSavingPercent: number;
+  /** 「只用会员价」模式专用:base=member_price 不叠任何 addon 的最优档;
+   *  base 非 member 时为 null;前端用它在 all_options 里塞一档 label='会员价' 的备选 */
+  memberOnly: {
+    bundleTotal: number;
+    unitPrice: number;
+    qty: number;
+    savingPercent: number;
+  } | null;
   /** 池子上下文，仅 B/D 机制有 */
   poolLabel: string | null;
   poolSize: number | null;
