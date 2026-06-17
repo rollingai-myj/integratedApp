@@ -783,10 +783,22 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
           {recoState === 'ok' && (() => {
             const q = query.trim().toLowerCase();
             if (q) {
+              // 去重 by sku:同一个 SKU 可能既在原品类又在「超优惠」分组,搜索别累二次。
+              // 同时:组卡的 product_name 是组名(如"怡宝饮料 品牌满减券"),搜成员
+              // SKU 名字时要看 group_members 里逐个成员名 — 否则进组 SKU 搜不到。
+              const seen = new Set<string>();
               const matched: CategoryItem[] = [];
               for (const c of visibleCategories) {
                 for (const it of c.items) {
-                  if ((it.product_name ?? '').toLowerCase().includes(q)) matched.push(it);
+                  if (seen.has(it.sku)) continue;
+                  const nameHit = (it.product_name ?? '').toLowerCase().includes(q);
+                  const memberHit = it.is_group && (it.group_members ?? []).some(
+                    (m) => (m.productName ?? '').toLowerCase().includes(q),
+                  );
+                  if (nameHit || memberHit) {
+                    seen.add(it.sku);
+                    matched.push(it);
+                  }
                 }
               }
               if (matched.length === 0) {
