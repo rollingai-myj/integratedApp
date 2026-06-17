@@ -13,10 +13,23 @@
  */
 import type {
   ActivePromotionsResponse,
+  PromoActivityType,
   PromoBestResult,
   RecommendPromotionsResponse,
 } from '@myj/shared';
 import { mapCategoryToGroup } from '@/lib/categoryGroups';
+
+/**
+ * base 活动类型 → 海报 promoMode 期望的 label(用作 '只用会员价' 过滤 key)。
+ * Home.tsx 的 memberOnly 过滤认 '会员价'/'会员日' 两个字面值。
+ */
+const ACTIVITY_LABEL: Record<PromoActivityType, string> = {
+  member_price: '会员价',
+  weekend_beer: '周末啤酒日',
+  brand_coupon: '品牌满减券',
+  tuesday_member: '会员日',
+  regular_coupon: '常规优惠券',
+};
 
 const BASE = '/api/v1';
 
@@ -35,7 +48,15 @@ interface CategoryItem {
   best_valid_from?: string | null;
   best_valid_to?: string | null;
   best_valid_dates?: string[] | null;
-  all_options?: null;
+  all_options?: Array<{
+    label: string;
+    requiredQty: number;
+    totalPrice: number;
+    effectiveUnitPrice: number;
+    savingPercent: number;
+    validFrom?: string | null;
+    validTo?: string | null;
+  }> | null;
   // 凑单组字段(仅 is_group=true 时填充;池子里 N 个 sku 共享同一条促销规则)
   is_group?: boolean;
   group_id?: string | null;
@@ -77,6 +98,8 @@ function toISODate(d: string | null | undefined): string | null {
 }
 
 function rowToCategoryItem(p: PromoBestResult): CategoryItem {
+  const savePct = (p.bestSavingPercent ?? 0) * 100;
+  const label = ACTIVITY_LABEL[p.baseActivityType] ?? p.baseActivityType;
   return {
     sku: p.skuCode,
     product_name: p.productName,
@@ -87,12 +110,21 @@ function rowToCategoryItem(p: PromoBestResult): CategoryItem {
     best_qty: p.bestQty,
     best_total: p.bestBundleTotal,
     best_effective_price: p.bestUnitPrice,
-    best_saving_percent: p.bestSavingPercent,
+    best_saving_percent: savePct,
     display_text: p.defaultCopy,
     best_valid_from: null,
     best_valid_to: null,
     best_valid_dates: null,
-    all_options: null,
+    // 仅放当前 base 活动一档 — '只用会员价' 模式按 label 过滤
+    all_options: [{
+      label,
+      requiredQty: p.bestQty,
+      totalPrice: p.bestBundleTotal,
+      effectiveUnitPrice: p.bestUnitPrice,
+      savingPercent: savePct,
+      validFrom: null,
+      validTo: null,
+    }],
   };
 }
 
@@ -138,6 +170,8 @@ export async function getPersonalizedPromotions(): Promise<PersonalizedPromotion
       if (members.length < 2) continue;
       const rep = members.reduce((a, b) => (b.bestSavingPercent > a.bestSavingPercent ? b : a));
       const origSum = members.reduce((s, m) => s + (m.originalPrice ?? 0), 0);
+      const repSavePct = (rep.bestSavingPercent ?? 0) * 100;
+      const repLabel = ACTIVITY_LABEL[rep.baseActivityType] ?? rep.baseActivityType;
       const item: CategoryItem = {
         sku: `group:${poolLabel}`,
         product_name: poolLabel.split('/')[1] ?? poolLabel,
@@ -148,12 +182,20 @@ export async function getPersonalizedPromotions(): Promise<PersonalizedPromotion
         best_qty: members.length,
         best_total: rep.bestBundleTotal,
         best_effective_price: rep.bestUnitPrice,
-        best_saving_percent: rep.bestSavingPercent,
+        best_saving_percent: repSavePct,
         display_text: rep.defaultCopy,
         best_valid_from: null,
         best_valid_to: null,
         best_valid_dates: null,
-        all_options: null,
+        all_options: [{
+          label: repLabel,
+          requiredQty: rep.bestQty,
+          totalPrice: rep.bestBundleTotal,
+          effectiveUnitPrice: rep.bestUnitPrice,
+          savingPercent: repSavePct,
+          validFrom: null,
+          validTo: null,
+        }],
         is_group: true,
         group_id: poolLabel,
         brand_label: poolLabel.split('/')[1] ?? poolLabel,

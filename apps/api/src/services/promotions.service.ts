@@ -190,6 +190,7 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
       categoryName: c?.category_name ?? raw?.category_name ?? null,
       originalPrice: baseOffer.originalPrice,
       baseOfferId: rows[best.baseIdx]!.id,
+      baseActivityType: baseOffer.activityType,
       addonOfferId: best.addonIdx != null ? rows[best.addonIdx]!.id : null,
       bestUnitPrice: best.unitPrice,
       bestBundleTotal: best.bundleTotal,

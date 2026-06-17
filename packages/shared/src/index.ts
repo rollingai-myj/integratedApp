@@ -483,12 +483,15 @@ export interface PromoBestResult {
   originalPrice: number;
   /** base + 至多一个 add-on 组合 */
   baseOfferId: string;
+  /** base 优惠的活动类型(供前端"只用会员价"等过滤) */
+  baseActivityType: PromoActivityType;
   addonOfferId: string | null;
   /** 单品摊销最低支付金额（套餐总价 / 件数） */
   bestUnitPrice: number;
   /** 套餐总价（base 算出来的 Q 件总价；A 机制 = 单件价） */
   bestBundleTotal: number;
   bestQty: number;
+  /** 节省占比 0~1 fraction(前端要 ×100 转百分比展示) */
   bestSavingPercent: number;
   /** 拼装好的默认文案 */
   defaultCopy: string;
