@@ -127,34 +127,9 @@ emit_copy "hq_products (id, sku_code, product_name, brand, spec, unit, series, s
 "SELECT id, sku_code, product_name, brand, spec, unit, series, shelf_life_days, length_mm, width_mm, height_mm, category_id, is_new_product, is_private_label, wholesale_price, suggested_retail_price, introduced_at, official_image_url, status, attributes, created_at, updated_at
  FROM dim_product WHERE deleted_at IS NULL ORDER BY sku_code"
 
-emit_copy "hq_benchmark_skus (id, product_id, sku_code, segment, reason, effective_from, effective_to, is_active, created_at, updated_at)" \
-"SELECT id, product_id, sku_code, segment, reason, effective_from, effective_to, is_active, created_at, updated_at
- FROM benchmark_sku_allowlist ORDER BY sku_code"
-
-# ───────────────────────── 5. 促销（仅激活批次）+ 选品促销文案 ─────────────────────────
-emit_copy "hq_promo_batches (id, file_name, source_file_url, row_total, product_count, group_count, parse_warnings, is_active, activated_at, deactivated_at, notes, attributes, created_at, updated_at)" \
-"SELECT id, file_name, source_file_url, row_total, product_count, group_count, parse_warnings, is_active, activated_at, deactivated_at, notes, attributes, created_at, updated_at
- FROM promotion_uploads WHERE is_active"
-
-emit_copy "hq_promo_batch_items (id, batch_id, row_index, sku_code, product_name, unit, category_name, original_price, product_id, best_label, best_required_qty, best_total_price, best_effective_unit_price, best_saving_percent, all_options, valid_from, valid_to, valid_dates, mix_group_code, display_text, attributes, created_at, updated_at)" \
-"SELECT p.id, p.upload_id, p.row_index, p.sku_code, p.product_name, p.unit, p.category_name, p.original_price, p.product_id, p.best_label, p.best_required_qty, p.best_total_price, p.best_effective_unit_price, p.best_saving_percent, p.all_options, p.valid_from, p.valid_to, p.valid_dates, p.mix_group_code, p.display_text, p.attributes, p.created_at, p.updated_at
- FROM product_promotions p JOIN promotion_uploads u ON u.id = p.upload_id AND u.is_active ORDER BY p.row_index"
-
-emit_copy "hq_promo_mix_groups (id, batch_id, mix_group_code, display_name, category_name, sku_codes, product_count, best_label, best_total_price, best_saving_percent, representative_image_url, attributes, created_at, updated_at)" \
-"SELECT g.id, g.upload_id, g.mix_group_code, g.display_name, g.category_name, g.sku_codes, g.product_count, g.best_label, g.best_total_price, g.best_saving_percent, g.representative_image_url, g.attributes, g.created_at, g.updated_at
- FROM promotion_groups g JOIN promotion_uploads u ON u.id = g.upload_id AND u.is_active ORDER BY g.mix_group_code"
-
-# 选品促销文案（scope 三段配对约束：按 scope 清洗数组列）
-emit_copy "hq_promo_sku_texts (id, group_code, group_name, product_id, sku_code, promo_text, category_id, scope, scope_cities, scope_store_ids, effective_from, effective_to, is_active, display_order, attributes, created_at, updated_at)" \
-"SELECT id, group_code, group_name, product_id, sku_code, promo_text, category_id, scope,
-        CASE WHEN scope = 'city'       AND cardinality(scope_cities)    > 0 THEN scope_cities    END,
-        CASE WHEN scope = 'store_list' AND cardinality(scope_store_ids) > 0 THEN scope_store_ids END,
-        effective_from, effective_to, is_active, display_order, attributes, created_at, updated_at
- FROM promo_groups
- WHERE scope = 'all_stores'
-    OR (scope = 'city'       AND cardinality(scope_cities)    > 0)
-    OR (scope = 'store_list' AND cardinality(scope_store_ids) > 0)
- ORDER BY group_code, sku_code"
+# 促销数据从 V029 起改走 admin 上传页(/admin/promotions)动态注入,不再写入 seed。
+# 原 hq_promo_batches/hq_promo_batch_items/hq_promo_mix_groups/hq_promo_sku_texts/hq_benchmark_skus
+# 已被相应迁移(V021/V025/V029)删表或重塑,seed 段一并删除。
 
 # ───────────────────────── 6. 货架配置（3 店，剔除合成锚点行） ─────────────────────────
 # 旧数据两种形态：pos-* 行的 position_code 即前端 13 场景序号（可信）；
