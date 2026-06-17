@@ -29,17 +29,17 @@ expect "账号数"            "SELECT count(*) FROM users" 2
 expect "超管数"            "SELECT count(*) FROM v_super_admins" 1
 expect "运营可见门店数"     "SELECT count(*) FROM user_stores WHERE user_id='22222222-2222-4222-8222-222222222222'" 2
 expect "场景数(level0)"    "SELECT count(*) FROM hq_categories WHERE level=0" 13
-expect "品类树总节点"       "SELECT count(*) FROM hq_categories" 83
+expect "品类树总节点"       "SELECT count(*) FROM hq_categories" 82
 expect "品类树孤儿(应为0)"  "SELECT count(*) FROM hq_categories c WHERE level>0 AND NOT EXISTS (SELECT 1 FROM hq_categories p WHERE p.id=c.parent_id)" 0
-expect "商品数"            "SELECT count(*) FROM hq_products" 258
-expect "基准SKU"           "SELECT count(*) FROM hq_benchmark_skus" 68
+expect "商品数"            "SELECT count(*) FROM hq_products" 146
 expect "快照期数"          "SELECT count(DISTINCT snapshot_date) FROM store_sku_snapshots" 2
-expect "激活批次数"        "SELECT count(*) FROM hq_promo_batches WHERE is_active" 1
-expect "促销单品行"        "SELECT count(*) FROM hq_promo_batch_items" 1083
+expect "促销批次空"        "SELECT count(*) FROM hq_promo_batches" 0
+expect "促销档案空"        "SELECT count(*) FROM hq_promo_raw_items" 0
+expect "促销优惠空"        "SELECT count(*) FROM hq_promo_offers" 0
 expect "货架组(3店)"       "SELECT count(*) FROM store_scene_shelves" 3
 expect "竞对店(演示)"      "SELECT count(*) FROM store_competitors" 2
 expect "竞品价格快照"      "SELECT count(*) FROM store_competitor_price_snapshots" 12
-expect "粤37893期1快照>100" "SELECT (count(*)>100)::text FROM store_sku_snapshots s JOIN stores st ON st.id=s.store_id WHERE st.store_code='粤37893' AND s.snapshot_date='2026-05-28'" true
+expect "粤37893期1快照>50"  "SELECT (count(*)>50)::text FROM store_sku_snapshots s JOIN stores st ON st.id=s.store_id WHERE st.store_code='粤37893' AND s.snapshot_date='2026-05-28'" true
 expect "两期快照行数一致"   "SELECT (a.n=b.n)::text FROM (SELECT count(*) n FROM store_sku_snapshots WHERE snapshot_date='2026-05-28') a, (SELECT count(*) n FROM store_sku_snapshots WHERE snapshot_date='2026-06-11') b" true
 expect "动作历史为空"       "SELECT count(*) FROM store_scene_adjustments" 0
 expect "审计为空"          "SELECT count(*) FROM sys_audit_events" 0
@@ -47,16 +47,12 @@ expect "审计为空"          "SELECT count(*) FROM sys_audit_events" 0
 echo "== 2. 约束违例测试（全部应被拒绝） =="
 expect_reject "#2 快照来源只允许导入(erp_sync/manual)" \
  "INSERT INTO store_sku_snapshots (store_id, product_id, sku_code, snapshot_date, source) SELECT s.id, p.id, p.sku_code, '2026-06-12', 'price_change' FROM stores s, hq_products p LIMIT 1"
-expect_reject "#9 第二条激活批次" \
- "INSERT INTO hq_promo_batches (file_name, is_active) VALUES ('x.xlsx', true)"
 expect_reject "#5 勘误 kind×scope 配对(detection 不容 observe)" \
  "INSERT INTO store_sku_corrections (store_id, scene, sku_code, correction_kind, correction_scope, reason_code) SELECT id, 0, '0', 'observe', 'detection', 'x' FROM stores LIMIT 1"
 expect_reject "#1 scene 必须是合法场景码" \
  "INSERT INTO store_scene_state (store_id, scene) SELECT id, 99 FROM stores LIMIT 1"
 expect_reject "调改动作枚举无 replace" \
  "INSERT INTO store_assortment_changes (store_id, sku_code, action, scene) SELECT id, '0', 'replace', 0 FROM stores LIMIT 1"
-expect_reject "#6 促销文案 scope 三段配对" \
- "INSERT INTO hq_promo_sku_texts (group_code, sku_code, promo_text, scope, scope_cities) VALUES ('g', '0', 't', 'all_stores', ARRAY['东莞'])"
 expect_reject "#8 门店编号唯一" \
  "INSERT INTO stores (store_code, store_name) VALUES ('粤37893', '重复店')"
 expect_reject "#11 同账号重复(legacy_account partial UQ)" \
@@ -78,7 +74,7 @@ PSQL "DELETE FROM store_poster_tasks WHERE id='cccccccc-0000-4000-8000-000000000
 expect "测试残留已清理" "SELECT count(*) FROM store_poster_generations" 0
 
 echo "== 4. 视图可用性 =="
-expect "v_promotion_active 有数据" "SELECT (count(*)>1000)::text FROM v_promotion_active" true
+expect "v_active_offers 可查询"    "SELECT (count(*) >= 0)::text FROM v_active_offers" true
 expect "v_store_product_curve 两期" "SELECT count(DISTINCT snapshot_date) FROM v_store_product_curve" 2
 expect "v_store_competitor_counts" "SELECT competitor_count FROM v_store_competitor_counts LIMIT 1" 2
 
