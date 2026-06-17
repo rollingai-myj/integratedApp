@@ -111,6 +111,20 @@ postersRouter.post(
   requireAuth,
   requireStore,
   asyncHandler(async (req, res) => {
+    // 兼容前端 photo_compose 流程:把 sourcePhotoUrl 里的 data: URI 先转存到 OSS,
+    // 再让 zod 校验通过(imageUrlSchema 只放 http(s)/storage 反代路径)。
+    const rawTasks = Array.isArray(req.body?.tasks) ? (req.body.tasks as Record<string, unknown>[]) : [];
+    for (const t of rawTasks) {
+      const src = t?.sourcePhotoUrl;
+      if (typeof src === 'string' && src.startsWith('data:image/')) {
+        const out = await ossService.uploadDataUrl(src, {
+          purpose: 'poster-source',
+          storeId: req.user!.currentStoreId!,
+          filenameHint: `poster-source-${Date.now()}`,
+        });
+        t.sourcePhotoUrl = out.url;
+      }
+    }
     const body = createTasksSchema.parse(req.body);
     const result = await createTasks(
       body,
