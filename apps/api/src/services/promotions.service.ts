@@ -128,6 +128,7 @@ interface OfferRow {
   id: string; batch_id: string; activity_type: string; sku_code: string;
   mechanic: string; mechanic_params: PromoMechanicParams; pool_label: string | null;
   original_price: string; is_stackable: boolean;
+  valid_from: string; valid_to: string; valid_weekday_mask: number;
 }
 interface ProductCtxRow { sku_code: string; product_name: string; unit: string | null; category_name: string | null; }
 
@@ -144,7 +145,10 @@ async function fetchPromoDataset(): Promise<PromoDataset> {
   const batches = await listBatches();
   const offersRes = await query<OfferRow>(
     `SELECT id, batch_id, activity_type, sku_code, mechanic, mechanic_params,
-            pool_label, original_price, is_stackable
+            pool_label, original_price, is_stackable,
+            to_char(valid_from, 'YYYY-MM-DD') AS valid_from,
+            to_char(valid_to,   'YYYY-MM-DD') AS valid_to,
+            valid_weekday_mask
        FROM v_active_offers`,
   );
   if (offersRes.rows.length === 0) {
@@ -202,11 +206,18 @@ function buildResultsFromDataset(data: PromoDataset, mode: 'stack' | 'memberOnly
       originalPrice: parseFloat(r.original_price),
       poolLabel: r.pool_label,
       isStackable: r.is_stackable,
+      validWeekdayMask: r.valid_weekday_mask,
     }));
     const best = computeBest(pricerOffers, {});
     if (!best) continue;
     const baseOffer = pricerOffers[best.baseIdx]!;
     const addonOffer = best.addonIdx != null ? pricerOffers[best.addonIdx]! : null;
+    const baseRow = rows[best.baseIdx]!;
+    const addonRow = best.addonIdx != null ? rows[best.addonIdx]! : null;
+    // 组合有效期 = base × addon 的日期交集 + mask 按位与
+    const validFrom = addonRow && addonRow.valid_from > baseRow.valid_from ? addonRow.valid_from : baseRow.valid_from;
+    const validTo   = addonRow && addonRow.valid_to   < baseRow.valid_to   ? addonRow.valid_to   : baseRow.valid_to;
+    const validWeekdayMask = baseRow.valid_weekday_mask & (addonRow?.valid_weekday_mask ?? 0x7F);
     const c = ctx.get(sku);
     const raw = rawCtx.get(sku);
     results.push({
@@ -217,14 +228,17 @@ function buildResultsFromDataset(data: PromoDataset, mode: 'stack' | 'memberOnly
       // 缺 大类 列(brand_coupon sheet)才回落到 hq_categories(细粒度,常 fall to 其他)
       categoryName: raw?.category_name ?? c?.category_name ?? null,
       originalPrice: baseOffer.originalPrice,
-      baseOfferId: rows[best.baseIdx]!.id,
+      baseOfferId: baseRow.id,
       baseActivityType: baseOffer.activityType,
       addonActivityType: addonOffer?.activityType ?? null,
-      addonOfferId: best.addonIdx != null ? rows[best.addonIdx]!.id : null,
+      addonOfferId: addonRow?.id ?? null,
       bestUnitPrice: best.unitPrice,
       bestBundleTotal: best.bundleTotal,
       bestQty: best.qty,
       bestSavingPercent: best.savingPercent,
+      validFrom,
+      validTo,
+      validWeekdayMask,
       poolLabel: baseOffer.poolLabel,
       poolSize: null,
     });

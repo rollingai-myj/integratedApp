@@ -35,6 +35,8 @@ export type CategoryItemLike = {
   unit: string | null;
   original_price: number | null;
   category: string | null;
+  base_activity_type?: string | null;
+  addon_activity_type?: string | null;
   best_label: string | null;
   best_qty: number | null;
   best_total: number | null;
@@ -57,6 +59,7 @@ export type DerivedBest = {
   validFrom: string | null;
   validTo: string | null;
   validDates: string[] | null;
+  validDayOfWeek: number[] | null;
 };
 
 /** 判断某条 option 是否今/明有效。无日期信息时视为长期有效。 */
@@ -113,6 +116,7 @@ function buildDerivedFromOption(
     validFrom: opt.validFrom ?? null,
     validTo: opt.validTo ?? null,
     validDates: opt.validDates ?? null,
+    validDayOfWeek: opt.validDayOfWeek ?? null,
   };
 }
 
@@ -144,6 +148,8 @@ export function deriveBest(
     const pick = ranked[0];
     return pick ? buildDerivedFromOption(it, pick) : null;
   }
+  // server best 没把 validDayOfWeek 直接挂在顶层,从 all_options[0] 取(shim 把它放那里)
+  const topOpt = allOptions[0];
   const serverBest: DerivedBest = {
     label: it.best_label!,
     qty: it.best_qty!,
@@ -154,6 +160,7 @@ export function deriveBest(
     validFrom: it.best_valid_from,
     validTo: it.best_valid_to,
     validDates: it.best_valid_dates,
+    validDayOfWeek: topOpt?.validDayOfWeek ?? null,
   };
   if (!validOnly) return serverBest;
   if (isOptionValidTodayOrTomorrow(serverBest)) return serverBest;

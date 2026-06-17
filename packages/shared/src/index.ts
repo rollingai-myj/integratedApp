@@ -495,6 +495,13 @@ export interface PromoBestResult {
   bestQty: number;
   /** 节省占比 0~1 fraction(前端要 ×100 转百分比展示) */
   bestSavingPercent: number;
+  /** 组合有效期(base × addon 取交集),ISO 'YYYY-MM-DD' */
+  validFrom: string;
+  validTo: string;
+  /** 7-bit weekday mask: bit 6=周一 ... bit 0=周日;
+   *  组合 = base.mask & (addon ? addon.mask : 0x7F)。
+   *  前端用它算"今日有效/明日有效/周二会员日/周末啤酒日"黄标签和"今明"过滤。 */
+  validWeekdayMask: number;
   /** 池子上下文，仅 B/D 机制有 */
   poolLabel: string | null;
   poolSize: number | null;

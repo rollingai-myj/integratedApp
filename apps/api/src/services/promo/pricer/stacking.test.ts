@@ -8,7 +8,7 @@ const baseMember: PricerOffer = {
   mechanicParams: { kind: 'bundle_price', subtype: 'fixed_total', qty_required: 2, total_price: 9.9 },
   originalPrice: 6.5,
   poolLabel: 'member_price/促销组23',
-  isStackable: false,
+  isStackable: false, validWeekdayMask: 127,
 };
 
 describe('computeBest', () => {
@@ -27,7 +27,7 @@ describe('computeBest', () => {
       mechanicParams: { kind: 'percent_discount', pay_ratio: 0.5 },
       originalPrice: 6.5,
       poolLabel: null,
-      isStackable: true,
+      isStackable: true, validWeekdayMask: 127,
     };
     const r = computeBest([baseMember, addon], {})!;
     expect(r.addonIdx).toBe(1);
@@ -41,7 +41,7 @@ describe('computeBest', () => {
       mechanicParams: { kind: 'pool_threshold', threshold: 25, discount: 5 },
       originalPrice: 6.5,
       poolLabel: 'brand_coupon/百威系列',
-      isStackable: true,
+      isStackable: true, validWeekdayMask: 127,
     };
     const r = computeBest([baseMember, addon], {})!;
     expect(r.addonIdx).toBe(1);
@@ -56,7 +56,7 @@ describe('computeBest', () => {
       mechanicParams: { kind: 'bundle_price', subtype: 'buy_m_get_n', m: 3, n: 1 },
       originalPrice: 6.5,
       poolLabel: null,
-      isStackable: false,
+      isStackable: false, validWeekdayMask: 127,
     };
     const r = computeBest([baseMember, beer], {})!;
     // 会员价单价摊销 = 4.95；啤酒日单价摊销 = (3*6.5)/4 = 4.875
@@ -71,7 +71,7 @@ describe('computeBest', () => {
       mechanicParams: { kind: 'flat_price', target_price: 6.9 },
       originalPrice: 10,
       poolLabel: null,
-      isStackable: false,
+      isStackable: false, validWeekdayMask: 127,
     };
     const r = computeBest([flat], {})!;
     expect(r.bundleTotal).toBe(6.9);
@@ -86,7 +86,7 @@ describe('computeBest', () => {
       mechanicParams: { kind: 'bundle_price', subtype: 'nth_ratio', qty_required: 2, nth: 2, ratio: 0.5 },
       originalPrice: 6.5,
       poolLabel: null,
-      isStackable: false,
+      isStackable: false, validWeekdayMask: 127,
     };
     const r = computeBest([o], {})!;
     expect(r.bundleTotal).toBeCloseTo(9.75);
@@ -99,7 +99,7 @@ describe('computeBest', () => {
       mechanicParams: { kind: 'bundle_price', subtype: 'add_extra', qty_required: 2, add_amount: 1 },
       originalPrice: 5,
       poolLabel: null,
-      isStackable: false,
+      isStackable: false, validWeekdayMask: 127,
     };
     const r = computeBest([o], {})!;
     expect(r.bundleTotal).toBe(6);
@@ -112,7 +112,7 @@ describe('computeBest', () => {
       mechanicParams: { kind: 'bundle_price', subtype: 'buy_m_get_n', m: 3, n: 1 },
       originalPrice: 6.5,
       poolLabel: null,
-      isStackable: false,
+      isStackable: false, validWeekdayMask: 127,
     };
     const r = computeBest([o], {})!;
     expect(r.bundleTotal).toBe(19.5);

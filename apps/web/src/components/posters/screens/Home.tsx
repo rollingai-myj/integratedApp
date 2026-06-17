@@ -23,6 +23,8 @@ type CategoryItem = {
   unit: string | null;
   original_price: number | null;
   category: string | null;
+  base_activity_type?: string | null;
+  addon_activity_type?: string | null;
   best_label: string | null;
   best_qty: number | null;
   best_total: number | null;
@@ -55,21 +57,52 @@ function fmtMD(d: string | null | undefined): string | null {
 }
 
 function validityBadge(it: CategoryItem, best: DerivedBest): { text: string; today: boolean } | null {
+  const todayJS = new Date().getDay();
+  const tomorrowJS = (todayJS + 1) % 7;
   const todayISO = new Date().toISOString().slice(0, 10);
+  const days = best.validDayOfWeek;
+
   if (best.validDates?.length) {
     const today = best.validDates.includes(todayISO);
-    const text = `仅 ${best.validDates.map(fmtMD).join('、')}`;
-    return { text, today };
+    return { text: `仅 ${best.validDates.map(fmtMD).join('、')}`, today };
   }
-  if (best.label.includes('会员日')) {
-    const today = new Date().getDay() === 2;
-    return { text: '周二限定', today };
+
+  // mask = 0 → base × addon weekday 不相交,永远凑不到 — 不画黄标
+  if (days && days.length === 0) return null;
+
+  // 日期范围(每条都有,base × addon 交集后的窗口)
+  const dateRange = (best.validFrom && best.validTo)
+    ? `${fmtMD(best.validFrom)}-${fmtMD(best.validTo)}`
+    : '';
+  const inWindow = best.validFrom && best.validTo
+    ? (best.validFrom <= todayISO && best.validTo >= todayISO)
+    : true;
+
+  // 状态文字:今日 / 明日 / 活动名 / 全周
+  let status: string;
+  let isToday = false;
+  if (days && days.length > 0 && days.length < 7) {
+    if (days.includes(todayJS))     { status = '今日有效'; isToday = inWindow; }
+    else if (days.includes(tomorrowJS)) { status = '明日有效'; }
+    else {
+      // 不在今/明 — 按 activity type 走品牌名
+      const base = it.base_activity_type;
+      const addon = it.addon_activity_type;
+      if (base === 'tuesday_member' || addon === 'tuesday_member')      status = '周二会员日';
+      else if (base === 'weekend_beer' || addon === 'weekend_beer')     status = '周末啤酒日';
+      else {
+        const DOW = ['日', '一', '二', '三', '四', '五', '六'];
+        status = `仅周${days.map(d => DOW[d]).join('')}`;
+      }
+    }
+  } else {
+    // 全周有效 (mask=127) 或 days 为 null
+    status = '今日有效';
+    isToday = inWindow;
   }
-  if (best.validFrom && best.validTo) {
-    const today = best.validFrom <= todayISO && best.validTo >= todayISO;
-    return { text: `${fmtMD(best.validFrom)}–${fmtMD(best.validTo)}`, today };
-  }
-  return null;
+
+  const text = dateRange ? `${status}·${dateRange}` : status;
+  return { text, today: isToday };
 }
 
 function ProductCard({
@@ -179,7 +212,7 @@ function ProductCard({
               fontSize: 10, padding: '2px 6px', borderRadius: 8, fontWeight: 600,
               color: badge.today ? '#fff' : '#8a5a00',
               background: badge.today ? '#ff8c1a' : '#fff4e6',
-            }}>{badge.today ? '今日有效 · ' : ''}{badge.text}</span>
+            }}>{badge.text}</span>
           )}
         </div>
       </div>
@@ -310,7 +343,7 @@ function GroupCard({
                   fontSize: 10, padding: '2px 6px', borderRadius: 8, fontWeight: 600,
                   color: badge.today ? '#fff' : '#8a5a00',
                   background: badge.today ? '#ff8c1a' : '#fff4e6',
-                }}>{badge.today ? '今日有效 · ' : ''}{badge.text}</span>
+                }}>{badge.text}</span>
               )}
             </div>
           );

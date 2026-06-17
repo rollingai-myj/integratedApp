@@ -33,6 +33,20 @@ function comboLabel(base: PromoActivityType, addon: PromoActivityType | null): s
   return `${b} + ${a}`;
 }
 
+/**
+ * 把 7-bit weekday mask 转成 JS Date.getDay() 维度的数组。
+ * mask bit 6 = 周一 (ISODOW=1) → JS day 1
+ * mask bit 0 = 周日 (ISODOW=7) → JS day 0
+ * 通用映射: bit b → JS day = b === 0 ? 0 : 7 - b
+ */
+function maskToDays(mask: number): number[] {
+  const days: number[] = [];
+  for (let bit = 0; bit <= 6; bit++) {
+    if (mask & (1 << bit)) days.push(bit === 0 ? 0 : 7 - bit);
+  }
+  return days.sort((a, b) => a - b);
+}
+
 const BASE = '/api/v1';
 
 interface CategoryItem {
@@ -41,6 +55,9 @@ interface CategoryItem {
   unit?: string | null;
   original_price?: number | null;
   category?: string | null;
+  // base × addon 的活动类型(供 validityBadge 决定走「周二会员日」/「周末啤酒日」黄标)
+  base_activity_type?: PromoActivityType | null;
+  addon_activity_type?: PromoActivityType | null;
   best_label?: string | null;
   best_qty?: number | null;
   best_total?: number | null;
@@ -58,6 +75,7 @@ interface CategoryItem {
     savingPercent: number;
     validFrom?: string | null;
     validTo?: string | null;
+    validDayOfWeek?: number[] | null;
   }> | null;
   is_group?: boolean;
   group_id?: string | null;
@@ -87,20 +105,23 @@ function rowToCategoryItem(p: PromoBestResult): CategoryItem {
     productName: p.productName,
     fallback: null,
   });
+  const days = maskToDays(p.validWeekdayMask);
   return {
     sku: p.skuCode,
     product_name: p.productName,
     unit: p.unit ?? null,
     original_price: p.originalPrice,
     category: p.categoryName ?? null,
+    base_activity_type: p.baseActivityType,
+    addon_activity_type: p.addonActivityType,
     best_label: label,
     best_qty: p.bestQty,
     best_total: p.bestBundleTotal,
     best_effective_price: p.bestUnitPrice,
     best_saving_percent: savePct,
     display_text: displayText,
-    best_valid_from: null,
-    best_valid_to: null,
+    best_valid_from: p.validFrom,
+    best_valid_to: p.validTo,
     best_valid_dates: null,
     all_options: [{
       label,
@@ -108,8 +129,9 @@ function rowToCategoryItem(p: PromoBestResult): CategoryItem {
       totalPrice: p.bestBundleTotal,
       effectiveUnitPrice: p.bestUnitPrice,
       savingPercent: savePct,
-      validFrom: null,
-      validTo: null,
+      validFrom: p.validFrom,
+      validTo: p.validTo,
+      validDayOfWeek: days,
     }],
   };
 }
@@ -136,6 +158,7 @@ function buildCategoriesTree(results: PromoBestResult[]): Array<{ name: string; 
     const origSum = members.reduce((s, m) => s + (m.originalPrice ?? 0), 0);
     const repSavePct = (rep.bestSavingPercent ?? 0) * 100;
     const repLabel = comboLabel(rep.baseActivityType, rep.addonActivityType);
+    const repDays = maskToDays(rep.validWeekdayMask);
     const groupName = poolLabel.split('/')[1] ?? poolLabel;
     const repDisplay = formatPromotionDisplayText({
       label: repLabel,
@@ -153,14 +176,16 @@ function buildCategoriesTree(results: PromoBestResult[]): Array<{ name: string; 
       unit: rep.unit ?? null,
       original_price: origSum > 0 ? origSum : null,
       category: rep.categoryName ?? null,
+      base_activity_type: rep.baseActivityType,
+      addon_activity_type: rep.addonActivityType,
       best_label: repLabel,
       best_qty: members.length,
       best_total: rep.bestBundleTotal,
       best_effective_price: rep.bestUnitPrice,
       best_saving_percent: repSavePct,
       display_text: repDisplay,
-      best_valid_from: null,
-      best_valid_to: null,
+      best_valid_from: rep.validFrom,
+      best_valid_to: rep.validTo,
       best_valid_dates: null,
       all_options: [{
         label: repLabel,
@@ -168,8 +193,9 @@ function buildCategoriesTree(results: PromoBestResult[]): Array<{ name: string; 
         totalPrice: rep.bestBundleTotal,
         effectiveUnitPrice: rep.bestUnitPrice,
         savingPercent: repSavePct,
-        validFrom: null,
-        validTo: null,
+        validFrom: rep.validFrom,
+        validTo: rep.validTo,
+        validDayOfWeek: repDays,
       }],
       is_group: true,
       group_id: poolLabel,

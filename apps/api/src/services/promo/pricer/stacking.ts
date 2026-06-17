@@ -8,6 +8,8 @@ export interface PricerOffer {
   originalPrice: number;
   poolLabel: string | null;
   isStackable: boolean;
+  /** 7-bit weekday mask;用来排除 base × addon mask 不相交(交集=0)的不合法组合 */
+  validWeekdayMask: number;
 }
 
 const BASE_TYPES = new Set<PromoActivityType>(['member_price', 'weekend_beer']);
@@ -58,6 +60,8 @@ export function computeBest(
     const candidates: Array<{ addonIdx: number | null; total: number }> = [{ addonIdx: null, total: baseRes.total }];
     for (const ai of addons) {
       const a = offers[ai]!;
+      // base × addon weekday mask 交集 = 0 → 永远凑不到同一天生效,不合法组合
+      if ((b.validWeekdayMask & a.validWeekdayMask) === 0) continue;
       let total = baseRes.total;
       if (a.mechanic === 'percent_discount' && a.mechanicParams.kind === 'percent_discount') {
         total = baseRes.total * a.mechanicParams.pay_ratio;
