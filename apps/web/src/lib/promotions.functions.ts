@@ -13,9 +13,7 @@
  */
 import type {
   ActivePromotionsResponse,
-  ProductPromotion,
-  ProductPromotionDealOption,
-  PromotionGroupRow,
+  PromoBestResult,
   RecommendPromotionsResponse,
 } from '@myj/shared';
 import { mapCategoryToGroup } from '@/lib/categoryGroups';
@@ -37,13 +35,7 @@ interface CategoryItem {
   best_valid_from?: string | null;
   best_valid_to?: string | null;
   best_valid_dates?: string[] | null;
-  /** poster-app 的 deriveBest 需要这个 fallback；shim 必须从 API 透传过去 */
-  all_options?: ProductPromotionDealOption[] | null;
-  is_group?: boolean;
-  group_id?: string | null;
-  brand_label?: string | null;
-  group_members?: Array<{ sku: string; productName: string }> | null;
-  best_applies_to_skus?: string[] | null;
+  all_options?: null;
 }
 
 export interface PersonalizedPromotionsResult {
@@ -78,124 +70,60 @@ function toISODate(d: string | null | undefined): string | null {
   return new Date(parsed.getTime() + 8 * 3600_000).toISOString().slice(0, 10);
 }
 
-function normalizeOption(o: ProductPromotionDealOption): ProductPromotionDealOption {
-  return {
-    ...o,
-    requiredQty: toNum(o.requiredQty) ?? 0,
-    totalPrice: toNum(o.totalPrice) ?? 0,
-    effectiveUnitPrice: toNum(o.effectiveUnitPrice) ?? 0,
-    savingPercent: toNum(o.savingPercent) ?? 0,
-    validFrom: toISODate(o.validFrom),
-    validTo: toISODate(o.validTo),
-  };
-}
-
-function rowToCategoryItem(p: ProductPromotion): CategoryItem {
+function rowToCategoryItem(p: PromoBestResult): CategoryItem {
   return {
     sku: p.skuCode,
     product_name: p.productName,
     unit: p.unit ?? null,
-    original_price: toNum(p.originalPrice),
+    original_price: p.originalPrice,
     category: p.categoryName ?? null,
-    best_label: p.bestLabel ?? null,
-    best_qty: p.bestRequiredQty ?? null,
-    best_total: toNum(p.bestTotalPrice),
-    best_effective_price: toNum(p.bestEffectiveUnitPrice),
-    best_saving_percent: toNum(p.bestSavingPercent),
-    display_text: p.displayText ?? null,
-    best_valid_from: toISODate(p.validFrom),
-    best_valid_to: toISODate(p.validTo),
-    best_valid_dates: p.validDates ?? null,
-    all_options: p.allOptions ? p.allOptions.map(normalizeOption) : null,
+    best_label: p.defaultCopy,
+    best_qty: p.bestQty,
+    best_total: p.bestBundleTotal,
+    best_effective_price: p.bestUnitPrice,
+    best_saving_percent: p.bestSavingPercent,
+    display_text: p.defaultCopy,
+    best_valid_from: null,
+    best_valid_to: null,
+    best_valid_dates: null,
+    all_options: null,
   };
 }
 
 export async function getPersonalizedPromotions(): Promise<PersonalizedPromotionsResult> {
   try {
     // 优先走 /promotions/recommend（按个性化排序）；空 → fallback /promotions/active
-    let products: ProductPromotion[] = [];
-    let groups: PromotionGroupRow[] = [];
+    let results: PromoBestResult[] = [];
     let upload: { id: string; filename: string; created_at: string } | null = null;
 
     const recoRes = await fetch(`${BASE}/promotions/recommend`, { credentials: 'include' });
     if (recoRes.ok) {
       const body = (await recoRes.json()) as RecommendPromotionsResponse;
-      products = body.products ?? [];
-      groups = body.groups ?? [];
-      if (body.upload) {
-        upload = { id: body.upload.id, filename: body.upload.fileName, created_at: body.upload.createdAt };
-      }
+      results = body.results ?? [];
+      const first = body.batches?.[0];
+      if (first) upload = { id: first.id, filename: first.fileName, created_at: first.createdAt };
     }
-    if (products.length === 0) {
+    if (results.length === 0) {
       const actRes = await fetch(`${BASE}/promotions/active`, { credentials: 'include' });
       if (actRes.ok) {
         const body = (await actRes.json()) as ActivePromotionsResponse;
-        products = body.products ?? [];
-        groups = body.groups ?? [];
-        if (body.upload) {
-          upload = { id: body.upload.id, filename: body.upload.fileName, created_at: body.upload.createdAt };
-        }
+        results = body.results ?? [];
+        const first = body.batches?.[0];
+        if (first) upload = { id: first.id, filename: first.fileName, created_at: first.createdAt };
       }
     }
 
-    // SKU → product 反查表（折叠 group 时用）
-    // 注：故意不做"组成员 SKU 在单品列表里去重"——group 卡和成员单品卡需要各自独立展示，
-    // 因为它们代表两种不同促销玩法（凑单组合价 vs 单品最优档），店长选品时两者均需可见。
-    const skuToProduct = new Map<string, ProductPromotion>();
-    for (const p of products) skuToProduct.set(p.skuCode, p);
-
     const byCategory = new Map<string, CategoryItem[]>();
-    const pushTo = (groupName: string, item: CategoryItem) => {
-      if (!byCategory.has(groupName)) byCategory.set(groupName, []);
-      byCategory.get(groupName)!.push(item);
+    const pushTo = (g: string, item: CategoryItem) => {
+      if (!byCategory.has(g)) byCategory.set(g, []);
+      byCategory.get(g)!.push(item);
     };
-
-    // 1) 先入 groups（让它们排在每个 category 的最前面）
-    for (const g of groups) {
-      const groupName = mapCategoryToGroup(g.categoryName ?? '');
-      const members = (g.skuCodes ?? []).map((sku) => skuToProduct.get(sku));
-      const firstMember = members.find((m): m is ProductPromotion => m != null);
-      const origSum = members.reduce((s, m) => s + (toNum(m?.originalPrice) ?? 0), 0);
-      const total = toNum(g.bestTotalPrice);
-      const item: CategoryItem = {
-        sku: `group:${g.id}`,
-        product_name: g.displayName ?? '凑单组',
-        unit: firstMember?.unit ?? null,
-        original_price: origSum > 0 ? origSum : null,
-        category: g.categoryName,
-        best_label: g.bestLabel,
-        best_qty: g.productCount,
-        best_total: total,
-        best_effective_price: total != null && g.productCount > 0 ? total / g.productCount : null,
-        best_saving_percent: toNum(g.bestSavingPercent),
-        display_text: null,
-        best_valid_from: null,
-        best_valid_to: null,
-        best_valid_dates: null,
-        all_options: null,
-        is_group: true,
-        group_id: g.id,
-        brand_label: g.displayName,
-        group_members: (g.skuCodes ?? []).map((sku) => ({
-          sku,
-          productName: skuToProduct.get(sku)?.productName ?? sku,
-        })),
-        best_applies_to_skus: null,
-      };
-      pushTo(groupName, item);
-    }
-
-    // 2) 再入全部单品（不排除 group 成员——见上方注释）
-    for (const p of products) {
+    for (const p of results) {
       const item = rowToCategoryItem(p);
       pushTo(mapCategoryToGroup(item.category ?? ''), item);
     }
 
-    const categories = Array.from(byCategory.entries()).map(([name, items]) => ({
-      name,
-      items,
-    }));
-
+    const categories = Array.from(byCategory.entries()).map(([name, items]) => ({ name, items }));
     return { upload, categories };
   } catch (err) {
     console.error('[promotions shim] getPersonalizedPromotions failed:', err);
