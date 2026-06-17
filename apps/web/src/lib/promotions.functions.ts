@@ -18,18 +18,27 @@ import type {
   RecommendPromotionsResponse,
 } from '@myj/shared';
 import { mapCategoryToGroup } from '@/lib/categoryGroups';
+import { formatPromotionDisplayText } from '@/utils/promoDisplayText';
 
 /**
- * base 活动类型 → 海报 promoMode 期望的 label(用作 '只用会员价' 过滤 key)。
- * Home.tsx 的 memberOnly 过滤认 '会员价'/'会员日' 两个字面值。
+ * 活动类型 → 卡片绿色徽章 / promoMode 过滤用的中文 label。
+ * Home.tsx 的 memberOnly 过滤认 '会员价'/'会员日' 两个字面值，
+ * formatPromotionDisplayText 认 ' + ' 分隔决定 connector 走"叠券后"。
  */
 const ACTIVITY_LABEL: Record<PromoActivityType, string> = {
   member_price: '会员价',
   weekend_beer: '周末啤酒日',
   brand_coupon: '品牌满减券',
-  tuesday_member: '会员日',
+  tuesday_member: '周二会员日',
   regular_coupon: '常规优惠券',
 };
+
+function comboLabel(base: PromoActivityType, addon: PromoActivityType | null): string {
+  const b = ACTIVITY_LABEL[base] ?? base;
+  if (!addon) return b;
+  const a = ACTIVITY_LABEL[addon] ?? addon;
+  return `${b} + ${a}`;
+}
 
 const BASE = '/api/v1';
 
@@ -99,23 +108,32 @@ function toISODate(d: string | null | undefined): string | null {
 
 function rowToCategoryItem(p: PromoBestResult): CategoryItem {
   const savePct = (p.bestSavingPercent ?? 0) * 100;
-  const label = ACTIVITY_LABEL[p.baseActivityType] ?? p.baseActivityType;
+  const label = comboLabel(p.baseActivityType, p.addonActivityType);
+  const displayText = formatPromotionDisplayText({
+    label,
+    totalPrice: p.bestBundleTotal,
+    requiredQty: p.bestQty,
+    effectiveUnitPrice: p.bestUnitPrice,
+    originalPrice: p.originalPrice,
+    unit: p.unit ?? null,
+    productName: p.productName,
+    fallback: null,
+  });
   return {
     sku: p.skuCode,
     product_name: p.productName,
     unit: p.unit ?? null,
     original_price: p.originalPrice,
     category: p.categoryName ?? null,
-    best_label: p.defaultCopy,
+    best_label: label,
     best_qty: p.bestQty,
     best_total: p.bestBundleTotal,
     best_effective_price: p.bestUnitPrice,
     best_saving_percent: savePct,
-    display_text: p.defaultCopy,
+    display_text: displayText,
     best_valid_from: null,
     best_valid_to: null,
     best_valid_dates: null,
-    // 仅放当前 base 活动一档 — '只用会员价' 模式按 label 过滤
     all_options: [{
       label,
       requiredQty: p.bestQty,
@@ -171,19 +189,30 @@ export async function getPersonalizedPromotions(): Promise<PersonalizedPromotion
       const rep = members.reduce((a, b) => (b.bestSavingPercent > a.bestSavingPercent ? b : a));
       const origSum = members.reduce((s, m) => s + (m.originalPrice ?? 0), 0);
       const repSavePct = (rep.bestSavingPercent ?? 0) * 100;
-      const repLabel = ACTIVITY_LABEL[rep.baseActivityType] ?? rep.baseActivityType;
+      const repLabel = comboLabel(rep.baseActivityType, rep.addonActivityType);
+      const groupName = poolLabel.split('/')[1] ?? poolLabel;
+      const repDisplay = formatPromotionDisplayText({
+        label: repLabel,
+        totalPrice: rep.bestBundleTotal,
+        requiredQty: rep.bestQty,
+        effectiveUnitPrice: rep.bestUnitPrice,
+        originalPrice: rep.originalPrice,
+        unit: rep.unit ?? null,
+        productName: groupName,
+        fallback: null,
+      });
       const item: CategoryItem = {
         sku: `group:${poolLabel}`,
-        product_name: poolLabel.split('/')[1] ?? poolLabel,
+        product_name: groupName,
         unit: rep.unit ?? null,
         original_price: origSum > 0 ? origSum : null,
         category: rep.categoryName ?? null,
-        best_label: rep.defaultCopy,
+        best_label: repLabel,
         best_qty: members.length,
         best_total: rep.bestBundleTotal,
         best_effective_price: rep.bestUnitPrice,
         best_saving_percent: repSavePct,
-        display_text: rep.defaultCopy,
+        display_text: repDisplay,
         best_valid_from: null,
         best_valid_to: null,
         best_valid_dates: null,

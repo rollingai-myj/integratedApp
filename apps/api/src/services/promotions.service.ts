@@ -6,7 +6,6 @@ import type {
 import { AppError, ErrorCodes } from '../lib/errors.js';
 import { parseWorkbook } from './promo/parser/index.js';
 import { computeBest, type PricerOffer } from './promo/pricer/stacking.js';
-import { buildDefaultCopy } from './promo/pricer/copy.js';
 
 export async function uploadPromotion(
   input: { fileBuffer: Buffer; fileName: string; sourceFileUrl?: string; notes?: string },
@@ -191,12 +190,12 @@ async function buildResults(): Promise<{ batches: PromoBatch[]; results: PromoBe
       originalPrice: baseOffer.originalPrice,
       baseOfferId: rows[best.baseIdx]!.id,
       baseActivityType: baseOffer.activityType,
+      addonActivityType: addonOffer?.activityType ?? null,
       addonOfferId: best.addonIdx != null ? rows[best.addonIdx]!.id : null,
       bestUnitPrice: best.unitPrice,
       bestBundleTotal: best.bundleTotal,
       bestQty: best.qty,
       bestSavingPercent: best.savingPercent,
-      defaultCopy: buildDefaultCopy(baseOffer, addonOffer),
       poolLabel: baseOffer.poolLabel,
       poolSize: null,  // 池子大小本期不算（UI 可后续按 pool_label 自行 group by）
     });

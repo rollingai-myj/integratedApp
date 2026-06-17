@@ -485,6 +485,8 @@ export interface PromoBestResult {
   baseOfferId: string;
   /** base 优惠的活动类型(供前端"只用会员价"等过滤) */
   baseActivityType: PromoActivityType;
+  /** add-on 活动类型(若 best 选了叠加券，前端用它拼组合 label) */
+  addonActivityType: PromoActivityType | null;
   addonOfferId: string | null;
   /** 单品摊销最低支付金额（套餐总价 / 件数） */
   bestUnitPrice: number;
@@ -493,8 +495,6 @@ export interface PromoBestResult {
   bestQty: number;
   /** 节省占比 0~1 fraction(前端要 ×100 转百分比展示) */
   bestSavingPercent: number;
-  /** 拼装好的默认文案 */
-  defaultCopy: string;
   /** 池子上下文，仅 B/D 机制有 */
   poolLabel: string | null;
   poolSize: number | null;
