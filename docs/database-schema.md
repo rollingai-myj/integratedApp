@@ -49,6 +49,186 @@
 
 ---
 
+## 全局 ER 总览图
+
+> 把所有 30+ 张表的相互连接放在一张图里,只画表名 + 关系不展开字段。看清"全系统都有哪些表、它们怎么互相挂钩"用这张;具体每张表存什么内容,看分域 ER 图(在 §1 / §3 / §4 / §5 / §6 / §7 / §8 章节开头)。
+>
+> **三个核心枢纽**(图里出度最高的实体):
+> - **USERS** —— 谁登录、谁干了什么动作的源头
+> - **STORES** —— 几乎所有"门店相关"的表都挂在它下面(销售快照 / 调改 / 海报 / 竞品 / 洞察 ...)
+> - **HQ_PRODUCTS** —— 任何"针对某个 SKU"的数据(销量、促销 offer、海报、调改、竞品比价)都通过它做关联
+
+```mermaid
+erDiagram
+    %% ===== 身份 / 会话 / 权限 =====
+    USERS ||--o{ USER_SESSIONS : "每次登录建一条"
+    USERS ||--o| USER_FEISHU_IDENTITIES : "飞书绑定"
+    USERS ||--o{ USER_ROLES : "持有 N 个角色"
+    USERS ||--o{ USER_STORES : "可管 N 家门店"
+    STORES ||--o{ USER_STORES : "被 N 个员工管"
+    USER_SESSIONS }o--o| STORES : "当前激活门店"
+
+    %% ===== 系统横切 =====
+    USER_SESSIONS ||--o{ SYS_USAGE_SESSIONS : "切片记录使用时长"
+    USERS ||..o{ SYS_AUDIT_EVENTS : "动作来自哪个员工(软引用,无 FK)"
+    STORES ||..o{ SYS_AUDIT_EVENTS : "涉及哪家店(软引用)"
+
+    %% ===== 总部主数据 =====
+    HQ_CATEGORIES ||--o{ HQ_CATEGORIES : "父品类(自引用)"
+    HQ_CATEGORIES ||--o{ HQ_PRODUCTS : "归属小类"
+
+    %% ===== 促销 =====
+    USERS ||--o{ HQ_PROMO_BATCHES : "总部账号上传"
+    HQ_PROMO_BATCHES ||--o{ HQ_PROMO_RAW_ITEMS : "Excel 每行落档"
+    HQ_PROMO_BATCHES ||--o{ HQ_PROMO_OFFERS : "标准化优惠"
+    HQ_PROMO_RAW_ITEMS ||--o{ HQ_PROMO_OFFERS : "档案行翻译成 offer"
+
+    %% ===== 门店现状 =====
+    STORES ||--o{ STORE_SCENE_STATE : "每店每场景一行"
+    STORES ||--o{ STORE_SCENE_SHELVES : "货架组"
+    STORES ||--o{ STORE_SKU_SNAPSHOTS : "每周销售快照"
+    HQ_PRODUCTS ||--o{ STORE_SKU_SNAPSHOTS : "对哪款 SKU"
+    USERS ||--o{ STORE_SKU_SNAPSHOTS : "谁导入的"
+
+    %% ===== 洞察 / 竞品 / 问卷 =====
+    STORES ||--o| STORE_INSIGHTS : "周边商圈报告"
+    STORES ||--o{ STORE_COMPETITORS : "登记竞对店"
+    STORE_COMPETITORS ||--o{ STORE_COMPETITOR_PRODUCTS : "竞对商品"
+    STORE_COMPETITOR_PRODUCTS ||--o{ STORE_COMPETITOR_PRICE_SNAPSHOTS : "采价"
+    HQ_PRODUCTS ||--o{ STORE_COMPETITOR_PRODUCTS : "映射比价"
+    STORES ||--o{ STORE_SURVEY_QUESTIONS : "每店问卷"
+    STORE_SURVEY_QUESTIONS ||--o{ STORE_SURVEY_ANSWERS : "店长回答"
+    USERS ||--o{ STORE_SURVEY_ANSWERS : "谁答的"
+    USERS ||--o{ STORE_COMPETITOR_PRICE_SNAPSHOTS : "谁采的"
+
+    %% ===== 门店动作 =====
+    STORES ||--o{ STORE_SCENE_ADJUSTMENTS : "调改批次"
+    USERS ||--o{ STORE_SCENE_ADJUSTMENTS : "谁触发的"
+    STORE_SCENE_ADJUSTMENTS ||--o{ STORE_ASSORTMENT_CHANGES : "拆成加减明细"
+    STORE_SCENE_ADJUSTMENTS ||--o| STORE_SCENE_REMAKES : "更新计数"
+    HQ_PRODUCTS ||--o{ STORE_ASSORTMENT_CHANGES : "针对哪款 SKU"
+    STORES ||--o{ STORE_SCENE_VIRTUAL_HISTORY : "虚拟陈列出图历史"
+    STORES ||--o{ STORE_SKU_CORRECTIONS : "对 AI 的纠错"
+    HQ_PRODUCTS ||--o{ STORE_SKU_CORRECTIONS : "哪款 SKU"
+    STORES ||--o{ STORE_PRICE_CHANGES : "调价历史(V027 起读写废弃)"
+
+    %% ===== 海报 =====
+    STORES ||--o{ STORE_POSTER_TASKS : "店长提交任务"
+    USERS ||--o{ STORE_POSTER_TASKS : "提交者"
+    STORE_POSTER_TASKS ||--o{ STORE_POSTER_TASK_PRODUCTS : "任务包含 N 个商品"
+    STORE_POSTER_TASKS ||--o{ STORE_POSTER_GENERATIONS : "1 任务可多次出图"
+    HQ_PRODUCTS ||--o{ STORE_POSTER_TASK_PRODUCTS : "贴哪款 SKU"
+    STORES ||--o{ STORE_POSTER_ASSETS : "店级素材库"
+    USERS ||--o{ STORE_POSTER_ASSETS : "谁上传的"
+
+    USERS {
+        uuid id PK
+    }
+    USER_SESSIONS {
+        uuid id PK
+    }
+    USER_ROLES {
+        uuid user_id PK
+    }
+    USER_STORES {
+        uuid user_id PK
+    }
+    USER_FEISHU_IDENTITIES {
+        uuid user_id PK
+    }
+    STORES {
+        uuid id PK
+    }
+    SYS_AUDIT_EVENTS {
+        uuid id PK
+    }
+    SYS_USAGE_SESSIONS {
+        uuid id PK
+    }
+    HQ_CATEGORIES {
+        uuid id PK
+    }
+    HQ_PRODUCTS {
+        uuid id PK
+    }
+    HQ_PROMO_BATCHES {
+        uuid id PK
+    }
+    HQ_PROMO_RAW_ITEMS {
+        uuid id PK
+    }
+    HQ_PROMO_OFFERS {
+        uuid id PK
+    }
+    STORE_SCENE_STATE {
+        uuid id PK
+    }
+    STORE_SCENE_SHELVES {
+        uuid id PK
+    }
+    STORE_SKU_SNAPSHOTS {
+        uuid id PK
+    }
+    STORE_INSIGHTS {
+        uuid store_id PK
+    }
+    STORE_COMPETITORS {
+        uuid id PK
+    }
+    STORE_COMPETITOR_PRODUCTS {
+        uuid id PK
+    }
+    STORE_COMPETITOR_PRICE_SNAPSHOTS {
+        uuid id PK
+    }
+    STORE_SURVEY_QUESTIONS {
+        uuid id PK
+    }
+    STORE_SURVEY_ANSWERS {
+        uuid id PK
+    }
+    STORE_SCENE_ADJUSTMENTS {
+        uuid id PK
+    }
+    STORE_ASSORTMENT_CHANGES {
+        uuid id PK
+    }
+    STORE_SCENE_REMAKES {
+        uuid store_id PK
+    }
+    STORE_SCENE_VIRTUAL_HISTORY {
+        uuid id PK
+    }
+    STORE_SKU_CORRECTIONS {
+        uuid id PK
+    }
+    STORE_PRICE_CHANGES {
+        uuid id PK
+    }
+    STORE_POSTER_TASKS {
+        uuid id PK
+    }
+    STORE_POSTER_TASK_PRODUCTS {
+        uuid task_id PK
+    }
+    STORE_POSTER_GENERATIONS {
+        uuid id PK
+    }
+    STORE_POSTER_ASSETS {
+        uuid id PK
+    }
+```
+
+**关系符号速查**:
+- `||--o{` = 一对多(左边一行对应右边多行)
+- `||--o|` = 一对零或一
+- `}o--o|` = 多对零或一
+- `||..o{` = 软引用,**没设外键约束**(典型例子:`sys_audit_events` 里"哪个员工/哪家店"是事件发生时刻的快照,即使该员工后来被删,审计记录仍然可读)
+
+**注意**:`sys_settings` 是全局配置表,跟任何业务实体都不直接挂钩,不画进图里(独立存在)。`store_price_changes` V027 起读写路径全部废弃,关系画在图里只为标记历史存在。
+
+---
+
 ## 0 · ENUM 类型字典
 
 > 全部定义在 [V001__extensions_and_enums.sql](../apps/api/src/db/migrations/V001__extensions_and_enums.sql)。`audit_event_kind` 在 V013 删了 `price_ai_diagnose`、`price_change_source` 在 V013 删了 `ai_suggest`。
