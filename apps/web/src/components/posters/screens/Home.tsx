@@ -13,7 +13,6 @@ import { ProductImg } from '../ProductImg';
 import { deriveBest, loadPromoMode, savePromoMode, type PromoMode, type DealOptionLike, type DerivedBest } from '../lib/promoMode';
 import { useGuide, hasSeenGuide } from '../GuideContext';
 import { StackRuleHint } from '../StackRuleHint';
-import { stripSpec } from '@/utils/promoDisplayText';
 
 
 
@@ -290,7 +289,7 @@ function GroupCard({
           fontSize: 11, padding: '3px 7px', borderRadius: 8,
         }}>-{save}%</div>
         {(() => {
-          const firstName = stripSpec(members[0]?.productName ?? it.product_name);
+          const firstName = members[0]?.productName ?? it.product_name;
           const extra = Math.max(0, members.length - 1);
           return (
             <div style={{
@@ -347,7 +346,7 @@ function GroupCard({
           const applies = it.best_applies_to_skus;
           const total = members.length;
           if (!applies || applies.length === 0 || applies.length >= total) return null;
-          const skuToName = new Map(members.map((m) => [m.sku, stripSpec(m.productName) || m.productName]));
+          const skuToName = new Map(members.map((m) => [m.sku, m.productName]));
           const names = applies.map((s) => skuToName.get(s) ?? s);
           const shown = names.slice(0, 2).join('、');
           const extra = names.length > 2 ? `等 ${names.length} 款` : '';
