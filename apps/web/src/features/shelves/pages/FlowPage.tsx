@@ -1184,7 +1184,7 @@ function SkuRow({ sku, onClick }: { sku: StoreSku; onClick: () => void }) {
       </div>
       <div style={{ flexShrink: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
         <div style={{ fontSize: 12.5, fontWeight: 800, color: TOKENS.ink }}>
-          {sku.salesAmount30d != null ? `¥${Math.round(sku.salesAmount30d)}` : '—'}
+          {sku.salesRealamt30d != null ? `¥${Math.round(sku.salesRealamt30d)}` : '—'}
         </div>
         <div style={{ fontSize: 10.5, color: TOKENS.inkMuted, marginTop: 1 }}>
           30 日 {sku.salesQty30d ?? 0} 件

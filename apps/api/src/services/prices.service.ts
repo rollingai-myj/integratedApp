@@ -18,8 +18,10 @@ export interface PriceCurvePoint {
   snapshotDate: string;            // YYYY-MM-DD
   retailPrice: number | null;
   salesQty30d: number | null;
-  salesAmount30d: number | null;
-  grossMargin30d: number | null;
+  /** 近 30 日真实销售额(V031 起对齐 ERP, 原 salesAmount30d 改名) */
+  salesRealamt30d: number | null;
+  /** 近 30 日 PSD 销售环比 %; ERP 直接灌入 */
+  psdHb30d: number | null;
 }
 
 export interface PriceCurveSku {
@@ -58,6 +60,7 @@ export async function getPriceCurve(args: {
   );
 
   // V027：snapshot 单源；hq_products JOIN 一次取 wholesale_price 进 SKU 头部
+  // V031：sales_amount_30d → sales_realamt_30d, 删 gross_margin_30d, 加 psd_hb_30d
   const res = await query<{
     sku_code: string;
     product_name: string | null;
@@ -65,12 +68,12 @@ export async function getPriceCurve(args: {
     snapshot_date: string | Date;
     retail_price: string | null;
     sales_qty_30d: number | null;
-    sales_amount_30d: string | null;
-    gross_margin_30d: string | null;
+    sales_realamt_30d: string | null;
+    psd_hb_30d: string | null;
   }>(
     `SELECT s.sku_code, p.product_name, p.wholesale_price,
             s.snapshot_date, s.retail_price,
-            s.sales_qty_30d, s.sales_amount_30d, s.gross_margin_30d
+            s.sales_qty_30d, s.sales_realamt_30d, s.psd_hb_30d
        FROM store_sku_snapshots s
   LEFT JOIN hq_products p ON p.id = s.product_id AND p.deleted_at IS NULL
       WHERE ${filters.join(' AND ')}
@@ -94,8 +97,8 @@ export async function getPriceCurve(args: {
       snapshotDate: ymd(r.snapshot_date),
       retailPrice: r.retail_price != null ? Number(r.retail_price) : null,
       salesQty30d: r.sales_qty_30d,
-      salesAmount30d: r.sales_amount_30d != null ? Number(r.sales_amount_30d) : null,
-      grossMargin30d: r.gross_margin_30d != null ? Number(r.gross_margin_30d) : null,
+      salesRealamt30d: r.sales_realamt_30d != null ? Number(r.sales_realamt_30d) : null,
+      psdHb30d: r.psd_hb_30d != null ? Number(r.psd_hb_30d) : null,
     });
   }
   return Array.from(bySku.values());

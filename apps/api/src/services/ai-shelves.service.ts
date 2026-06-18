@@ -227,9 +227,9 @@ async function loadStoreSkuMetrics(
   const skus = await listStoreSkus({ storeId, scene });
   const items = skus.map((s) => ({
     skuCode: s.skuCode,
-    sales30d: s.salesAmount30d != null ? s.salesAmount30d.toFixed(2) : '0',
+    sales30d: s.salesRealamt30d != null ? s.salesRealamt30d.toFixed(2) : '0',
     salesVolume30d: s.salesQty30d != null ? String(s.salesQty30d) : '0',
-    psdChangetb: s.salesAmountChange30d != null ? String(s.salesAmountChange30d) : '0',
+    psdChange: s.psdHb30d != null ? String(s.psdHb30d) : '0',
   }));
   return { items };
 }
@@ -297,7 +297,7 @@ async function buildSkuJsonForVirtualShelf(
     高cm: s.heightCm,
     小类: s.categoryL3Name ?? '',
     '30日销售量': s.salesQty30d ?? 0,
-    '30日销售额': s.salesAmount30d ?? 0,
+    '30日销售额': s.salesRealamt30d ?? 0,
   }));
 
   if (newCodes.length === 0) return baseRows;
@@ -490,7 +490,7 @@ async function buildCommonInputs(ctx: BuildContext): Promise<Record<string, unkn
       skuCode: b.skuCode,
       sales30d: b.sales30d,
       salesVolume30d: b.salesVolume30d,
-      psdChangetb: b.psdChangetb,
+      psdChange: b.psdChange,
     })),
   };
   return {

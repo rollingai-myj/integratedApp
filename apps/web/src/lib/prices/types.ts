@@ -118,10 +118,9 @@ export function rowToSku(row: StoreSkuRow, curve?: PriceCurveSku | null): SKU {
  *
  * V027：snapshot 单源；批发价从 PriceCurveSku.wholesalePrice（全期同值）传入。
  *
- * 月化毛利计算优先级：
- *   1. 该 snapshot 有 grossMargin30d 且 > 0 → 月化毛利 = 销量 × 售价 × 毛利率
- *   2. 否则用批发价（fallbackWholesale）回填 → 单件毛利 = 售价 - 批发价；月化毛利 = 销量 × 单件毛利
- *   3. 批发价也没有时 → 月化毛利 = 月销售额（salesAmount30d）作粗略代用
+ * V031:gross_margin_30d 字段已删(ERP 不导入)。月化毛利改为两档:
+ *   1. 有批发价(fallbackWholesale) 且 < 售价 → 单件毛利 = 售价 - 批发价；月化毛利 = 销量 × 单件毛利
+ *   2. 否则 → 月化毛利 = 月销售额(salesRealamt30d)作粗略代用
  */
 export function pointsToPeriods(
   points: PriceCurvePoint[],
@@ -147,16 +146,14 @@ export function pointsToPeriods(
     const price = Number(p.retailPrice ?? 0);
     if (!Number.isFinite(price) || price <= 0) continue;
     const sales = Number(p.salesQty30d ?? 0);
-    const salesAmount = Number(p.salesAmount30d ?? 0);
-    const margin = p.grossMargin30d != null ? Number(p.grossMargin30d) : null;
+    const salesAmount = Number(p.salesRealamt30d ?? 0);
     const wholesale = fallbackWholesale > 0 ? fallbackWholesale : 0;
     // 该点是否带真实销量：salesQty30d 显式非空且 > 0
     const pointHasSales = p.salesQty30d != null && Number(p.salesQty30d) > 0;
 
+    // V031:无 gross_margin_30d 字段 — 优先用批发价反推单件毛利,否则月销售额代用
     let profit: number;
-    if (margin != null && margin > 0) {
-      profit = sales * price * margin;
-    } else if (wholesale > 0 && wholesale < price) {
+    if (wholesale > 0 && wholesale < price) {
       profit = sales * (price - wholesale);
     } else if (salesAmount > 0) {
       profit = salesAmount;

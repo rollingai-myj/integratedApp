@@ -76,11 +76,14 @@ export interface StoreSku {
   originalPrice: number | null;
   wholesalePrice: number | null;
   salesQty30d: number | null;
-  salesAmount30d: number | null;
-  grossMargin30d: number | null;
+  /** 近 30 日真实销售额(V031 起改名;后端字段 sales_realamt_30d) */
+  salesRealamt30d: number | null;
   stockQty: number | null;
   snapshotDate: string;
-  salesAmountChange30d: number | null;
+  /** 近 30 日 PSD 销售环比 %; V031 起来自 ERP 直接灌入的 snapshot.psd_hb_30d */
+  psdHb30d: number | null;
+  psdHb90d: number | null;
+  /** 销量(件数)环比 %; 仍由后端从两期 sales_qty_30d 自算 */
   salesQtyChange30d: number | null;
 }
 
