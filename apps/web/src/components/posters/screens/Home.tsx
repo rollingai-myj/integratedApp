@@ -41,6 +41,9 @@ type CategoryItem = {
   group_members?: Array<{ sku: string; productName: string }> | null;
   /** 组级最优叠券若只覆盖部分成员，记录适用的 SKU；null/undefined = 全员适用 */
   best_applies_to_skus?: string[] | null;
+  /** 组卡"代表 SKU"商品名,跟 best_label / 价格同源(rep);
+   *  不能用 group_members[0] 替代 — 成员数组首位与 rep 不一定一致。 */
+  rep_product_name?: string | null;
 };
 
 
@@ -289,7 +292,9 @@ function GroupCard({
           fontSize: 11, padding: '3px 7px', borderRadius: 8,
         }}>-{save}%</div>
         {(() => {
-          const firstName = members[0]?.productName ?? it.product_name;
+          // 优先用 rep_product_name(跟 best_label / 价格同源);退到首位成员名,
+          // 再退到 it.product_name(组卡 title,如 "会员价 · 促销组212")。
+          const firstName = it.rep_product_name ?? members[0]?.productName ?? it.product_name;
           const extra = Math.max(0, members.length - 1);
           return (
             <div style={{

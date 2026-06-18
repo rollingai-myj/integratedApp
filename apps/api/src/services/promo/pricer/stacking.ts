@@ -35,8 +35,14 @@ export function computeBest(
 ): {
   baseIdx: number;
   addonIdx: number | null;
+  /** base 单独的总价(不含 addon);用于"会员价 11/2罐"这一段单独展示 */
+  baseTotal: number;
+  /** base × addon 叠完后的总价(== baseTotal 当 addonIdx=null) */
   bundleTotal: number;
   qty: number;
+  /** base 单独的折后单价(= baseTotal / qty);用于不叠券时展示 */
+  baseUnitPrice: number;
+  /** 叠完后的实际成交单价(= bundleTotal / qty) */
   unitPrice: number;
   savingPercent: number;
 } | null {
@@ -51,7 +57,8 @@ export function computeBest(
 
   let best: {
     baseIdx: number; addonIdx: number | null;
-    bundleTotal: number; qty: number; unitPrice: number; savingPercent: number;
+    baseTotal: number; bundleTotal: number; qty: number;
+    baseUnitPrice: number; unitPrice: number; savingPercent: number;
   } | null = null;
 
   for (const bi of bases) {
@@ -82,8 +89,10 @@ export function computeBest(
         best = {
           baseIdx: bi,
           addonIdx: c.addonIdx,
+          baseTotal: baseRes.total,
           bundleTotal: c.total,
           qty: baseRes.qty,
+          baseUnitPrice: baseRes.total / baseRes.qty,
           unitPrice: unit,
           savingPercent: saving,
         };

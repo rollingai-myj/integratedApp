@@ -13,6 +13,7 @@ import type {
   ActivePromotionsResponse,
   PromoActivityType,
   PromoBestResult,
+  PromoMechanicParams,
   RecommendPromotionsResponse,
 } from '@myj/shared';
 import { mapCategoryToGroup } from '@/lib/categoryGroups';
@@ -31,6 +32,46 @@ function comboLabel(base: PromoActivityType, addon: PromoActivityType | null): s
   if (!addon) return b;
   const a = ACTIVITY_LABEL[addon] ?? addon;
   return `${b} + ${a}`;
+}
+
+/**
+ * 从 addon 池标签里抽品牌名:"brand_coupon/怡宝饮料品牌满减" → "怡宝饮料"。
+ * 拿不到牌名时返回空串(由调用方决定是否还要追加 "品牌满减券"等通用名)。
+ */
+function brandFromPoolLabel(poolLabel: string | null): string {
+  if (!poolLabel) return '';
+  const seg = poolLabel.includes('/') ? poolLabel.split('/').slice(1).join('/') : poolLabel;
+  return seg.replace(/品牌满减券?$/, '').replace(/系列$/, '').trim();
+}
+
+/**
+ * 把 addon 翻成顾客能看懂的具体描述:
+ *  - pool_threshold (品牌满减) → "怡宝饮料 满 88 减 10"
+ *  - percent_discount (周二会员 9 折 / 9 折券) → "9 折券"
+ *  - 其它兜底 → addon 的活动名(如 "常规优惠券")
+ *
+ * 返回 null 表示"没有 addon 或无法描述",文案就不写"到店领券"那一段。
+ */
+function describeAddon(
+  addonActivityType: PromoActivityType | null,
+  addonPoolLabel: string | null,
+  params: PromoMechanicParams | null,
+): string | null {
+  if (!addonActivityType || !params) return null;
+  if (params.kind === 'pool_threshold') {
+    const brand = brandFromPoolLabel(addonPoolLabel);
+    const head = brand ? `${brand} ` : '';
+    return `${head}满 ${params.threshold} 减 ${params.discount}`;
+  }
+  if (params.kind === 'percent_discount') {
+    const percent = params.pay_ratio * 100;     // 0.9 → 90
+    const off = 100 - percent;                  // 90 → 10(打 9 折 = 减 10%)
+    void off;
+    // 顾客习惯说"X 折",所以按 pay_ratio 报折:0.9 → 9 折; 0.85 → 8.5 折
+    const zhe = (params.pay_ratio * 10).toFixed(1).replace(/\.0$/, '');
+    return `${zhe} 折券`;
+  }
+  return ACTIVITY_LABEL[addonActivityType] ?? null;
 }
 
 /**
@@ -82,6 +123,9 @@ interface CategoryItem {
   brand_label?: string | null;
   group_members?: Array<{ sku: string; productName: string }> | null;
   best_applies_to_skus?: string[] | null;
+  /** 组卡的"代表 SKU"商品名 — Home.tsx 渲染组卡商品名行用它,跟 best_label/价格保持
+   *  同一权威源(rep);成员数组首位与 rep 不一定一致,所以不能用 members[0]. */
+  rep_product_name?: string | null;
 }
 
 export interface PersonalizedPromotionsResult {
@@ -95,9 +139,12 @@ export interface PersonalizedPromotionsResult {
 function rowToCategoryItem(p: PromoBestResult): CategoryItem {
   const savePct = (p.bestSavingPercent ?? 0) * 100;
   const label = comboLabel(p.baseActivityType, p.addonActivityType);
+  const baseLabel = ACTIVITY_LABEL[p.baseActivityType] ?? p.baseActivityType;
+  const addonDescription = describeAddon(p.addonActivityType, p.addonPoolLabel, p.addonMechanicParams);
   const displayText = formatPromotionDisplayText({
-    label,
-    totalPrice: p.bestBundleTotal,
+    baseLabel,
+    addonDescription,
+    baseTotalPrice: p.bestBaseTotalPrice,
     requiredQty: p.bestQty,
     effectiveUnitPrice: p.bestUnitPrice,
     originalPrice: p.originalPrice,
@@ -202,31 +249,47 @@ function buildCategoriesTree(results: PromoBestResult[]): Array<{ name: string; 
     const groupDays = maskToDays(groupMask);
     const poolName = poolLabel.split('/')[1] ?? poolLabel;
 
-    let label: string;
-    let title: string;
-    let description: string;
-    let displayQty: number;
+    // ── 三个槽位一律绑到 rep ───────────────────────────────────────────────
+    // 旧行为:label 按 kind 硬编码("会员价" / "会员价 + 品牌满减券"),与 rep 真实
+    // base/addon 类型脱钩;商品名走 members[0],价格走 rep — 三套数据源各自漂移,
+    // 用户切 toggle 看到"绿标一样、价格变了"和"商品名是 SKU 但文案是组N·共三款"。
+    // 现在 label / display_text(单 SKU 文案模板)/ rep_product_name 全部从 rep 算,
+    // 保证 stack 与 memberOnly 两路下,任何一个槽位变就一起变。
+    const label = comboLabel(rep.baseActivityType, rep.addonActivityType);
+    const repBaseLabel = ACTIVITY_LABEL[rep.baseActivityType] ?? rep.baseActivityType;
+    const repAddonDescription = describeAddon(rep.addonActivityType, rep.addonPoolLabel, rep.addonMechanicParams);
+    const repDisplayText = formatPromotionDisplayText({
+      baseLabel: repBaseLabel,
+      addonDescription: repAddonDescription,
+      baseTotalPrice: rep.bestBaseTotalPrice,
+      requiredQty: rep.bestQty,
+      effectiveUnitPrice: rep.bestUnitPrice,
+      originalPrice: rep.originalPrice,
+      unit: rep.unit ?? null,
+      productName: null,  // 组卡商品名走 rep_product_name 字段,不进文案
+      fallback: null,
+    });
 
+    // displayQty:member 组报 rep 自己的成交档(如"2 件 9.9");brand 组报凑齐池子
+    // 满减所需件数(展示用,实际可混搭 member 组的同品牌 SKU 一起凑)。
+    let title: string;
+    let displayQty: number;
+    let descriptionFallback: string;
     if (kind === 'member') {
-      label = ACTIVITY_LABEL.member_price;
-      title = `会员价 · ${poolName}`;
-      description = `${poolName} · 共 ${members.length} 款`;
-      displayQty = rep.bestQty;  // 例 "买 2 件 9.9 元",反映 rep 的实际成交档,非成员个数
+      title = `${label} · ${poolName}`;
+      displayQty = rep.bestQty;
+      descriptionFallback = `${poolName} · 共 ${members.length} 款`;
     } else {
-      label = `${ACTIVITY_LABEL.member_price} + ${ACTIVITY_LABEL.brand_coupon}`;
       title = `${poolName} 品牌满减券`;
       const params = rep.addonMechanicParams;
       const T = (params && params.kind === 'pool_threshold') ? params.threshold : 0;
       const D = (params && params.kind === 'pool_threshold') ? params.discount : 0;
-      // 注:这里只看本组(member 优先抢走后剩下的)的最低原价,所以 minQty 是"仅靠本组"
-      //   能凑齐的最少件数。实际凑单可以混搭 member 组的同 brand_coupon 池 SKU,
-      //   所以 minQty 仅作展示参考。
       const lowestOrig = Math.min(...members.map(m => m.originalPrice).filter(x => x > 0));
       const computedQty = T > 0 && Number.isFinite(lowestOrig) && lowestOrig > 0
         ? Math.ceil(T / lowestOrig)
         : 0;
       displayQty = computedQty || members.length;
-      description = T > 0 && D > 0
+      descriptionFallback = T > 0 && D > 0
         ? `满 ${T} 元减 ${D} 元 · 凑齐 ${displayQty} 件即满减 · 共 ${members.length} 款`
         : `共 ${members.length} 款`;
     }
@@ -235,18 +298,21 @@ function buildCategoriesTree(results: PromoBestResult[]): Array<{ name: string; 
       sku: `group:${poolLabel}`,
       product_name: title,
       unit: rep.unit ?? null,
-      original_price: null,
+      original_price: rep.originalPrice ?? null,
       category: rep.categoryName ?? null,
-      // 组卡 base_activity_type 一律置 null — 即便 rep 偏好筛过,组内仍可能混进
-      // weekend_beer base 让 validityBadge 误显示"周末啤酒日"
+      // base/addon_activity_type 仍置 null:组内成员可能混进 weekend_beer base
+      // 等不同类型,validityBadge 入口依旧用 null 走 mask 兜底,不被 rep 类型拽偏。
+      // 绿标文字另走 best_label (= comboLabel(rep.base, rep.addon)),与本字段解耦。
       base_activity_type: null,
-      addon_activity_type: kind === 'brand' ? 'brand_coupon' : null,
+      addon_activity_type: null,
       best_label: label,
       best_qty: displayQty,
       best_total: rep.bestBundleTotal,
       best_effective_price: rep.bestUnitPrice,
       best_saving_percent: repSavePct,
-      display_text: description,
+      // 单 SKU 文案模板("原价 X/罐 会员价 Y/N 罐 [到店领券 满R减S 相当于 Z/罐]"),
+      // 落到 SelectedPromotion.displayText 给下游海报用;算不出时退到组级摘要。
+      display_text: repDisplayText ?? descriptionFallback,
       best_valid_from: groupValidFrom,
       best_valid_to: groupValidTo,
       best_valid_dates: null,
@@ -265,6 +331,7 @@ function buildCategoriesTree(results: PromoBestResult[]): Array<{ name: string; 
       brand_label: poolName,
       group_members: members.map((m) => ({ sku: m.skuCode, productName: m.productName })),
       best_applies_to_skus: members.map((m) => m.skuCode),
+      rep_product_name: rep.productName,
     };
   };
 

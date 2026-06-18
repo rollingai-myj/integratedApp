@@ -493,10 +493,16 @@ export interface PromoBestResult {
   addonPoolLabel: string | null;
   /** add-on 机制参数(brand_coupon 是 pool_threshold,前端用它的 threshold/discount 显示"满 T 减 D") */
   addonMechanicParams: PromoMechanicParams | null;
-  /** 单品摊销最低支付金额（套餐总价 / 件数） */
+  /** 叠完 addon 后的实际成交单价(== bestBaseUnitPrice 当无 addon) */
   bestUnitPrice: number;
-  /** 套餐总价（base 算出来的 Q 件总价；A 机制 = 单件价） */
+  /** base × addon 叠完后的 Q 件总价(== bestBaseTotalPrice 当无 addon) */
   bestBundleTotal: number;
+  /** base 单独算出的 Q 件总价,不含 addon 折扣;
+   *  用于"会员价 11 元/2 罐"这一段单独展示 — 叠券文案前半段就报这个价。 */
+  bestBaseTotalPrice: number;
+  /** base 单独算出的折后单价(= bestBaseTotalPrice / bestQty);
+   *  不叠券档(addon=null)时,这就是顾客看到的最终单价。 */
+  bestBaseUnitPrice: number;
   bestQty: number;
   /** 节省占比 0~1 fraction(前端要 ×100 转百分比展示) */
   bestSavingPercent: number;

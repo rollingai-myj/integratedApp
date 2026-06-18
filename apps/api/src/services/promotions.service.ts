@@ -261,6 +261,8 @@ function buildResultsFromDataset(data: PromoDataset, mode: 'stack' | 'memberOnly
       addonMechanicParams: addonOffer?.mechanicParams ?? null,
       bestUnitPrice: best.unitPrice,
       bestBundleTotal: best.bundleTotal,
+      bestBaseTotalPrice: best.baseTotal,
+      bestBaseUnitPrice: best.baseUnitPrice,
       bestQty: best.qty,
       bestSavingPercent: best.savingPercent,
       validFrom,

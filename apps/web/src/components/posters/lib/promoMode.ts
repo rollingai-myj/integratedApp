@@ -1,5 +1,3 @@
-import { formatPromotionDisplayText } from '@/utils/promoDisplayText';
-
 export type PromoMode = 'stack' | 'memberOnly';
 
 const STORAGE_KEY = 'promoMode';
@@ -96,23 +94,16 @@ function buildDerivedFromOption(
   it: CategoryItemLike,
   opt: DealOptionLike,
 ): DerivedBest {
-  const text = formatPromotionDisplayText({
-    label: opt.label,
-    totalPrice: opt.totalPrice,
-    requiredQty: opt.requiredQty,
-    effectiveUnitPrice: opt.effectiveUnitPrice,
-    originalPrice: it.original_price,
-    unit: it.unit,
-    productName: it.product_name,
-    fallback: it.display_text,
-  }) ?? '';
+  // 文案 shim 在生成 CategoryItem 时已经把 display_text 算好(走 formatPromotionDisplayText)。
+  // 这里的 fallback 路径目前只在"best 不在今/明有效 → 退到 all_options 里找"时走,
+  // all_options 在当前 shim 里也只塞了一份 [0]=best,所以直接用 it.display_text 即可。
   return {
     label: opt.label,
     qty: opt.requiredQty,
     total: opt.totalPrice,
     effectivePrice: opt.effectiveUnitPrice,
     savingPercent: opt.savingPercent ?? 0,
-    displayText: text,
+    displayText: it.display_text ?? '',
     validFrom: opt.validFrom ?? null,
     validTo: opt.validTo ?? null,
     validDates: opt.validDates ?? null,
