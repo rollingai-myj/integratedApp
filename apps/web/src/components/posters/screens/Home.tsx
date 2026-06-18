@@ -78,22 +78,17 @@ function validityBadge(it: CategoryItem, best: DerivedBest): { text: string; tod
     ? (best.validFrom <= todayISO && best.validTo >= todayISO)
     : true;
 
-  // 状态文字:今日 / 明日 / 活动名 / 全周
+  // 状态文字:今日 / 明日 / 限定 weekday / 全周
   let status: string;
   let isToday = false;
   if (days && days.length > 0 && days.length < 7) {
     if (days.includes(todayJS))     { status = '今日有效'; isToday = inWindow; }
     else if (days.includes(tomorrowJS)) { status = '明日有效'; }
     else {
-      // 不在今/明 — 按 activity type 走品牌名
-      const base = it.base_activity_type;
-      const addon = it.addon_activity_type;
-      if (base === 'tuesday_member' || addon === 'tuesday_member')      status = '周二会员日';
-      else if (base === 'weekend_beer' || addon === 'weekend_beer')     status = '周末啤酒日';
-      else {
-        const DOW = ['日', '一', '二', '三', '四', '五', '六'];
-        status = `仅周${days.map(d => DOW[d]).join('')}`;
-      }
+      // 不在今/明 — 统一显示 weekday 限定列表(例 "仅周二" / "仅周五六日"),
+      // 不再分支到"周二会员日"/"周末啤酒日"等业务名,保持口径一致
+      const DOW = ['日', '一', '二', '三', '四', '五', '六'];
+      status = `仅周${days.map(d => DOW[d]).join('')}`;
     }
   } else {
     // 全周有效 (mask=127) 或 days 为 null

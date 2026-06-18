@@ -175,15 +175,30 @@ async function fetchPromoDataset(): Promise<PromoDataset> {
     [skuCodes],
   );
   const ctx = new Map(ctxRes.rows.map((r) => [r.sku_code, r]));
-  // 兜底:本次上传里的档案行(member_price / weekend_beer 带'大类'),按 sku 取一条
-  const rawCtxRes = await query<RawCtxRow>(
+  // 兜底:本次上传里的档案行 — 不要按 category_name IS NOT NULL 过滤,否则
+  // tuesday_member/brand_coupon sheet 那些不带"大类"列的 SKU 名字会丢,
+  // 退到光秃秃的 sku_code 显示。这里两步:
+  //   1) 取每个 SKU 最近一条有 sku_name_original 的行,做 name/unit 兜底
+  //   2) 再叠一层"最近一条 category_name 非空"的行,做 category 兜底(category 可以缺,name 不能缺)
+  const rawNameRes = await query<RawCtxRow>(
     `SELECT DISTINCT ON (sku_code) sku_code, sku_name_original, unit, category_name
+       FROM hq_promo_raw_items
+      WHERE sku_code = ANY($1) AND sku_name_original IS NOT NULL
+   ORDER BY sku_code, created_at DESC`,
+    [skuCodes],
+  );
+  const rawCtx = new Map(rawNameRes.rows.map((r) => [r.sku_code, r]));
+  const rawCatRes = await query<{ sku_code: string; category_name: string }>(
+    `SELECT DISTINCT ON (sku_code) sku_code, category_name
        FROM hq_promo_raw_items
       WHERE sku_code = ANY($1) AND category_name IS NOT NULL
    ORDER BY sku_code, created_at DESC`,
     [skuCodes],
   );
-  const rawCtx = new Map(rawCtxRes.rows.map((r) => [r.sku_code, r]));
+  for (const r of rawCatRes.rows) {
+    const existing = rawCtx.get(r.sku_code);
+    if (existing && !existing.category_name) existing.category_name = r.category_name;
+  }
 
   const offersBySku = new Map<string, OfferRow[]>();
   for (const o of offersRes.rows) {
