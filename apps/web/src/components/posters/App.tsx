@@ -17,7 +17,7 @@ import { authClient } from './auth-client';
 import { getHostContext } from './host-bridge';
 import { recordLogin } from '@/lib/auth.functions';
 import { startSession, heartbeat } from '@/lib/usage.functions';
-import { stripLeadingProductName, stripLeadingPromoCodes } from '@/utils/promoDisplayText';
+import { stripLeadingProductName } from '@/utils/promoDisplayText';
 import { PromotionProvider, usePromotion } from './PromotionContext';
 import { JobsProvider } from './JobsContext';
 import { GuideProvider, useGuide } from './GuideContext';
@@ -196,7 +196,7 @@ function PosterAppInner() {
           reset();
           if (promo) {
             setSelectedPromo(promo);
-            if (promo.displayText) setCopy(stripLeadingPromoCodes(stripLeadingProductName(promo.displayText, promo.productName)) || '限时特价');
+            if (promo.displayText) setCopy(stripLeadingProductName(promo.displayText, promo.productName) || '限时特价');
             go('camera');
           } else {
             // 直接做海报 → 进入与批量一致的多张上传页（free mode）

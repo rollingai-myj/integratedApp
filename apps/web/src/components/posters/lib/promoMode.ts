@@ -1,5 +1,3 @@
-import { formatPromotionDisplayText } from '@/utils/promoDisplayText';
-
 export type PromoMode = 'stack' | 'memberOnly';
 
 const STORAGE_KEY = 'promoMode';
@@ -35,6 +33,8 @@ export type CategoryItemLike = {
   unit: string | null;
   original_price: number | null;
   category: string | null;
+  base_activity_type?: string | null;
+  addon_activity_type?: string | null;
   best_label: string | null;
   best_qty: number | null;
   best_total: number | null;
@@ -57,6 +57,7 @@ export type DerivedBest = {
   validFrom: string | null;
   validTo: string | null;
   validDates: string[] | null;
+  validDayOfWeek: number[] | null;
 };
 
 /** 判断某条 option 是否今/明有效。无日期信息时视为长期有效。 */
@@ -93,70 +94,44 @@ function buildDerivedFromOption(
   it: CategoryItemLike,
   opt: DealOptionLike,
 ): DerivedBest {
-  const text = formatPromotionDisplayText({
-    label: opt.label,
-    totalPrice: opt.totalPrice,
-    requiredQty: opt.requiredQty,
-    effectiveUnitPrice: opt.effectiveUnitPrice,
-    originalPrice: it.original_price,
-    unit: it.unit,
-    productName: it.product_name,
-    fallback: it.display_text,
-  }) ?? '';
+  // 文案 shim 在生成 CategoryItem 时已经把 display_text 算好(走 formatPromotionDisplayText)。
+  // 这里的 fallback 路径目前只在"best 不在今/明有效 → 退到 all_options 里找"时走,
+  // all_options 在当前 shim 里也只塞了一份 [0]=best,所以直接用 it.display_text 即可。
   return {
     label: opt.label,
     qty: opt.requiredQty,
     total: opt.totalPrice,
     effectivePrice: opt.effectiveUnitPrice,
     savingPercent: opt.savingPercent ?? 0,
-    displayText: text,
+    displayText: it.display_text ?? '',
     validFrom: opt.validFrom ?? null,
     validTo: opt.validTo ?? null,
     validDates: opt.validDates ?? null,
+    validDayOfWeek: opt.validDayOfWeek ?? null,
   };
 }
 
 /**
- * 根据模式从商品的 all_options 推导出"当前最佳"。
- * - stack: 默认用服务端算好的 best_* 字段；validOnly 时若 best 今/明已过期，
- *   在 all_options 里按 savingPercent 降序挑第一条今/明有效的
- * - memberOnly: 从「会员价 / 会员日」单项里按 effectiveUnitPrice 升序挑第一条；
- *   validOnly 时先过滤掉今/明无效的候选
- * 选不到返回 null。
+ * 从 CategoryItem 推出"当前最佳"档显示。
+ *
+ * 注:promoMode 不在这里分支了 — 后端把"允许叠券"和"只用会员价"算成两条独立的
+ * categories tree,Home.tsx 在外层按 mode 选 tree 后再喂给这里。所以这里只剩一份
+ * "用服务端 best_*,validOnly 时退而求其次挑 all_options 里今/明仍有效的最优档"逻辑。
+ *
+ * mode 参数保留只为签名兼容(调用点暂未全部清理)。
  */
 export function deriveBest(
   it: CategoryItemLike,
-  mode: PromoMode,
+  _mode: PromoMode,
   opts?: { validOnly?: boolean },
 ): DerivedBest | null {
   const validOnly = !!opts?.validOnly;
   const allOptions = Array.isArray(it.all_options) ? it.all_options : [];
 
-  if (mode === 'stack') {
-    const serverBestOk =
-      !!it.best_label && it.best_total != null && it.best_qty != null && it.best_effective_price != null;
-    if (!serverBestOk) {
-      if (!validOnly) return null;
-      const ranked = [...allOptions]
-        .filter(o => o && o.label && o.totalPrice > 0 && o.effectiveUnitPrice > 0)
-        .filter(o => isOptionValidTodayOrTomorrow(o))
-        .sort((a, b) => (b.savingPercent ?? 0) - (a.savingPercent ?? 0));
-      const pick = ranked[0];
-      return pick ? buildDerivedFromOption(it, pick) : null;
-    }
-    const serverBest: DerivedBest = {
-      label: it.best_label!,
-      qty: it.best_qty!,
-      total: it.best_total!,
-      effectivePrice: it.best_effective_price!,
-      savingPercent: it.best_saving_percent ?? 0,
-      displayText: it.display_text ?? '',
-      validFrom: it.best_valid_from,
-      validTo: it.best_valid_to,
-      validDates: it.best_valid_dates,
-    };
-    if (!validOnly) return serverBest;
-    if (isOptionValidTodayOrTomorrow(serverBest)) return serverBest;
+  const serverBestOk =
+    !!it.best_label && it.best_total != null && it.best_qty != null && it.best_effective_price != null;
+  if (!serverBestOk) {
+    if (!validOnly) return null;
     const ranked = [...allOptions]
       .filter(o => o && o.label && o.totalPrice > 0 && o.effectiveUnitPrice > 0)
       .filter(o => isOptionValidTodayOrTomorrow(o))
@@ -164,18 +139,27 @@ export function deriveBest(
     const pick = ranked[0];
     return pick ? buildDerivedFromOption(it, pick) : null;
   }
-
-  // memberOnly
-  const singles = allOptions.filter(o => o && o.label && !o.label.includes(' + '));
-  let memberCandidates = singles
-    .filter(o => o.label === '会员价' || o.label === '会员日')
-    .filter(o => o.totalPrice > 0 && o.effectiveUnitPrice > 0);
-  if (validOnly) {
-    memberCandidates = memberCandidates.filter(o => isOptionValidTodayOrTomorrow(o));
-  }
-  memberCandidates.sort((a, b) => a.effectiveUnitPrice - b.effectiveUnitPrice);
-  const pick = memberCandidates[0];
-  if (!pick) return null;
-  return buildDerivedFromOption(it, pick);
+  // server best 没把 validDayOfWeek 直接挂在顶层,从 all_options[0] 取(shim 把它放那里)
+  const topOpt = allOptions[0];
+  const serverBest: DerivedBest = {
+    label: it.best_label!,
+    qty: it.best_qty!,
+    total: it.best_total!,
+    effectivePrice: it.best_effective_price!,
+    savingPercent: it.best_saving_percent ?? 0,
+    displayText: it.display_text ?? '',
+    validFrom: it.best_valid_from,
+    validTo: it.best_valid_to,
+    validDates: it.best_valid_dates,
+    validDayOfWeek: topOpt?.validDayOfWeek ?? null,
+  };
+  if (!validOnly) return serverBest;
+  if (isOptionValidTodayOrTomorrow(serverBest)) return serverBest;
+  const ranked = [...allOptions]
+    .filter(o => o && o.label && o.totalPrice > 0 && o.effectiveUnitPrice > 0)
+    .filter(o => isOptionValidTodayOrTomorrow(o))
+    .sort((a, b) => (b.savingPercent ?? 0) - (a.savingPercent ?? 0));
+  const pick = ranked[0];
+  return pick ? buildDerivedFromOption(it, pick) : null;
 }
 

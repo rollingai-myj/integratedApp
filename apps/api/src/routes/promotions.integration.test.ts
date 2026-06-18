@@ -1,51 +1,19 @@
-/**
- * Phase 5 促销集成测试（HTTP 级，打真实 DB）
- *
- * 跑前提：
- *   1) DB_NAME=myj_test bash apps/api/scripts/db-reset.sh
- *   2) INTEGRATION_DB=1 DATABASE_URL=postgresql://...:5432/myj_test npx vitest run src/routes/promotions.integration.test.ts
- *
- * 覆盖：
- *   - 普通用户上传 403、超管 admin 上传 201
- *   - 上传带 activate=true → /promotions/active 立刻能读到
- *   - 第二批次 activate → 第一批次自动 deactivated（约束 #9）
- *   - 单品聚合到 mix group（mix_group_code 相同 → 一条 group）
- *   - 删除批次 → 列表里没了 + active 视图也空
- *   - recommend 不挂（即使无历史海报，也按 saving_percent 倒序）
- */
+// apps/api/src/routes/promotions.integration.test.ts
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createApp } from '../app.js';
 import { pool, query } from '../db/index.js';
 
 const enabled = process.env.INTEGRATION_DB === '1';
 const d = enabled ? describe : describe.skip;
+const FIXTURE = path.resolve(process.cwd(), '../../6月下营销活动（会员价+叠券）.xlsx');
 
 let server: Server;
 let base = '';
 
 interface Ctx { cookie: string }
-
-async function call(
-  method: string,
-  path: string,
-  opts: { body?: unknown; ctx?: Ctx } = {},
-): Promise<{ status: number; json: any }> {
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: {
-      ...(opts.body !== undefined ? { 'content-type': 'application/json' } : {}),
-      ...(opts.ctx ? { cookie: opts.ctx.cookie } : {}),
-    },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
-  let json: any = null;
-  const text = await res.text();
-  if (text) {
-    try { json = JSON.parse(text); } catch { json = text; }
-  }
-  return { status: res.status, json };
-}
 
 function cookieOf(setCookie: string | null): Ctx {
   expect(setCookie).toBeTruthy();
@@ -64,12 +32,8 @@ async function login(account: string, password: string): Promise<Ctx> {
   return cookieOf(res.headers.get('set-cookie'));
 }
 
-d('Phase 5 · promotions (integration)', () => {
+d('Phase 6 · promotions multi-sheet upload (integration)', () => {
   let adminCtx: Ctx;
-  let opsCtx: Ctx;
-  let skuCodeA: string;
-  let skuCodeB: string;
-  let skuCodeC: string;
 
   beforeAll(async () => {
     const app = createApp();
@@ -79,145 +43,60 @@ d('Phase 5 · promotions (integration)', () => {
     const addr = server.address();
     if (typeof addr === 'object' && addr) base = `http://127.0.0.1:${addr.port}`;
     if (!enabled) return;
-
+    await query(`DELETE FROM hq_promo_batches`);
     adminCtx = await login('admin', 'Admin@1234');
-    opsCtx = await login('ops', 'Ops@1234');
-
-    const skuRows = await query<{ sku_code: string }>(
-      `SELECT sku_code FROM hq_products WHERE category_id IS NOT NULL LIMIT 3`,
-    );
-    expect(skuRows.rows.length).toBe(3);
-    skuCodeA = skuRows.rows[0]!.sku_code;
-    skuCodeB = skuRows.rows[1]!.sku_code;
-    skuCodeC = skuRows.rows[2]!.sku_code;
-
-    // 清理种子已激活的批次，让我们的测试自己控状态
-    await query(`UPDATE hq_promo_batches SET is_active = FALSE, deactivated_at = now() WHERE is_active = TRUE`);
   });
 
   afterAll(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (enabled) await query(`DELETE FROM hq_promo_batches`);
     await pool.end();
   });
 
-  it('店长上传促销 → 403', async () => {
-    const r = await call('POST', '/api/v1/promotions/batches:upload', {
-      ctx: opsCtx,
-      body: {
-        fileName: 't1.xlsx',
-        rows: [
-          { rowIndex: 1, skuCode: skuCodeA, productName: 'p1', bestSavingPercent: 20 },
-        ],
-      },
+  it('上传真实 Excel: 5 sheet 全解析 + 批次 + 档案 + offer 入库', async () => {
+    const buf = fs.readFileSync(FIXTURE);
+    const blob = new Blob([buf], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
-    expect(r.status).toBe(403);
-  });
+    const fd = new FormData();
+    fd.set('file', blob, '6月下营销活动.xlsx');
 
-  let firstBatchId = '';
-
-  it('超管上传 batch + activate → /active 能读到', async () => {
-    const r = await call('POST', '/api/v1/promotions/batches:upload', {
-      ctx: adminCtx,
-      body: {
-        fileName: 't-first.xlsx',
-        activate: true,
-        rows: [
-          {
-            rowIndex: 1, skuCode: skuCodeA, productName: 'A',
-            bestLabel: '第二件半价', bestSavingPercent: 25, bestTotalPrice: 12,
-            mixGroupCode: 'MG1',
-          },
-          {
-            rowIndex: 2, skuCode: skuCodeB, productName: 'B',
-            bestLabel: '第二件半价', bestSavingPercent: 20, bestTotalPrice: 11,
-            mixGroupCode: 'MG1',
-          },
-        ],
-      },
+    const res = await fetch(`${base}/api/v1/promotions/batches:upload`, {
+      method: 'POST',
+      headers: { cookie: adminCtx.cookie },
+      body: fd,
     });
-    expect(r.status).toBe(201);
-    expect(r.json.upload.isActive).toBe(true);
-    expect(r.json.productCount).toBe(2);
-    expect(r.json.groupCount).toBe(1);
-    firstBatchId = r.json.upload.id;
+    expect(res.status).toBe(201);
+    const body = await res.json();
 
-    const ar = await call('GET', '/api/v1/promotions/active', { ctx: opsCtx });
-    expect(ar.status).toBe(200);
-    expect(ar.json.upload.id).toBe(firstBatchId);
-    expect(ar.json.products).toHaveLength(2);
-    expect(ar.json.groups).toHaveLength(1);
-    expect(ar.json.groups[0].skuCodes).toEqual([skuCodeA, skuCodeB]);
-    // 按 saving_percent DESC 排序：A(25) 在前
-    expect(ar.json.products[0].skuCode).toBe(skuCodeA);
-  });
+    expect(body.batch).toBeDefined();
+    expect(body.batch.rowTotal.member_price).toBeGreaterThan(1000);
+    expect(body.batch.rowTotal.weekend_beer).toBeGreaterThan(50);
+    expect(body.batch.rowTotal.brand_coupon).toBeGreaterThan(300);
+    expect(body.batch.rowTotal.tuesday_member).toBeGreaterThan(20);
+    expect(body.batch.rowTotal.regular_coupon).toBeGreaterThan(30);
 
-  let secondBatchId = '';
+    const rawCount = await query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM hq_promo_raw_items`);
+    expect(rawCount.rows[0]!.c).toBeGreaterThan(1100);
 
-  it('上传第二批次 + activate → 第一个自动 deactivated', async () => {
-    const r = await call('POST', '/api/v1/promotions/batches:upload', {
-      ctx: adminCtx,
-      body: {
-        fileName: 't-second.xlsx',
-        activate: true,
-        rows: [
-          {
-            rowIndex: 1, skuCode: skuCodeC, productName: 'C',
-            bestLabel: '满 2 件 9 折', bestSavingPercent: 10,
-          },
-        ],
-      },
-    });
-    expect(r.status).toBe(201);
-    secondBatchId = r.json.upload.id;
-    expect(r.json.upload.isActive).toBe(true);
+    const offerCount = await query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM hq_promo_offers`);
+    expect(offerCount.rows[0]!.c).toBeGreaterThan(1000);
 
-    const all = await call('GET', '/api/v1/promotions/batches', { ctx: adminCtx });
-    expect(all.status).toBe(200);
-    const firstStill = all.json.batches.find((b: any) => b.id === firstBatchId);
-    expect(firstStill).toBeTruthy();
-    expect(firstStill.isActive).toBe(false);
-
-    const active = await call('GET', '/api/v1/promotions/active', { ctx: opsCtx });
-    expect(active.json.upload.id).toBe(secondBatchId);
-    expect(active.json.products[0].skuCode).toBe(skuCodeC);
-  });
-
-  it('recommend 不挂，返回当前 active 的 products', async () => {
-    const r = await call('GET', '/api/v1/promotions/recommend', { ctx: opsCtx });
-    expect(r.status).toBe(200);
-    expect(r.json.upload?.id).toBe(secondBatchId);
-    expect(r.json.products).toHaveLength(1);
-    expect(r.json.groups).toBeDefined();
-    expect(Array.isArray(r.json.groups)).toBe(true);
-    // recommend 透传 active 的 groups（V020 后 VIEW 派生，含 mix_group_code 的 batch_items 即贡献一组）
-    const active = await call('GET', '/api/v1/promotions/active', { ctx: opsCtx });
-    expect(r.json.groups.length).toBe(active.json.groups.length);
-  });
-
-  it('删除第二批次 → /active 为空', async () => {
-    const del = await call(
-      'DELETE',
-      `/api/v1/promotions/batches/${secondBatchId}`,
-      { ctx: adminCtx },
+    // 抽查：百威系列池里应有 ≥10 个 sku
+    const poolCount = await query<{ c: number }>(
+      `SELECT COUNT(*)::int AS c FROM hq_promo_offers WHERE pool_label LIKE 'brand_coupon/百威系列%'`,
     );
-    expect(del.status).toBe(200);
-    expect(del.json.deleted).toBe(true);
+    expect(poolCount.rows[0]!.c).toBeGreaterThanOrEqual(10);
+  }, 30_000);
 
-    const active = await call('GET', '/api/v1/promotions/active', { ctx: opsCtx });
-    expect(active.json.upload).toBeNull();
-  });
-
-  it('手动 activate 第一批次 → 重新激活', async () => {
-    const act = await call(
-      'POST',
-      `/api/v1/promotions/batches/${firstBatchId}/activate`,
-      { ctx: adminCtx },
-    );
-    expect(act.status).toBe(200);
-    expect(act.json.upload.id).toBe(firstBatchId);
-    expect(act.json.upload.isActive).toBe(true);
-
-    const active = await call('GET', '/api/v1/promotions/active', { ctx: opsCtx });
-    expect(active.json.upload.id).toBe(firstBatchId);
+  it('GET /promotions/active 返回 results', async () => {
+    const res = await fetch(`${base}/api/v1/promotions/active`, {
+      headers: { cookie: adminCtx.cookie },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body.batches)).toBe(true);
+    // 注意：v_active_offers 受 current_date 过滤 — 若今天不在活动窗,results 可能空
+    expect(Array.isArray(body.results)).toBe(true);
   });
 });

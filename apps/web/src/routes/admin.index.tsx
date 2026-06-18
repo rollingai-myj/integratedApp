@@ -30,9 +30,11 @@ function AdminPlaceholder() {
           </Link>
           <div className="text-[16px] font-semibold text-ink">后台管理</div>
         </header>
-        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
-          <div className="text-[42px] font-bold text-primary">M5</div>
-          <div className="text-[14px] text-ink-2 mt-2">即将开放</div>
+        <div className="flex-1 px-5 pt-3">
+          <Link to="/admin/promotions" className="block bg-surface rounded-2xl p-4 border border-hairline">
+            <div className="text-[14px] font-semibold text-ink">促销上传</div>
+            <div className="text-[12px] text-ink-2 mt-1">上传月度活动 Excel，解析存档案 + 优惠层</div>
+          </Link>
         </div>
       </div>
     </IOSDevice>

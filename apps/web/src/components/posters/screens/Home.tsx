@@ -13,7 +13,6 @@ import { ProductImg } from '../ProductImg';
 import { deriveBest, loadPromoMode, savePromoMode, type PromoMode, type DealOptionLike, type DerivedBest } from '../lib/promoMode';
 import { useGuide, hasSeenGuide } from '../GuideContext';
 import { StackRuleHint } from '../StackRuleHint';
-import { stripSpec } from '@/utils/promoDisplayText';
 
 
 
@@ -23,6 +22,8 @@ type CategoryItem = {
   unit: string | null;
   original_price: number | null;
   category: string | null;
+  base_activity_type?: string | null;
+  addon_activity_type?: string | null;
   best_label: string | null;
   best_qty: number | null;
   best_total: number | null;
@@ -40,6 +41,9 @@ type CategoryItem = {
   group_members?: Array<{ sku: string; productName: string }> | null;
   /** 组级最优叠券若只覆盖部分成员，记录适用的 SKU；null/undefined = 全员适用 */
   best_applies_to_skus?: string[] | null;
+  /** 组卡"代表 SKU"商品名,跟 best_label / 价格同源(rep);
+   *  不能用 group_members[0] 替代 — 成员数组首位与 rep 不一定一致。 */
+  rep_product_name?: string | null;
 };
 
 
@@ -55,21 +59,47 @@ function fmtMD(d: string | null | undefined): string | null {
 }
 
 function validityBadge(it: CategoryItem, best: DerivedBest): { text: string; today: boolean } | null {
+  const todayJS = new Date().getDay();
+  const tomorrowJS = (todayJS + 1) % 7;
   const todayISO = new Date().toISOString().slice(0, 10);
+  const days = best.validDayOfWeek;
+
   if (best.validDates?.length) {
     const today = best.validDates.includes(todayISO);
-    const text = `仅 ${best.validDates.map(fmtMD).join('、')}`;
-    return { text, today };
+    return { text: `仅 ${best.validDates.map(fmtMD).join('、')}`, today };
   }
-  if (best.label.includes('会员日')) {
-    const today = new Date().getDay() === 2;
-    return { text: '周二限定', today };
+
+  // mask = 0 → base × addon weekday 不相交,永远凑不到 — 不画黄标
+  if (days && days.length === 0) return null;
+
+  // 日期范围(每条都有,base × addon 交集后的窗口)
+  const dateRange = (best.validFrom && best.validTo)
+    ? `${fmtMD(best.validFrom)}-${fmtMD(best.validTo)}`
+    : '';
+  const inWindow = best.validFrom && best.validTo
+    ? (best.validFrom <= todayISO && best.validTo >= todayISO)
+    : true;
+
+  // 状态文字:今日 / 明日 / 限定 weekday / 全周
+  let status: string;
+  let isToday = false;
+  if (days && days.length > 0 && days.length < 7) {
+    if (days.includes(todayJS))     { status = '今日有效'; isToday = inWindow; }
+    else if (days.includes(tomorrowJS)) { status = '明日有效'; }
+    else {
+      // 不在今/明 — 统一显示 weekday 限定列表(例 "仅周二" / "仅周五六日"),
+      // 不再分支到"周二会员日"/"周末啤酒日"等业务名,保持口径一致
+      const DOW = ['日', '一', '二', '三', '四', '五', '六'];
+      status = `仅周${days.map(d => DOW[d]).join('')}`;
+    }
+  } else {
+    // 全周有效 (mask=127) 或 days 为 null
+    status = '今日有效';
+    isToday = inWindow;
   }
-  if (best.validFrom && best.validTo) {
-    const today = best.validFrom <= todayISO && best.validTo >= todayISO;
-    return { text: `${fmtMD(best.validFrom)}–${fmtMD(best.validTo)}`, today };
-  }
-  return null;
+
+  const text = dateRange ? `${status}·${dateRange}` : status;
+  return { text, today: isToday };
 }
 
 function ProductCard({
@@ -179,7 +209,7 @@ function ProductCard({
               fontSize: 10, padding: '2px 6px', borderRadius: 8, fontWeight: 600,
               color: badge.today ? '#fff' : '#8a5a00',
               background: badge.today ? '#ff8c1a' : '#fff4e6',
-            }}>{badge.today ? '今日有效 · ' : ''}{badge.text}</span>
+            }}>{badge.text}</span>
           )}
         </div>
       </div>
@@ -262,7 +292,9 @@ function GroupCard({
           fontSize: 11, padding: '3px 7px', borderRadius: 8,
         }}>-{save}%</div>
         {(() => {
-          const firstName = stripSpec(members[0]?.productName ?? it.product_name);
+          // 优先用 rep_product_name(跟 best_label / 价格同源);退到首位成员名,
+          // 再退到 it.product_name(组卡 title,如 "会员价 · 促销组212")。
+          const firstName = it.rep_product_name ?? members[0]?.productName ?? it.product_name;
           const extra = Math.max(0, members.length - 1);
           return (
             <div style={{
@@ -310,7 +342,7 @@ function GroupCard({
                   fontSize: 10, padding: '2px 6px', borderRadius: 8, fontWeight: 600,
                   color: badge.today ? '#fff' : '#8a5a00',
                   background: badge.today ? '#ff8c1a' : '#fff4e6',
-                }}>{badge.today ? '今日有效 · ' : ''}{badge.text}</span>
+                }}>{badge.text}</span>
               )}
             </div>
           );
@@ -319,7 +351,7 @@ function GroupCard({
           const applies = it.best_applies_to_skus;
           const total = members.length;
           if (!applies || applies.length === 0 || applies.length >= total) return null;
-          const skuToName = new Map(members.map((m) => [m.sku, stripSpec(m.productName) || m.productName]));
+          const skuToName = new Map(members.map((m) => [m.sku, m.productName]));
           const names = applies.map((s) => skuToName.get(s) ?? s);
           const shown = names.slice(0, 2).join('、');
           const extra = names.length > 2 ? `等 ${names.length} 款` : '';
@@ -346,7 +378,9 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
   onToast: (text: string) => void;
 }) {
   const [recent, setRecent] = React.useState<RecentPoster[]>([]);
-  const [categories, setCategories] = React.useState<Array<{ name: string; items: CategoryItem[] }>>([]);
+  // 后端把"允许叠券"和"只用会员价"算成两条独立的品类树,这里两份都缓存,按 promoMode 选用
+  const [categoriesStack, setCategoriesStack] = React.useState<Array<{ name: string; items: CategoryItem[] }>>([]);
+  const [categoriesMemberOnly, setCategoriesMemberOnly] = React.useState<Array<{ name: string; items: CategoryItem[] }>>([]);
   const [activeCat, setActiveCat] = React.useState<string | null>(null);
   const [recoState, setRecoState] = React.useState<'loading' | 'ok' | 'empty' | 'error'>('loading');
   const [showRecent, setShowRecent] = React.useState(false);
@@ -379,10 +413,12 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
       try {
         const res: any = await fetchReco();
         if (cancelled) return;
-        const cats = (res?.categories ?? []) as Array<{ name: string; items: CategoryItem[] }>;
-        if (cats.length === 0) { setRecoState('empty'); return; }
-        setCategories(cats);
-        setActiveCat(cats[0].name);
+        const stack = (res?.categories ?? []) as Array<{ name: string; items: CategoryItem[] }>;
+        const memberOnly = (res?.categoriesMemberOnly ?? []) as Array<{ name: string; items: CategoryItem[] }>;
+        if (stack.length === 0 && memberOnly.length === 0) { setRecoState('empty'); return; }
+        setCategoriesStack(stack);
+        setCategoriesMemberOnly(memberOnly);
+        setActiveCat((stack[0] ?? memberOnly[0])?.name ?? null);
         setRecoState('ok');
       } catch (e) {
         console.error('[reco]', e);
@@ -392,10 +428,12 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
     return () => { cancelled = true; };
   }, [fetchReco]);
 
+  // 按当前 promoMode 选用对应的品类树 — 后端已经分两路算好,这里只切 source
+  const categories = promoMode === 'memberOnly' ? categoriesMemberOnly : categoriesStack;
+
   // 派生：sku -> DerivedBest|null
   // 当开启"今明有效"时，best 也按"模式候选池中今/明仍有效的最佳一条"挑选，
-  // 这样卡片显示的折扣力度/折后价就是实际可用的活动，并且两个模式的有效性
-  // 判定口径一致（item 在该模式下是否有任意今/明有效项）。
+  // 这样卡片显示的折扣力度/折后价就是实际可用的活动。
   const bestMap = React.useMemo(() => {
     const m = new Map<string, DerivedBest | null>();
     for (const c of categories) for (const it of c.items) {
@@ -744,10 +782,22 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
           {recoState === 'ok' && (() => {
             const q = query.trim().toLowerCase();
             if (q) {
+              // 去重 by sku:同一个 SKU 可能既在原品类又在「超优惠」分组,搜索别累二次。
+              // 同时:组卡的 product_name 是组名(如"怡宝饮料 品牌满减券"),搜成员
+              // SKU 名字时要看 group_members 里逐个成员名 — 否则进组 SKU 搜不到。
+              const seen = new Set<string>();
               const matched: CategoryItem[] = [];
               for (const c of visibleCategories) {
                 for (const it of c.items) {
-                  if ((it.product_name ?? '').toLowerCase().includes(q)) matched.push(it);
+                  if (seen.has(it.sku)) continue;
+                  const nameHit = (it.product_name ?? '').toLowerCase().includes(q);
+                  const memberHit = it.is_group && (it.group_members ?? []).some(
+                    (m) => (m.productName ?? '').toLowerCase().includes(q),
+                  );
+                  if (nameHit || memberHit) {
+                    seen.add(it.sku);
+                    matched.push(it);
+                  }
                 }
               }
               if (matched.length === 0) {

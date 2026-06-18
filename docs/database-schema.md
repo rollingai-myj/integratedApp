@@ -3,15 +3,15 @@
 > 给新加入项目的开发：每张表 / 每个字段是什么、什么时候被读、什么时候被写。优先用业务语言（不照搬 SQL 注释）。
 >
 > 数据源：
-> - 迁移文件：[apps/api/src/db/migrations/](../apps/api/src/db/migrations/) — V001 到 **V026**（最新：[V026__hq_products_market_min_and_tags.sql](../apps/api/src/db/migrations/V026__hq_products_market_min_and_tags.sql)）
-> - 视图：[V010__views.sql](../apps/api/src/db/migrations/V010__views.sql) + V020 把 `hq_promo_mix_groups` 改为 VIEW
+> - 迁移文件：[apps/api/src/db/migrations/](../apps/api/src/db/migrations/) — V001 到 **V030**（最新：[V030__promo_drop_weekday_mask_filter.sql](../apps/api/src/db/migrations/V030__promo_drop_weekday_mask_filter.sql)）
+> - 视图：[V010__views.sql](../apps/api/src/db/migrations/V010__views.sql)（V029 把促销视图 `v_promotion_active` 删掉，换成新视图 `v_active_offers`）
 > - SQL 函数：[V012__category_functions.sql](../apps/api/src/db/migrations/V012__category_functions.sql) + [V023 `fn_category_ancestor_name`](../apps/api/src/db/migrations/V023__category_ancestor_name_fn.sql)
 > - V013 后的 prune：[V013__prune_unused_columns.sql](../apps/api/src/db/migrations/V013__prune_unused_columns.sql)
 > - 字段 → 接口形态：见 [data-flow.md](./data-flow.md)
 > - 字段 → HTTP 契约：见 [api-contracts.md](./api-contracts.md)
 > - 字段 → 前端状态：见 [state-management.md](./state-management.md)
 >
-> **schema 演进记录（V014+）**：V014 删 `store_ownership` / 砍 `stores.district`；V015 缩瘦 `store_insights` + 加 POI 缓存列；V016 加 `stores.store_area_sqm` / `poi_category`；V017 加 `hq_products.barcode` / `is_returnable` / `allocation_unit`；V018 物理尺寸 mm → cm；V019 锁 `hq_products.category_id` 必须 L3 + 触发器；V020 `hq_promo_mix_groups` 表 → VIEW；V021 删 `hq_promo_sku_texts`；V022 烘焙 unit + L3 修正；V023 加 `fn_category_ancestor_name`；V024 `hq_benchmark_skus` → `hq_whitelist`（中间态）；V025 白名单合并为 `hq_products.is_whitelisted` 列 + 拆表；V026 加 `tags` / `market_min_price` / `market_min_price_source`；**V027** `store_sku_snapshots` 删 `original_price` / `wholesale_price`（只保留实际售价 `retail_price`）+ 价盘曲线改 snapshot 单源 + `store_price_changes` 读写路径废弃（表保留）+ 前端"调价"语义改为"模拟调价"。
+> **schema 演进记录（V014+）**：V014 删 `store_ownership` / 砍 `stores.district`；V015 缩瘦 `store_insights` + 加 POI 缓存列；V016 加 `stores.store_area_sqm` / `poi_category`；V017 加 `hq_products.barcode` / `is_returnable` / `allocation_unit`；V018 物理尺寸 mm → cm；V019 锁 `hq_products.category_id` 必须 L3 + 触发器；V020 `hq_promo_mix_groups` 表 → VIEW（V029 起整体作废）；V021 删 `hq_promo_sku_texts`；V022 烘焙 unit + L3 修正；V023 加 `fn_category_ancestor_name`；V024 `hq_benchmark_skus` → `hq_whitelist`（中间态）；V025 白名单合并为 `hq_products.is_whitelisted` 列 + 拆表；V026 加 `tags` / `market_min_price` / `market_min_price_source`；**V027** `store_sku_snapshots` 删 `original_price` / `wholesale_price`（只保留实际售价 `retail_price`）+ 价盘曲线改 snapshot 单源 + `store_price_changes` 读写路径废弃（表保留）+ 前端"调价"语义改为"模拟调价"；**V028** `store_scene_state` 加 4 个字段，让"诊断 / 选品"两个 AI 工作流也走后端常驻、关 tab 不丢；**V029 促销数据整体重构** —— 老促销表 / 视图全删，重建为「批次 + 档案行 + 标准化优惠」三层（含 5 个 sheet 的活动类别、4 类优惠机制），上传语义改为"新文件入库即把所有旧批次自动作废，同一时刻只有一份生效"；**V030** 把"今天是否在生效星期内"这一步从数据库视图里摘掉，交给前端按"今明"开关自己决定。
 
 ---
 
@@ -41,7 +41,7 @@
 | 身份 / 权限 | users, user_sessions, user_roles, user_stores, user_feishu_identities, stores | auth, portal, admin-accounts, feishu-identity |
 | 系统横切 | sys_audit_events, sys_usage_sessions, sys_settings | audit, admin-stats |
 | 总部主数据 | hq_categories, hq_products | hq, ai-shelves (Dify whitelist via hq_products.is_whitelisted) |
-| 促销 | hq_promo_batches, hq_promo_batch_items, hq_promo_mix_groups | promotions |
+| 促销 | hq_promo_batches, hq_promo_raw_items, hq_promo_offers（V029 起；旧的 batch_items / mix_groups 已删） | promotions |
 | 门店现状 | store_scene_state, store_scene_shelves, store_sku_snapshots | scene, store-skus |
 | 门店洞察 | store_insights, store_competitors, store_competitor_products, store_competitor_price_snapshots, store_survey_questions, store_survey_answers | competitors, surveys |
 | 门店动作 | store_scene_adjustments, store_assortment_changes, store_scene_remakes, store_scene_virtual_history, store_sku_corrections, store_price_changes | scene, prices, ai-shelves |
@@ -92,6 +92,13 @@
 | ~~`benchmark_segment`~~ | ~~`core` / `innovation`~~ | **已删除（V024 起；V025 把白名单进一步合并为 `hq_products.is_whitelisted` 列）** |
 | ~~`store_ownership`~~ | ~~`direct` / `franchise`~~ | **已删除（V014 起）** |
 | `promotion_scope` | `all_stores` / `city` / `store_list` | 选品文案的作用域 |
+
+### 促销（V029 新增）
+
+| 类型 | 取值 | 业务含义 |
+|---|---|---|
+| `promo_activity_type` | `member_price` / `weekend_beer` / `brand_coupon` / `tuesday_member` / `regular_coupon` | 促销 Excel 里 5 个 sheet 的活动类别：会员价 / 周末啤酒日 / 品牌满减券 / 周二会员日 / 常规优惠券 |
+| `promo_mechanic` | `flat_price` / `bundle_price` / `percent_discount` / `pool_threshold` | 一条优惠"怎么算钱"的 4 种机制：单件特价 / 几件总价 / 百分比折扣（如会员 9 折）/ 整盘满减（如品牌满 88 减 10）。覆盖实测 14 种文案话术 |
 
 ### 门店现状 + 动作
 
@@ -383,92 +390,107 @@
 
 ---
 
-## 4 · 促销 (V005)
+## 4 · 促销 (V029 整体重构)
 
-> **使用情况速查**：`hq_promo_batches` / `hq_promo_batch_items` 是海报模块核心数据源；`hq_promo_mix_groups` 从 V020 起改为派生视图（VIEW），前端 shim 已折成"凑单组"卡片置顶在所属分类。原 `hq_promo_sku_texts` 在 V021 已删（端到端从未启用）。
+> **数据架构（V029 起）**：原"批次 + 单品行 + 凑单组"三表（`hq_promo_batches` 旧版 / `hq_promo_batch_items` / `hq_promo_mix_groups`）全部丢弃，重建为三层：
+>
+> - 「批次」`hq_promo_batches` —— 总部每上传一份新 Excel 就开一行；**上传 = 全量替换**，开新行那一刻把所有旧批次自动作废 → 同一时刻只有一份生效的促销文件。
+> - 「档案行」`hq_promo_raw_items` —— Excel 5 个 sheet 里每一行原样落档，用于复盘"原表格上当时写了什么"。
+> - 「标准化优惠」`hq_promo_offers` —— 把每条档案行翻译成机器能算价的形式（原价 + 机制 + 参数 + 有效期 + 在哪些星期生效）；店长侧所有"最优档 / 凑券 / 叠加"都从这层算出。
+> - 「今天哪些优惠在跑」`v_active_offers` —— 视图：按 `valid_from..valid_to` 日期窗口 + 批次未作废自动过滤；"今天是不是这个优惠生效的星期"V030 起改交给前端按"今明"开关自己判（数据库不再卡）。
+>
+> `hq_promo_offers.pool_label` 字段承担「凑单池」概念，不再有独立表 —— 同一 batch + 同一 `activity_type` + 同一 `pool_label` 的所有 offer 就构成一个凑单组（如"怡宝饮料品牌满减券"池）。
 
 ### `hq_promo_batches`
 
-> 总部每次上传一份新的促销 Excel，就在这张表新增一行。**全库同一时刻仅一条 `is_active=true`**——这就是店长在 /posters 首页看到的"本期活动"。新版本激活时，旧版本会自动停用，门店端立刻切换。[V005.sql](../apps/api/src/db/migrations/V005__hq_promotions.sql)
+> 总部每次上传一份新的促销 Excel，就在这张表新增一行。**全库同一时刻最多一份 `is_voided=false` 的批次** —— 这就是店长在 /posters 首页看到的"本期活动"。新批次入库的事务内会把所有旧批次的 `is_voided` 翻成 true；外加一把 `pg_advisory_xact_lock` 防并发上传留下两条"鬼批次"。[V029.sql](../apps/api/src/db/migrations/V029__promo_data_redesign.sql)
 
 | 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
 |---|---|---|---|---|
-| id | UUID PK | 本批活动的稳定标识 | 总部上传促销 Excel 时新建一行 | 店长侧 API 透传给前端作为"促销版本号"；批次内商品 / 凑单组通过它关联 |
-| file_name | TEXT | 原始 Excel 文件名（如 `promotions-2026-06.xlsx`） | 总部上传时存档 | 总部端"促销批次"历史列表显示 |
-| source_file_url | TEXT | 原 Excel 在 OSS 的下载链接（可空） | 上传时存档 | 总部端"下载原文件"按钮 |
-| uploaded_by | UUID FK(users) | 哪个总部账号上传的这一批 | 上传接口取当前登录用户 | 总部端列表"上传人"列；审计追溯 |
-| row_total | INT | Excel 原始数据行总数（含解析失败的） | 上传解析时计算 | 总部端用于和 product_count 对比、判断丢了多少行 |
-| product_count | INT | 本批最终入库的单品促销条数 | 写完 batch_items 后回写 | 总部端列表概览（"本批共 1083 个商品"） |
-| group_count | INT | 本批最终入库的凑单组数 | 写完 mix_groups 后回写 | 总部端列表概览 |
-| parse_warnings | JSONB | 解析期间的告警数组（如"第 12 行单价非数字 → 跳过"） | 上传解析时追加 | 总部端"查看告警"用于排查脏数据 |
-| is_active | BOOLEAN | **是否就是店长当前看到的促销** | 上传时勾选"立即激活"；总部端在列表里切换 | 店长侧所有促销查询（/promotions/active、/promotions/recommend）都按此筛选 |
-| activated_at | TIMESTAMPTZ | 本版上线时刻 | 切到 is_active=true 时刷新 | 总部端版本历史时间线 |
-| deactivated_at | TIMESTAMPTZ | 本版下线时刻 | 被新版本顶替或手动停用时刷新 | 同上 |
-| notes | TEXT | 上传时留的备注（如"618 前置版本"） | 上传时可选填 | 总部端列表显示 |
-| attributes | JSONB | 扩展槽（尚未使用） | — | — |
-| created_at / updated_at | TIMESTAMPTZ | DB 时间戳 | DB | — |
+| id | UUID PK | 本批活动的稳定标识 | 总部上传 Excel 时新建一行 | 档案行 / offers 通过它关联；店长端 API 透传作为"促销版本号" |
+| file_name | TEXT NOT NULL | 原始 Excel 文件名（如 `6月下营销活动（会员价+叠券）.xlsx`） | 上传时存档 | 总部"促销批次"历史列表 |
+| source_file_url | TEXT | 原 Excel 在 OSS 的下载链接（可空） | 上传时存档 | 总部端"下载原文件" |
+| uploaded_by | UUID FK(users) | 哪个总部账号上传的这一批 | 上传接口取当前登录用户 | 总部"上传人"列；审计追溯 |
+| **is_voided** | BOOLEAN NOT NULL DEFAULT FALSE | **本批次是否已作废**。新文件入库时旧批次会被批量翻成 true，店长立即看到新版本 | 上传事务内 UPDATE 旧批次为 true；总部可手动作废 | `v_active_offers` 视图按此过滤；店长所有促销查询自动只看未作废 |
+| activity_window_start | DATE | 这一批所有活动的最早开始日（取全部档案行 `valid_from` 的 min） | 上传解析时算出 | 总部列表展示"本批活动窗口" |
+| activity_window_end | DATE | 这一批所有活动的最晚结束日（取全部档案行 `valid_to` 的 max） | 上传解析时算出 | 同上 |
+| parse_warnings | JSONB NOT NULL DEFAULT '[]' | 解析告警数组（如"第 12 行价格非数字 → 跳过"） | 上传解析时追加 | 总部"查看告警"用于排查脏数据 |
+| **row_total** | JSONB NOT NULL DEFAULT '{}' | Excel 各 sheet 原始行数计数（`{member_price: 482, brand_coupon: 213, ...}`） | 上传解析时回写 | 总部列表展示 + 和 parsed_total 对比看丢了多少 |
+| **parsed_total** | JSONB NOT NULL DEFAULT '{}' | 各 sheet 最终入库的标准化 offer 数量 | 同上 | 同上 |
+| parsed_at | TIMESTAMPTZ | 解析完成时刻 | 上传事务内写 | 总部列表 |
+| notes | TEXT | 上传时留的备注（如"618 前置版本"） | 上传时可选填 | 总部列表 |
+| created_at / updated_at | TIMESTAMPTZ | DB 时间戳 | DB | 排序 / 审计 |
 
-**关键约束**（**约束 #9**）：
-```sql
-CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
-  ON hq_promo_batches (is_active) WHERE is_active;
-```
-全库最多一条 `is_active=true`。所以切换"本期活动"必须分两步：先把旧的设 false、再把新的设 true（合并成一条 UPDATE 会因唯一索引冲突失败）。
+**关键约束**（V029 修订）：
+- **不再有 `is_active` 唯一索引** —— 用「上传 = 全量替换」+ `is_voided` 翻转 + advisory lock 替代。语义更简单：永远只有"未作废"是当前生效。
+- 索引：`hq_promo_batches_window_idx (activity_window_start, activity_window_end)`。
+
+**触发动作**：上传 → `pg_advisory_xact_lock('hq_promo_batches.upload')` → UPDATE 全部旧批次 `is_voided=true` → INSERT 新批次 → 循环 INSERT raw_items + offers → 整事务提交。
 
 ---
 
-### `hq_promo_batch_items`
+### `hq_promo_raw_items`
 
-> 一条 = 某批活动里的一个单品的全部档位规则。**上传时点冻结的快照**：商品名/单位/原价等都是上传当时拷下来的副本，事后改 hq_products 主数据不会影响本表——保证历史促销永远可复现。[V005.sql](../apps/api/src/db/migrations/V005__hq_promotions.sql)
+> Excel 里每一行原样的档案副本（5 个 sheet 都进同一张表，靠 `activity_type` 区分）。**上传时点冻结的快照**：商品名 / 单位 / 原价 / 总部写的活动话术等全部拷下来，事后改 `hq_products` 主数据不影响本表 —— 保证历史促销可复现 + 出问题时能回看"原表格当时是怎么写的"。[V029.sql](../apps/api/src/db/migrations/V029__promo_data_redesign.sql)
 
 | 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
 |---|---|---|---|---|
-| id | UUID PK | 本行稳定标识 | 上传解析时生成 | API 透传 |
-| batch_id | UUID FK(hq_promo_batches) ON DELETE CASCADE | 所属批次 → 跟随批次激活/停用 | 上传解析时写入 | 所有促销查询的过滤条件；批次删除时级联清空 |
-| row_index | INT | 在原 Excel 里是第几行（与 batch_id 组合唯一） | 按 Excel 顺序写入 | 总部端排查时定位原 Excel；前端按此稳定排序 |
-| sku_code | VARCHAR(64) | 商品 SKU 码 | 上传解析时拷贝 | 店长端 ProductCard 主键；和门店实际库存对账 |
-| product_name | TEXT | 商品名（**快照**） | 上传时拷贝 | 店长端 ProductCard 标题 |
-| unit | TEXT | 计量单位（如"瓶"、"袋"） | 上传时拷贝 | 店长端拼"X 元 / 单位"文案 |
-| category_name | TEXT | 大类名（**快照**） | 上传时拷贝 | 店长端首页分类条按此聚合（再走 mapCategoryToGroup 映射成 13 类） |
-| original_price | NUMERIC(12,2) | 原价（**快照**） | 上传时拷贝 | 店长端"省 X%"折扣率计算的基准 |
-| product_id | UUID FK(hq_products) | 关联到主数据商品（仅当 sku_code 反查命中） | 上传时按 sku_code 查主数据 | 个性化推荐时反查商品 → 品类 → 用户偏好（不影响快照价格） |
-| best_label | TEXT | 服务端预选的"最划算"档位标签（如"会员价 + 满减券"） | 上传解析时算出 | 店长端 ProductCard 主推这一档 |
-| best_required_qty | INT | 最优档需要买几件 | 上传解析时算出 | 店长端价格说明 |
-| best_total_price | NUMERIC(12,2) | 最优档买齐后的总价 | 上传解析时算出 | 店长端展示"X 件 X 元" |
-| best_effective_unit_price | NUMERIC(12,2) | 最优档折算后的单价 | 上传解析时算出 | 店长端 ProductCard 大字价 + 排序锚 |
-| best_saving_percent | NUMERIC(6,2) | 最优档相对原价的折扣率（%） | 上传解析时算出 | 店长端"省 X%"标签；首屏"超优惠"分类按 ≥60% 筛选；分类内排序 |
-| all_options | JSONB | 所有档位明细数组（每个含 label/qty/totalPrice/effectiveUnitPrice/savingPercent/validFrom/validTo 等） | 上传解析时写入 | 店长端切换"会员价 / 叠加"模式时按此重新选最优；deriveBest 的"今/明有效"判定也走这里 |
-| valid_from | DATE | 本商品促销开始日 | 上传解析时写入 | 店长端"今日有效"开关：仅当 valid_dates 为空时用 from/to 判断 |
-| valid_to | DATE | 本商品促销结束日 | 上传解析时写入 | 同上 |
-| valid_dates | DATE[] | 限定具体日期（如"仅周二会员日 06-02/06-09/…"），非空时**优先于** from/to | 上传解析时写入 | 店长端"今日有效"判定的最高优先 |
-| mix_group_code | TEXT | 所属凑单组编码 → 串到 hq_promo_mix_groups | 上传解析时写入 | （前端尚未消费，见 mix_groups 提示）总部端凑单组视图聚合用 |
-| display_text | TEXT | 总部手写的展示文案（如"清仓特价"） | 上传时可选填 | 店长端 ProductCard 兜底文案 |
-| attributes | JSONB | 扩展槽（尚未使用） | — | — |
-| created_at / updated_at | TIMESTAMPTZ | DB 时间戳 | DB | — |
+| id | UUID PK | 档案行稳定标识 | 上传解析时生成 | offer 行通过它反查源行 |
+| batch_id | UUID FK(hq_promo_batches) ON DELETE CASCADE | 所属批次 → 批次作废后档案随之沉睡（仍可查） | 上传解析时写入 | 按批次过滤；批次删除时级联清空 |
+| **activity_type** | `promo_activity_type` NOT NULL | 这一行来自哪个 sheet：会员价 / 周末啤酒日 / 品牌满减券 / 周二会员日 / 常规优惠券 | 上传解析时按 sheet 名识别 | 店长前端"今/明有效"+ 黄色标签的来源 |
+| sheet_row_no | INTEGER NOT NULL | 在原 Excel sheet 里的真实行号 | 按 Excel 顺序写入 | 解析告警里指认是第几行；前端稳定排序 |
+| sku_code | VARCHAR(32) NOT NULL | 商品 SKU 码 | 上传解析时拷贝 | 店长端找货、和门店实际库存对账；offer 通过它关联 |
+| sku_name_original | TEXT NOT NULL | **商品名快照**（Excel 上写的原始名，连规格一起；如"佳龙笋海春笋(山椒味)32g"） | 上传解析时拷贝 | 店长端 SKU 卡片标题；某 SKU 没在主数据里时的兜底名 |
+| unit | VARCHAR(16) | 计量单位（如"瓶"、"袋"） | 上传时拷贝 | 店长端拼"X 元 / 单位"文案 |
+| original_price | NUMERIC(10,2) NOT NULL | 原价（**快照**） | 上传时拷贝 | 算"省 X%"折扣率的基准 |
+| raw_method_text | TEXT | 总部在 Excel 里写的活动话术原文（如"买 5 瓶送 1 瓶"、"满 88 减 10"、"会员 9 折"） | 上传时拷贝 | 解析器从这里推断 `mechanic`；总部排查复盘 |
+| qty_required | INTEGER | 解析话术得出的"需要买几件"（如"2 件 9.9"对应 2） | 上传解析时填 | 凑单组卡片展示"凑齐 N 件即满减" |
+| promo_total_price | NUMERIC(10,2) | 话术里的促销价 / 总价（如"2 件 9.9"对应 9.9） | 上传解析时填 | offer 的 `mechanic_params` 算价 |
+| **promo_group_code** | VARCHAR(64) | 会员价 sheet 上的"促销组"编号（同组商品凑齐才享会员价） | 上传解析时拷贝 | 翻成 offer 的 `pool_label = member_price/促销组N`，店长端聚成组卡 |
+| category_code | VARCHAR(16) | 总部品类编码（**快照**） | 上传解析时拷贝 | 主数据找不到时作为分类兜底 |
+| category_name | TEXT | 大类名（**快照**，如"饼干"、"饮料"） | 上传解析时拷贝 | 店长首页 13 个分类聚合（再走 `mapCategoryToGroup` 映射） |
+| valid_from / valid_to | DATE NOT NULL | 本商品促销开始 / 结束日 | 上传解析时写入 | offer 的有效期窗口；店长"今日有效"判定 |
+| fill_down_anchor_row | INTEGER | 品牌满减 sheet 的"向下合并单元格"指向哪一行（解析时的辅助列） | 解析时填 | 总部端复盘解析告警；前端不消费 |
+| created_at | TIMESTAMPTZ NOT NULL | DB 时间戳 | DB | 兜底 SELECT 取最近一条 |
 
-**业务不变量（约束 #3）**：`product_name / unit / category_name / original_price` 等是 Excel 上传时点的冻结快照，永不跟随 hq_products 主数据更新；保证历史促销可复现。
+**索引**：`(batch_id, activity_type)` / `(sku_code)`。
+
+**业务不变量**：`sku_name_original / unit / category_name / original_price` 是 Excel 上传时点的冻结快照，永不跟随主数据更新；保证历史促销可复现。
 
 ---
 
-### `hq_promo_mix_groups`（VIEW · 从 V020 起）
+### `hq_promo_offers`
 
-> 凑单组卡片的数据源。**V020 起从 TABLE 改为 VIEW**：所有字段直接从 [`hq_promo_batch_items`](#hq_promo_batch_items) 按 `mix_group_code` GROUP BY 实时派生，不再有独立写入路径。原表的 `representative_image_url` 字段在 VIEW 里恒为 NULL（YAGNI；前端未消费）。[V020.sql](../apps/api/src/db/migrations/V020__mix_groups_to_view.sql)
->
-> ✅ **前端已接入**（V020 同期）：店长 /posters 首页通过 [apps/web/src/lib/promotions.functions.ts](../apps/web/src/lib/promotions.functions.ts) shim 把 groups 折成 CategoryItem，按 `category_name` 分桶后置顶在所属分类。**组卡与单品卡独立展示**：店长选品时凑单组合价（组卡）与单品最优档（成员单品卡）两种玩法均可见。
+> **店长侧的所有价格、最优档、凑单组卡片，全部从这张表算出**。每条档案行翻译成一到多条标准化 offer：把"买 5 瓶送 1 瓶"这类话术换成机器能算价的四元组 `(mechanic, mechanic_params, valid_window, is_stackable)`。[V029.sql](../apps/api/src/db/migrations/V029__promo_data_redesign.sql)
 
 | 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
 |---|---|---|---|---|
-| id | UUID PK | 组的稳定标识 | `md5(batch_id || '|' || mix_group_code)::uuid 自动生成` | API 透传 |
-| batch_id | UUID FK(hq_promo_batches) ON DELETE CASCADE | 所属批次 | 派生自 batch_items 同字段 | 过滤当前活动的凑单组；批次删除级联清空 |
-| mix_group_code | TEXT | 组编码（如"COLD_DRINK_SUMMER"，与 batch_id 组合唯一） | 派生自 batch_items 同字段 | 反查组内 batch_items |
-| display_name | TEXT | 组的对外名 | 派生：(category_name \|\| ' 系列') | 店长端凑单组卡片标题 |
-| category_name | TEXT | 组的主品类（取组内首个非空品类） | 派生：首个非空 batch_items.category_name | 店长端按品类分桶 |
-| sku_codes | TEXT[] | 组内 SKU 列表（按 row_index 顺序） | 派生：array_agg(sku_code ORDER BY row_index) | 店长端展开组成员 |
-| product_count | INT | 组内有多少个 SKU | 派生：COUNT(*) | 总部端排序优先级（多 SKU 的组排前） |
-| best_label | TEXT | 整组凑齐后的最优档标签 | 派生：MAX-saving 的 batch_items.best_label | 店长端卡片主推文案 |
-| best_total_price | NUMERIC(12,2) | 凑齐后整组总价 | 派生：MIN(batch_items.best_total_price) | 店长端卡片大字价 |
-| best_saving_percent | NUMERIC(6,2) | 凑齐后相对原总价的折扣率 | 派生：MAX(batch_items.best_saving_percent) | 店长端"省 X%"标签 |
-| representative_image_url | TEXT | 组代表图 | 始终 NULL（VIEW 占位列，无写入路径） | 店长端组卡片缩略图（未消费） |
+| id | UUID PK | offer 稳定标识 | 上传解析时生成 | API 透传 |
+| raw_item_id | UUID FK(hq_promo_raw_items) ON DELETE CASCADE | 这条 offer 来自哪条档案行 | 上传解析时写入 | 总部排查时回看原 Excel 行 |
+| batch_id | UUID FK(hq_promo_batches) ON DELETE CASCADE | 所属批次 → 跟随批次作废自动隐藏 | 上传解析时写入 | `v_active_offers` 视图过滤；批次删除时级联清空 |
+| activity_type | `promo_activity_type` NOT NULL | 来自哪个 sheet —— 决定店长端展示什么活动标签（"会员价" / "周末啤酒日" / "品牌满减券" / "周二会员日" / "常规优惠券"） | 同档案行 | 店长前端给"绿色徽章"取文案；"组卡 + 单品卡"区分 |
+| sku_code | VARCHAR(32) NOT NULL | 商品 SKU 码 | 同档案行 | 店长端按 SKU 聚合所有可用 offer，选最优 |
+| **mechanic** | `promo_mechanic` NOT NULL | 这条 offer 怎么算钱：单件特价 / 几件总价 / 百分比折扣 / 整盘满减 | 解析话术时识别 | 算价器按机制走不同分支 |
+| **mechanic_params** | JSONB NOT NULL | 算价所需的具体参数：`bundle_price` 存 `{ qty, totalPrice, subtype }`、`percent_discount` 存 `{ percent }`、`pool_threshold` 存 `{ threshold, discount }`、`flat_price` 存 `{ price }` | 解析话术时填 | 店长端算最终价 / 卡片文案 |
+| **pool_label** | TEXT（可空） | "凑单池"标签：会员价的促销组 → `member_price/促销组212`；品牌满减券的品牌段落 → `brand_coupon/怡宝饮料品牌满减`。**同 batch + 同 activity_type + 同 pool_label 的 offers 自动聚成一个组卡** | 解析时构造 | 店长 /posters 首页把成员单品折叠成"组卡 + 凑齐价"置顶 |
+| original_price | NUMERIC(10,2) NOT NULL | 原价（从档案行拷过来；算"省 X%"基准） | 上传解析 | 店长卡片划线价 |
+| **valid_weekday_mask** | SMALLINT NOT NULL | 7-bit 位掩码标识本 offer 在哪几天生效（Mon=0b1000000 ... Sun=0b0000001；周末啤酒日 = 7、周二会员日 = 32、一般活动 = 127）| 解析时按 activity_type 推 | **V030 起前端独立判定**："今明" toggle 选中 = 仅命中今/明的 mask；未选 = 全部展示；黄色标签"今日有效 / 明日有效 / 仅周X"也按 mask 决定 |
+| valid_from / valid_to | DATE NOT NULL | offer 生效起止日 | 同档案行 | `v_active_offers` 视图按 `current_date BETWEEN ...` 过滤 |
+| **is_stackable** | BOOLEAN NOT NULL | 这条 offer 能不能和其他 offer 叠加。`percent_discount` / `pool_threshold` 默认可叠（"会员 9 折 + 品牌满 88 减 10"），`flat_price` / `bundle_price` 默认不叠 | 解析时按机制定 | 算价器决定要不要给该 SKU 探索叠券路径 |
+| parse_note | TEXT | 解析过程中的注解（如"话术含'起'字，按上限算"） | 解析时可填 | 总部排查 |
+| created_at | TIMESTAMPTZ NOT NULL | DB 时间戳 | DB | — |
+
+**索引**：`(batch_id)` / `(sku_code)` / `(batch_id, activity_type, pool_label) WHERE pool_label IS NOT NULL` / `(valid_from, valid_to)`。
+
+**典型读路径**（`promotions.service.ts → fetchPromoDataset`）：
+1. `SELECT FROM v_active_offers` 拿出今天日期窗口内、未作废批次的全部 offers
+2. 按 `sku_code` 聚合 → 喂给 `computeBest()` 算价器
+3. 算价器跑两遍：一遍允许叠所有可叠优惠（"叠券模式"），一遍只考虑 `activity_type = 'member_price'` 的 offer（"只用会员价"模式）—— 前端 toggle 切换的就是这两条独立结果集
+4. `pool_label` 相同的 SKU 在前端 shim 里聚成组卡置顶；其它落单品卡
+
+---
+
+> **关于已删除的旧表**：原 `hq_promo_batch_items` / `hq_promo_mix_groups` 在 V029 全部 DROP；旧的"`hq_promo_batches.is_active` 唯一索引 + activated_at / deactivated_at"那一套激活语义已废弃，换成更简单的"上传即替换 + is_voided 翻转"。如需复盘老历史，参考 V029 之前的 git 历史 + 该次迁移注释。
 
 ---
 
@@ -488,6 +510,10 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 | detection_data | JSONB DEFAULT '{}' | **AI 识别真值**；apply 后 RESET 为 `{}` | 前端检测后 PATCH | 选品方案 / 虚拟陈列工作流；逐条确认 |
 | virtual_status | scene_virtual_status NOT NULL, DEFAULT 'idle' | 虚拟陈列子状态；apply 后 RESET 为 'idle' | 虚拟陈列 SSE 期间更新 | 前端轮询 |
 | virtual_raw_outputs / virtual_context / last_snapshot | JSONB | Dify 原始返回 / 上下文 / 本期方案快照；apply 后 RESET 为 NULL | 虚拟陈列完成时 PATCH | 审计 / 前端展示 |
+| **diagnose_status** | scene_virtual_status NOT NULL, DEFAULT 'idle' | **V028 新增** · "三段诊断"工作流跑到哪了：空闲 / 正在跑 / 已完成 / 失败；apply 后 RESET 为 'idle' | 上传照片触发后端 `ensureDiagnose()` fire-and-forget；工作流回写 | 前端轮询代替 SSE：店长关 tab / 刷新页面后再回来仍能读到结果 |
+| **diagnose_raw_outputs** | JSONB | **V028 新增** · 诊断工作流的完整输出（失败时存 `{ error, ... }`）；apply 后 RESET 为 NULL | 同上 | 前端展示诊断结论；失败时把原因展给用户 |
+| **strategy_status** | scene_virtual_status NOT NULL, DEFAULT 'idle' | **V028 新增** · "选品策略"工作流的状态机；含义同 diagnose_status | 进入调改流程时 `ensureStrategy()` 拉起；工作流回写 | 同上 |
+| **strategy_raw_outputs** | JSONB | **V028 新增** · 选品策略工作流的完整输出 | 同上 | 前端展示推荐的上 / 下架商品清单 |
 | env_crowd / env_competitor | TEXT | 周边人群 / 竞对摘要；**apply 后保留**（不清） | 用户编辑 / AI 补充 | AI 工作流上下文（兜底从 store_insights 取） |
 | draft | JSONB | 调改草稿（phase / items 确认进度）；**apply 后 RESET 为 NULL** | 上传 / 检测 / 逐条确认时 PATCH | 跨设备续作恢复 |
 | updated_by | UUID FK(users) | 最后更新者 | upsertSceneRuntime | 审计 |
@@ -496,10 +522,11 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 **关键约束**：`UNIQUE (store_id, scene)` 保证每店每场景仅一行。
 
 **触发动作**：
-- POST `/scenes/:scene/photos` → photos 追加 + status='photo_uploaded'
+- POST `/scenes/:scene/photos` → photos 追加 + status='photo_uploaded'；同时后台 fire-and-forget 拉起 `ensureDiagnose()`（写 diagnose_status='processing'）
 - 前端 detect 后 PATCH → detectionData + status='detected'
+- 进入"开始调改" → 后台 fire-and-forget 拉起 `ensureStrategy()`（写 strategy_status='processing'）
 - 逐条确认 → draft 更新
-- POST `/scenes/:scene/adjustments` → **applyAdjustment 事务内** RESET photos=[] / detectionData={} / draft=NULL / status='empty' / virtual_*=NULL（RC-B 修复）
+- POST `/scenes/:scene/adjustments` → **applyAdjustment 事务内** RESET photos=[] / detectionData={} / draft=NULL / status='empty' / virtual_*=NULL / diagnose_*=NULL+idle / strategy_*=NULL+idle（RC-B 修复 + V028 扩展）
 
 ---
 
@@ -926,14 +953,17 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 ---
 
-### `v_promotion_active`
+### `v_active_offers`（V029 新增 · V030 简化）
 
-> 当前激活批次的全部促销商品（含商品官方图、建议价兜底）。
+> "今天哪些优惠在跑" —— 店长 /posters 首页所有定价都从这层取数。**已自动剔除**作废批次和不在日期窗口内的 offer；星期掩码（周二会员日 / 周末啤酒日）V030 起**不再在 SQL 层卡**，原样透传给前端按"今明" toggle 决定显不显示（否则非生效那天前端拿不到任何数据，"今明"开关就没东西可过滤）。
 
-**聚合自**：hq_promo_batch_items + hq_promo_batches（is_active=true）+ hq_products（LEFT JOIN）
-**业务上为什么要**：简化"取当前活跃促销 + 商品兜底属性"。
-**谁查**：`promotions.listActivePromotions` / 海报选品
-**刷新**：普通 VIEW
+**聚合自**：hq_promo_offers JOIN hq_promo_batches
+**过滤条件**：`batches.is_voided = false AND current_date BETWEEN offers.valid_from AND offers.valid_to`
+**字段**：offer 的全部列原样透传（含 `valid_weekday_mask`）
+**谁查**：`promotions.service.ts → fetchPromoDataset`（既给"叠券模式"也给"只用会员价"两条算价路径）/ 海报店长侧首页
+**刷新**：普通 VIEW，实时算
+
+> 旧视图 `v_promotion_active`（按 `hq_promo_batches.is_active=true` 关联老 `hq_promo_batch_items`）在 V029 整体 DROP，不再存在。
 
 ---
 
@@ -1092,18 +1122,42 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 ---
 
-### 6. 促销批次单 Active 约束
+### 6. 促销「上传 = 全量替换」（V029 重写）
 
-**UNIQUE INDEX WHERE is_active**（约束 #9）：全库最多一条 `is_active=true`。
-**激活流程**（`promotions.activateBatch`）：
-1. UPDATE 旧 active = false（先腾出唯一索引）
-2. UPDATE 新批次 = true
+老语义（"批次 + 手动激活 + 唯一索引保 is_active"）V029 起整体废弃，换成：
 
-合并成一条 UPDATE 会因约束冲突失败 —— 必须分两步。
+**业务约束**：同一时刻全库只允许一份"未作废"的促销批次（`hq_promo_batches.is_voided = false`）—— 这就是店长当前看到的本期活动。
+
+**上传事务**（`promotions.service.uploadPromotion`）：
+1. `pg_advisory_xact_lock(hashtext('hq_promo_batches.upload'))` —— 同一时刻只允许一个上传事务进入（防两个并发上传都看到旧状态后各自留下"鬼批次"）
+2. `UPDATE hq_promo_batches SET is_voided = true WHERE is_voided = false` —— 把所有旧批次一次性作废
+3. INSERT 新批次 + 循环 INSERT raw_items + offers
+4. 整事务提交
+
+任一步失败 → 整事务回滚 → 旧批次依然有效，前端无感。
+
+**为什么不再用唯一索引**：旧设计要求"新建时先腾出唯一索引"分两步，操作流程比业务复杂；新设计直接用 `is_voided` 翻转 + advisory lock，无需独立的"激活"动作。
+
+### 7. 优惠机制与凑单池语义（V029 新增）
+
+促销 Excel 的活动话术（"会员 9 折"、"满 88 减 10"、"买 5 瓶送 1 瓶"等 14 种实测话术）在 `hq_promo_offers` 里被规范成 4 类机制：
+
+| 机制 | 业务含义 | 典型话术 | 是否默认可叠 |
+|---|---|---|---|
+| `flat_price` | 单件特价 | "特价 9.9 元" | 否 |
+| `bundle_price` | 几件总价（子类 `fixed_total` / `nth_ratio` / `add_extra` / `buy_m_get_n`） | "2 件 9.9"、"第二件半价"、"加 1 元多 1 件"、"买 5 送 1" | 否 |
+| `percent_discount` | 百分比折扣 | "会员 9 折" | 是 |
+| `pool_threshold` | 整盘满减（需凑齐池里的 SKU 才生效） | "怡宝饮料品牌满 88 减 10" | 是 |
+
+**凑单池**用 `pool_label` 串成虚拟组，无独立表：
+- 会员价 sheet 的「促销组 N」→ `pool_label = member_price/促销组N`，店长前端聚成一张组卡，标题"会员价"
+- 品牌满减 sheet 的「品牌段落名」→ `pool_label = brand_coupon/怡宝饮料品牌满减`，聚成"会员价 + 品牌满减券"组卡
+
+**组卡 vs 单品卡的分配规则**（前端 shim，详 [promotions.functions.ts](../apps/web/src/lib/promotions.functions.ts)）：同一 SKU 同时落在会员价组和品牌满减组时，**会员价组优先**；SKU 只属于品牌满减组时按品牌满减聚组；SKU 没有任何 pool 时落单品卡。被聚进组的 SKU 不会再单独出现在单品卡里（防重复）。
 
 ---
 
-### 7. "上次调价时间"（V027 重写：走 snapshot 序列）
+### 8. "上次调价时间"（V027 重写：走 snapshot 序列）
 
 **V027 起**：`store_price_changes` 不读不写，"上次调价时间"改成"**最后一次 retail_price 跳变所在的 snapshot_date**"，从 snapshot 时间序列推导。
 
@@ -1136,8 +1190,12 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 - **关 app**：UPDATE `sys_usage_sessions.status='ended'` + ended_at
 
 ### 总部数据
-- **超管上传促销 Excel**：INSERT `hq_promo_batches` + 批量 INSERT `hq_promo_batch_items` + 聚合 INSERT `hq_promo_mix_groups` + 回写 batches.product_count / group_count + 审计
-- **激活新批次**：UPDATE 旧 is_active=false + UPDATE 新 is_active=true + 审计
+- **超管上传促销 Excel**（V029 起 = "上传即生效"，无独立激活动作）：
+  1. `pg_advisory_xact_lock('hq_promo_batches.upload')` 串行化并发上传
+  2. `UPDATE hq_promo_batches SET is_voided = true WHERE is_voided = false` 作废所有旧批次
+  3. INSERT 新 `hq_promo_batches` + 批量 INSERT `hq_promo_raw_items` + 批量 INSERT `hq_promo_offers` + 回写 row_total / parsed_total
+  4. 审计 `promotion_batch_upload`
+- **手动作废一份批次**（总部回滚用）：UPDATE `hq_promo_batches.is_voided = true` + 审计 `promotion_batch_delete`
 - **超管改门店档案**：UPSERT `stores` + 审计 `store_update`
 
 ### 货盘
@@ -1179,7 +1237,10 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 | 某 SKU 调价历史 | snapshot 时间序列里 retail_price 跳变的 snapshot_date | V027 起从 snapshot 派生，不读 `store_price_changes` |
 | 某 SKU 建议零售价 / 批发价 | `hq_products.suggested_retail_price` / `wholesale_price` | V027 起不再从 snapshot 读；全期同值；建议价不进价盘曲线 |
 | ~~某 SKU 历史调价时间线~~ | ~~store_price_changes~~ → snapshot 序列的 retail_price 跳变 | V027 起读写都废弃 |
-| 当前活跃促销有哪些 | v_promotion_active | 自动过滤 is_active=true |
+| 当前生效促销有哪些 | `v_active_offers`（V029 起；旧 `v_promotion_active` 已删） | 自动过滤未作废批次 + 在有效期内的 offer；星期掩码由前端处理 |
+| 某 SKU 现在能享什么优惠 | `v_active_offers WHERE sku_code = ?` | 一行 = 一条标准化 offer；店长端按 `pool_label` 聚组卡 |
+| 某次上传 Excel 当时写的什么 | `hq_promo_raw_items WHERE batch_id = ?` | 原 sheet 行原样存档；用于复盘脏话术 |
+| 诊断 / 选品 AI 工作流跑到哪了 | `store_scene_state.diagnose_status / strategy_status` | V028 起后端常驻；前端关 tab 也不丢 |
 | 某店调改了多少次 | store_scene_remakes（缓存）或 store_scene_adjustments（流水） | remakes 是计数；adjustments 是详情 |
 | 某用户登录历史 | v_login_events | 从 sys_audit_events 筛 user_login |
 | 某竞品最新价 | v_active_competitor_price | 自动取最新快照 |
@@ -1194,13 +1255,12 @@ CREATE UNIQUE INDEX hq_promo_batches_one_active_uq
 
 ---
 
-**文档版本**：2026-06-16（对应 V001-V027 全部已应用）
+**文档版本**：2026-06-18（对应 V001-V030 全部已应用）
 **最近一次较大更新**：
-- V023 加 `fn_category_ancestor_name`（避免跨场景同名品类被字符串 split 串）
-- V024 → V025 → V026 白名单三步演进（独立表 → boolean 列 → Dify inputs.sku_attributes 每 SKU 自带标记）
-- V026 加 `hq_products.tags` / `market_min_price` / `market_min_price_source`
-- `benchmark.computeBenchmarkForScene` 全面重写为归一化平均（§ 11.4）
-- ai-shelves inputs 重构：`sku_data / major_category / mid_category / whitelist / new_product_skus` 全删，换成 `sku_attributes / store_sku_data` + 结构化 `poi_data` + `current_date`
-- **V027 产品定位重塑**：本 app 是"模拟器 + 销售分析"工具,不写门店真实价。`store_sku_snapshots` 删 `original_price` / `wholesale_price` 只保留 `retail_price`；价盘曲线改 snapshot 单源；`store_price_changes` 读写路径全部废弃（表保留）；前端"应用调价"改"模拟调价"+ 被动提示。
+- **V028 诊断 / 选品 AI 工作流改后端常驻**：`store_scene_state` 加 `diagnose_status / diagnose_raw_outputs / strategy_status / strategy_raw_outputs` 四字段，让"三段诊断 / 选品策略"两个 Dify 工作流不再 SSE 透传到浏览器 —— 关 tab / 刷新页面后仍能拿回结果。`virtual_status / virtual_raw_outputs`（虚拟陈列，V006 起）+ `store_insights`（周边洞察，PR #41）现在和这两个工作流走同一范式。
+- **V029 促销数据整体重构**：老促销表 / 视图全删（`hq_promo_batch_items` / `hq_promo_mix_groups` / `v_promotion_active`），重建为「批次（`hq_promo_batches`）+ 档案行（`hq_promo_raw_items`）+ 标准化优惠（`hq_promo_offers`）」三层；新增 ENUM `promo_activity_type`（5 个 sheet 的活动类别）/ `promo_mechanic`（4 类优惠机制）；上传语义改为「新文件入库即把所有旧批次自动作废，同一时刻只有一份生效」；凑单组用 `pool_label` 串成虚拟组，无独立表。
+- **V030 星期掩码下放前端**：`v_active_offers` 不再按"今天是否在 offer 生效星期内"卡掉数据，而是把 `valid_weekday_mask` 透传前端，由"今明" toggle 自己决定显示策略 —— 否则非生效那天前端连"今明"按钮都没东西可过滤。
+- **V027 产品定位重塑**：本 app 是"模拟器 + 销售分析"工具，不写门店真实价。`store_sku_snapshots` 删 `original_price` / `wholesale_price` 只保留 `retail_price`；价盘曲线改 snapshot 单源；`store_price_changes` 读写路径全部废弃（表保留）；前端"应用调价"改"模拟调价"+ 被动提示。
+- V023 加 `fn_category_ancestor_name`（避免跨场景同名品类被字符串 split 串）；V024 → V025 → V026 白名单三步演进（独立表 → boolean 列 → Dify inputs.sku_attributes 每 SKU 自带标记）；V026 加 `hq_products.tags` / `market_min_price` / `market_min_price_source`；`benchmark.computeBenchmarkForScene` 全面重写为归一化平均（§ 11.4）；ai-shelves inputs 重构：`sku_data / major_category / mid_category / whitelist / new_product_skus` 全删，换成 `sku_attributes / store_sku_data` + 结构化 `poi_data` + `current_date`。
 
 **配套文档**：[api-contracts.md](./api-contracts.md) · [data-flow.md](./data-flow.md) · [state-management.md](./state-management.md)

@@ -351,11 +351,19 @@ export async function uploadPosterAsset(args: {
 // ============================================================================
 
 export const promotionsApi = {
-  /** 当前生效的促销批次（含 products + groups） */
   active: () => request<ActivePromotionsResponse>('/promotions/active'),
-
-  /** 个性化推荐（按用户近 30 天海报品类重排） */
   recommend: () => request<RecommendPromotionsResponse>('/promotions/recommend'),
+  upload: async (file: File): Promise<import('@myj/shared').UploadResult> => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/v1/promotions/batches:upload', {
+      method: 'POST', credentials: 'include', body: fd,
+    });
+    if (!res.ok) throw new Error(`upload failed: ${res.status}`);
+    return res.json();
+  },
+  batches: () => request<{ batches: import('@myj/shared').PromoBatch[] }>('/promotions/batches'),
+  void: (id: string) => request<{ batch: import('@myj/shared').PromoBatch }>(`/promotions/batches/${id}/void`, { method: 'POST' }),
 };
 
 // ============================================================================

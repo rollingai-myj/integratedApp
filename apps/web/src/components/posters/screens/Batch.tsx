@@ -8,7 +8,7 @@ import storeBgExample from '@/assets/store-bg-example.jpg';
 import { compressImage } from '../lib/compressImage';
 import { useJobs } from '../JobsContext';
 import { ProductImg } from '../ProductImg';
-import { stripSpec, stripLeadingProductName, stripLeadingPromoCodes } from '@/utils/promoDisplayText';
+import { stripLeadingProductName } from '@/utils/promoDisplayText';
 
 
 type UploadMode = 'product' | 'bg_only';
@@ -100,7 +100,7 @@ export function ScreenBatch({
   const [items, setItems] = React.useState<BatchItem[]>(() => {
     if (freeMode) return [emptyFreeItem()];
     return list.map(p => {
-      const stripped = stripLeadingPromoCodes(stripLeadingProductName(p.displayText ?? '', p.productName));
+      const stripped = stripLeadingProductName(p.displayText ?? '', p.productName);
       return {
         id: p.sku, promo: p,
         copy: stripped || '限时特价',
@@ -289,19 +289,19 @@ export function ScreenBatch({
         if (group) {
           return {
             photoBase64: useBgOnly ? bgPhoto! : it.photo!,
-            copy: stripLeadingPromoCodes(it.copy),
+            copy: it.copy,
             styleId,
             customStyle: styleId === 'custom' ? customStyle.trim() : null,
             mode: 'group' as const,
             productImageUrl: null,
             productImageUrls: memberUrls,
-            brandLabel: stripSpec(it.promo?.brandLabel ?? '') || null,
+            brandLabel: it.promo?.brandLabel ?? null,
             storeId, sku: it.promo?.sku ?? null, category: it.promo?.category ?? null,
           };
         }
         return {
           photoBase64: useBgOnly ? bgPhoto! : it.photo!,
-          copy: stripLeadingPromoCodes(it.copy),
+          copy: it.copy,
           styleId,
           customStyle: styleId === 'custom' ? customStyle.trim() : null,
           mode: (useBgOnly ? 'bg_only' : 'normal') as 'bg_only' | 'normal',

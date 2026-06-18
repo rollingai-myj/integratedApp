@@ -45,5 +45,5 @@ SELECT 'tables='   || (SELECT count(*) FROM pg_tables WHERE schemaname='public' 
     || ' products='|| (SELECT count(*) FROM hq_products)
     || ' snap_dates=' || (SELECT count(DISTINCT snapshot_date) FROM store_sku_snapshots)
     || ' snaps='   || (SELECT count(*) FROM store_sku_snapshots)
-    || ' active_promo=' || (SELECT count(*) FROM hq_promo_batches WHERE is_active);"
+    || ' promo_batches=' || (SELECT count(*) FROM hq_promo_batches);"
 echo "[db-reset] done."
