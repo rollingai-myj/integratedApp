@@ -36,13 +36,15 @@ export interface StoreSkuRow {
   /** 批发价（hq_products.wholesale_price，全期同值；V027 起从主数据 JOIN，不再来自 snapshot） */
   wholesalePrice: number | null;
   salesQty30d: number | null;
-  salesAmount30d: number | null;
-  grossMargin30d: number | null;
+  /** 近 30 日真实销售额(原 salesAmount30d, V031 起对齐 ERP 字段 sales_realamt_30d 改名) */
+  salesRealamt30d: number | null;
   stockQty: number | null;
   snapshotDate: string;
-  /** 环比（上一期 → 本期，按金额）；null = 无上一期 */
-  salesAmountChange30d: number | null;
-  /** 同上，按销量件数 */
+  /** 近 30 日 PSD 销售环比 %; V031 起直接读 snapshot.psd_hb_30d (ERP 灌入), 不再从相邻两期 LAG 自算 */
+  psdHb30d: number | null;
+  /** 近 90 日 PSD 销售环比 % */
+  psdHb90d: number | null;
+  /** 销量(件数)环比 %; 仍由后端从两期 sales_qty_30d 自算 — ERP 未单独导销量环比 */
   salesQtyChange30d: number | null;
   /** 本店该 SKU 最近一次实际调价所在的 snapshot_date（V027 起从 retail_price 时间序列推导，
    *  不再读 store_price_changes）；null = 时间窗内 retail 未跳变 */
@@ -80,7 +82,7 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
   const sql = `
     WITH dedup AS (
       SELECT s.store_id, s.product_id, s.snapshot_date, s.retail_price,
-             s.sales_qty_30d, s.sales_amount_30d, s.gross_margin_30d, s.stock_qty,
+             s.sales_qty_30d, s.sales_realamt_30d, s.psd_hb_30d, s.psd_hb_90d, s.stock_qty,
              ROW_NUMBER() OVER (
                PARTITION BY s.store_id, s.product_id, s.snapshot_date
                ORDER BY CASE s.source WHEN 'manual' THEN 1 ELSE 2 END, s.created_at DESC
@@ -118,17 +120,17 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
            fn_category_ancestor_name(p.category_id, 3::smallint) AS cat_l3,
            fn_category_scene(p.category_id) AS scene,
            latest.retail_price,
-           latest.sales_qty_30d, latest.sales_amount_30d, latest.gross_margin_30d,
+           latest.sales_qty_30d, latest.sales_realamt_30d,
+           latest.psd_hb_30d, latest.psd_hb_90d,
            latest.stock_qty, latest.snapshot_date,
-           prev.sales_qty_30d    AS prev_qty,
-           prev.sales_amount_30d AS prev_amt,
-           lc.last_date          AS last_price_change_at
+           prev.sales_qty_30d AS prev_qty,
+           lc.last_date       AS last_price_change_at
       FROM ranked latest
       LEFT JOIN ranked prev ON prev.product_id = latest.product_id AND prev.rn = 2
       LEFT JOIN last_change lc ON lc.product_id = latest.product_id
       JOIN hq_products p ON p.id = latest.product_id AND p.deleted_at IS NULL
      WHERE latest.rn = 1 ${whereExtra}
-  ORDER BY latest.sales_amount_30d DESC NULLS LAST, p.sku_code
+  ORDER BY latest.sales_realamt_30d DESC NULLS LAST, p.sku_code
   `;
   const res = await query<{
     product_id: string;
@@ -148,18 +150,16 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
     scene: number | null;
     retail_price: string | null;
     sales_qty_30d: number | null;
-    sales_amount_30d: string | null;
-    gross_margin_30d: string | null;
+    sales_realamt_30d: string | null;
+    psd_hb_30d: string | null;
+    psd_hb_90d: string | null;
     stock_qty: number | null;
     snapshot_date: string | Date;
     prev_qty: number | null;
-    prev_amt: string | null;
     last_price_change_at: Date | string | null;
   }>(sql, params);
 
   return res.rows.map((r) => {
-    const amount = r.sales_amount_30d ? Number(r.sales_amount_30d) : null;
-    const prevAmt = r.prev_amt ? Number(r.prev_amt) : null;
     const qty = r.sales_qty_30d;
     const prevQty = r.prev_qty;
     return {
@@ -180,17 +180,14 @@ export async function listStoreSkus(args: ListStoreSkusArgs): Promise<StoreSkuRo
       retailPrice: r.retail_price ? Number(r.retail_price) : null,
       wholesalePrice: r.wholesale_price ? Number(r.wholesale_price) : null,
       salesQty30d: qty,
-      salesAmount30d: amount,
-      grossMargin30d: r.gross_margin_30d ? Number(r.gross_margin_30d) : null,
+      salesRealamt30d: r.sales_realamt_30d ? Number(r.sales_realamt_30d) : null,
       stockQty: r.stock_qty,
       // pg 把 DATE 转 JS Date（本地 0 点）；用 getFullYear/Month/Date 避免时区漂移
       snapshotDate: r.snapshot_date instanceof Date
         ? `${r.snapshot_date.getFullYear()}-${String(r.snapshot_date.getMonth() + 1).padStart(2, '0')}-${String(r.snapshot_date.getDate()).padStart(2, '0')}`
         : String(r.snapshot_date).slice(0, 10),
-      salesAmountChange30d:
-        amount != null && prevAmt != null && prevAmt > 0
-          ? round1(((amount - prevAmt) / prevAmt) * 100)
-          : null,
+      psdHb30d: r.psd_hb_30d != null ? Number(r.psd_hb_30d) : null,
+      psdHb90d: r.psd_hb_90d != null ? Number(r.psd_hb_90d) : null,
       salesQtyChange30d:
         qty != null && prevQty != null && prevQty > 0
           ? round1(((qty - prevQty) / prevQty) * 100)
@@ -319,10 +316,13 @@ export interface SnapshotImportRow {
   /** 本期实际售价（V027 起 snapshot 唯一价格列） */
   retailPrice?: number | null;
   salesQty30d?: number | null;
-  salesAmount30d?: number | null;
+  /** 近 30 日真实销售额(V031 起对齐 ERP, 原 salesAmount30d 改名) */
+  salesRealamt30d?: number | null;
   salesQty90d?: number | null;
-  salesAmount90d?: number | null;
-  grossMargin30d?: number | null;
+  salesRealamt90d?: number | null;
+  /** 近 30 日 PSD 销售环比(%); ERP 直接灌入 */
+  psdHb30d?: number | null;
+  psdHb90d?: number | null;
   stockQty?: number | null;
 }
 
@@ -361,15 +361,17 @@ export async function importStoreSnapshots(
         await client.query(
           `UPDATE store_sku_snapshots
               SET retail_price = $1,
-                  sales_qty_30d = $2, sales_amount_30d = $3,
-                  sales_qty_90d = $4, sales_amount_90d = $5,
-                  gross_margin_30d = $6, stock_qty = $7, imported_by = $8
-            WHERE id = $9`,
+                  sales_qty_30d = $2, sales_realamt_30d = $3,
+                  sales_qty_90d = $4, sales_realamt_90d = $5,
+                  psd_hb_30d = $6, psd_hb_90d = $7,
+                  stock_qty = $8, imported_by = $9
+            WHERE id = $10`,
           [
             r.retailPrice ?? null,
-            r.salesQty30d ?? null, r.salesAmount30d ?? null,
-            r.salesQty90d ?? null, r.salesAmount90d ?? null,
-            r.grossMargin30d ?? null, r.stockQty ?? null, importedBy,
+            r.salesQty30d ?? null, r.salesRealamt30d ?? null,
+            r.salesQty90d ?? null, r.salesRealamt90d ?? null,
+            r.psdHb30d ?? null, r.psdHb90d ?? null,
+            r.stockQty ?? null, importedBy,
             existing.rows[0].id,
           ],
         );
@@ -379,15 +381,15 @@ export async function importStoreSnapshots(
           `INSERT INTO store_sku_snapshots
              (store_id, product_id, sku_code, snapshot_date,
               retail_price,
-              sales_qty_30d, sales_amount_30d, sales_qty_90d, sales_amount_90d,
-              gross_margin_30d, stock_qty, source, imported_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'manual', $12)`,
+              sales_qty_30d, sales_realamt_30d, sales_qty_90d, sales_realamt_90d,
+              psd_hb_30d, psd_hb_90d, stock_qty, source, imported_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'manual', $13)`,
           [
             storeId, productId, r.skuCode, r.snapshotDate,
             r.retailPrice ?? null,
-            r.salesQty30d ?? null, r.salesAmount30d ?? null,
-            r.salesQty90d ?? null, r.salesAmount90d ?? null,
-            r.grossMargin30d ?? null, r.stockQty ?? null, importedBy,
+            r.salesQty30d ?? null, r.salesRealamt30d ?? null,
+            r.salesQty90d ?? null, r.salesRealamt90d ?? null,
+            r.psdHb30d ?? null, r.psdHb90d ?? null, r.stockQty ?? null, importedBy,
           ],
         );
         inserted++;

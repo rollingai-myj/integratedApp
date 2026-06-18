@@ -202,10 +202,13 @@ export interface StoreSkuRow extends ProductRow {
   /** 本期实际售价（snapshot.retail_price，V027 起 snapshot 唯一价格列） */
   retailPrice: number | null;
   salesQty30d: number | null;
-  salesAmount30d: number | null;
+  /** 近 30 日真实销售额(V031 起 snapshot.sales_realamt_30d, 原 salesAmount30d 改名) */
+  salesRealamt30d: number | null;
   salesQty90d: number | null;
-  salesAmount90d: number | null;
-  grossMargin30d: number | null;
+  salesRealamt90d: number | null;
+  /** 近 30 日 PSD 销售环比 % (V031 新增, ERP 直接灌入) */
+  psdHb30d: number | null;
+  psdHb90d: number | null;
   stockQty: number | null;
   lastDeliveryAt: string | null;
   snapshotDate: string | null;
@@ -238,8 +241,10 @@ export interface PriceCurvePoint {
   snapshotDate: string;
   retailPrice: number | null;
   salesQty30d: number | null;
-  salesAmount30d: number | null;
-  grossMargin30d: number | null;
+  /** 近 30 日真实销售额(V031 起 snapshot.sales_realamt_30d, 原 salesAmount30d 改名) */
+  salesRealamt30d: number | null;
+  /** 近 30 日 PSD 销售环比 % (V031 新增, ERP 直接灌入) */
+  psdHb30d: number | null;
 }
 
 export interface PriceCurveSku {

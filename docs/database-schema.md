@@ -3,7 +3,7 @@
 > 给新加入项目的开发：每张表 / 每个字段是什么、什么时候被读、什么时候被写。优先用业务语言（不照搬 SQL 注释）。
 >
 > 数据源：
-> - 迁移文件：[apps/api/src/db/migrations/](../apps/api/src/db/migrations/) — V001 到 **V030**（最新：[V030__promo_drop_weekday_mask_filter.sql](../apps/api/src/db/migrations/V030__promo_drop_weekday_mask_filter.sql)）
+> - 迁移文件：[apps/api/src/db/migrations/](../apps/api/src/db/migrations/) — V001 到 **V031**（最新：[V031__snapshot_rename_amt_add_psd_hb.sql](../apps/api/src/db/migrations/V031__snapshot_rename_amt_add_psd_hb.sql)）
 > - 视图：[V010__views.sql](../apps/api/src/db/migrations/V010__views.sql)（V029 把促销视图 `v_promotion_active` 删掉，换成新视图 `v_active_offers`）
 > - SQL 函数：[V012__category_functions.sql](../apps/api/src/db/migrations/V012__category_functions.sql) + [V023 `fn_category_ancestor_name`](../apps/api/src/db/migrations/V023__category_ancestor_name_fn.sql)
 > - V013 后的 prune：[V013__prune_unused_columns.sql](../apps/api/src/db/migrations/V013__prune_unused_columns.sql)
@@ -11,7 +11,7 @@
 > - 字段 → HTTP 契约：见 [api-contracts.md](./api-contracts.md)
 > - 字段 → 前端状态：见 [state-management.md](./state-management.md)
 >
-> **schema 演进记录（V014+）**：V014 删 `store_ownership` / 砍 `stores.district`；V015 缩瘦 `store_insights` + 加 POI 缓存列；V016 加 `stores.store_area_sqm` / `poi_category`；V017 加 `hq_products.barcode` / `is_returnable` / `allocation_unit`；V018 物理尺寸 mm → cm；V019 锁 `hq_products.category_id` 必须 L3 + 触发器；V020 `hq_promo_mix_groups` 表 → VIEW（V029 起整体作废）；V021 删 `hq_promo_sku_texts`；V022 烘焙 unit + L3 修正；V023 加 `fn_category_ancestor_name`；V024 `hq_benchmark_skus` → `hq_whitelist`（中间态）；V025 白名单合并为 `hq_products.is_whitelisted` 列 + 拆表；V026 加 `tags` / `market_min_price` / `market_min_price_source`；**V027** `store_sku_snapshots` 删 `original_price` / `wholesale_price`（只保留实际售价 `retail_price`）+ 价盘曲线改 snapshot 单源 + `store_price_changes` 读写路径废弃（表保留）+ 前端"调价"语义改为"模拟调价"；**V028** `store_scene_state` 加 4 个字段，让"诊断 / 选品"两个 AI 工作流也走后端常驻、关 tab 不丢；**V029 促销数据整体重构** —— 老促销表 / 视图全删，重建为「批次 + 档案行 + 标准化优惠」三层（含 5 个 sheet 的活动类别、4 类优惠机制），上传语义改为"新文件入库即把所有旧批次自动作废，同一时刻只有一份生效"；**V030** 把"今天是否在生效星期内"这一步从数据库视图里摘掉，交给前端按"今明"开关自己决定。
+> **schema 演进记录（V014+）**：V014 删 `store_ownership` / 砍 `stores.district`；V015 缩瘦 `store_insights` + 加 POI 缓存列；V016 加 `stores.store_area_sqm` / `poi_category`；V017 加 `hq_products.barcode` / `is_returnable` / `allocation_unit`；V018 物理尺寸 mm → cm；V019 锁 `hq_products.category_id` 必须 L3 + 触发器；V020 `hq_promo_mix_groups` 表 → VIEW（V029 起整体作废）；V021 删 `hq_promo_sku_texts`；V022 烘焙 unit + L3 修正；V023 加 `fn_category_ancestor_name`；V024 `hq_benchmark_skus` → `hq_whitelist`（中间态）；V025 白名单合并为 `hq_products.is_whitelisted` 列 + 拆表；V026 加 `tags` / `market_min_price` / `market_min_price_source`；**V027** `store_sku_snapshots` 删 `original_price` / `wholesale_price`（只保留实际售价 `retail_price`）+ 价盘曲线改 snapshot 单源 + `store_price_changes` 读写路径废弃（表保留）+ 前端"调价"语义改为"模拟调价"；**V028** `store_scene_state` 加 4 个字段，让"诊断 / 选品"两个 AI 工作流也走后端常驻、关 tab 不丢；**V029 促销数据整体重构** —— 老促销表 / 视图全删，重建为「批次 + 档案行 + 标准化优惠」三层（含 5 个 sheet 的活动类别、4 类优惠机制），上传语义改为"新文件入库即把所有旧批次自动作废，同一时刻只有一份生效"；**V030** 把"今天是否在生效星期内"这一步从数据库视图里摘掉，交给前端按"今明"开关自己决定；**V031** `store_sku_snapshots` 销售指标对齐 ERP 真实口径 —— `sales_amount_*` → `sales_realamt_*`、新增 `psd_hb_30d/90d`(销售环比 %, ERP 直接灌入)、删 `gross_margin_30d`(不再导毛利率;UI"月毛利" KPI 一并下线)；传给智能体的 `psdChangetb` 改名为 `psdChange`(值来自 `psd_hb_30d`);`store_competitor_products` 加 `tags TEXT`(店主自由标签)。
 
 ---
 
@@ -558,6 +558,8 @@
 > 门店周级销售快照。**外部导入的唯一来源**（ERP 或超管手工）。**调价不写此表**；价盘的"价格曲线"由 snapshots + price_changes 合并而来。[V006.sql](../apps/api/src/db/migrations/V006__store_state.sql)
 >
 > **V027 起价格列瘦身**：本表只保留 `retail_price` —— "本期销售数据产生时门店的实际售价"。**批发价**走 `hq_products.wholesale_price`，**总部建议零售价**走 `hq_products.suggested_retail_price`（仅在选品/产品库使用，不进价盘曲线）。snapshot 时间序列同时承担"价格曲线"和"调价历史"两个角色 —— 没有独立的"调价事实"概念。
+>
+> **V031 销售指标列对齐 ERP**:`sales_amount_30d/90d` → `sales_realamt_30d/90d`(本期真实销售额);新加 `psd_hb_30d/90d`(销售环比 %, ERP 直接灌入,后端不再 LAG 自算);`gross_margin_30d` 删 —— ERP 不导入利润率。"传给智能体的销售环比"字段从 `psdChangetb` 改名为 `psdChange`,值来自 `psd_hb_30d`。
 
 | 字段 | 类型 | 业务含义 | 谁写 | 谁读 |
 |---|---|---|---|---|
@@ -569,9 +571,11 @@
 | **retail_price** | NUMERIC(12,2) | **实际售价**（本期销售数据对应的成交价；调价后下一期才会变） | INSERT | 价盘曲线 · 销售额校验 |
 | ~~original_price~~ | ~~NUMERIC(12,2)~~ | ~~划线原价~~ **V027 删除** —— 业务上等同 `hq_products.suggested_retail_price`，回主数据读 | — | — |
 | ~~wholesale_price~~ | ~~NUMERIC(12,2)~~ | ~~批发价~~ **V027 删除** —— 回 `hq_products.wholesale_price` 读 | — | — |
-| sales_qty_30d / sales_amount_30d | INT / NUMERIC(14,2) | 30 日销量 / 销售额 | INSERT | **核心指标**：环比 / 排序 / 效果评估 |
-| sales_qty_90d / sales_amount_90d | INT / NUMERIC(14,2) | 90 日 | INSERT | 趋势分析 |
-| gross_margin_30d | NUMERIC(8,4) | 30 日毛利率 | INSERT | 选品决策 |
+| sales_qty_30d / **sales_realamt_30d** | INT / NUMERIC(14,2) | 30 日销量 / 真实销售额(元) | INSERT | **核心指标**:排序 / 效果评估;V031 起 `sales_amount_30d` 改名为 `sales_realamt_30d` 对齐 ERP 真实导入口径 |
+| sales_qty_90d / **sales_realamt_90d** | INT / NUMERIC(14,2) | 90 日销量 / 真实销售额 | INSERT | 趋势分析;V031 起改名 |
+| **psd_hb_30d** | NUMERIC(8,4) | **V031 新增** · 30 日 PSD(每店每日)销售环比 %;ERP 直接灌入 | INSERT | 选品/诊断智能体 inputs.benchmark_sku_data[].psdChange + inputs.store_sku_data[].psdChange;价盘卡片"环比"展示;**后端不再从相邻两期 LAG 自算** |
+| **psd_hb_90d** | NUMERIC(8,4) | **V031 新增** · 90 日 PSD 销售环比 % | INSERT | 趋势分析(暂未消费,字段位先留) |
+| ~~gross_margin_30d~~ | ~~NUMERIC(8,4)~~ | ~~30 日毛利率~~ **V031 删除** —— ERP 不导入利润率;UI"月毛利" KPI 一并下线,需要时改用 `retail_price × (retail - wholesale)` 自算 | — | — |
 | stock_qty | INT | 库存 | INSERT | 补货 |
 | last_delivery_at | DATE | 最后到货 | INSERT | 断货预判 |
 | source | TEXT, DEFAULT 'manual' | 'erp_sync' / 'manual' | INSERT | 数据质量 |
@@ -652,6 +656,7 @@
 | **mapped_product_id** | UUID FK(hq_products) | **映射到自家商品**（可空） | 同上 | 比价 JOIN store_sku_snapshots |
 | product_url / image_url | TEXT | 链接 / 图 | 同上 | 前端 |
 | is_active | BOOLEAN NOT NULL, DEFAULT true | 是否监控 | 同上 | 关键过滤 |
+| **tags** | TEXT | **V031 新增** · 店主对竞品的自由标签(如"主推""引流款""价签丢失");自定义文本,无枚举约束 | 同上 | 列表展示;后续做"按标签筛"基础 |
 
 ---
 
@@ -939,6 +944,7 @@
 **谁查**：`store-skus.listStoreSkus` / `benchmark.computeBenchmarkForScene` / 价盘曲线
 **刷新**：普通 VIEW
 **V027 列变更**：投影列与 snapshots 同步删 `original_price` / `wholesale_price`，只剩 `retail_price` + 销量/库存指标。
+**V031 列变更**：`sales_amount_30d/90d` → `sales_realamt_30d/90d`(重命名);新增 `psd_hb_30d/90d`(ERP 灌入的销售环比);删 `gross_margin_30d`。
 
 ---
 
@@ -1255,8 +1261,9 @@
 
 ---
 
-**文档版本**：2026-06-18（对应 V001-V030 全部已应用）
+**文档版本**：2026-06-18(对应 V001-V031 全部已应用)
 **最近一次较大更新**：
+- **V031 销售指标对齐 ERP 真实导入口径**:`store_sku_snapshots.sales_amount_30d/90d` → `sales_realamt_30d/90d`(重命名);新增 `psd_hb_30d/90d`(销售环比 %, ERP 直接灌入,后端不再 LAG 自算);删 `gross_margin_30d`(ERP 不导毛利率;`/shelves/scene` 工作台"月毛利" KPI 同步下线,需要时改从 `retail_price - wholesale_price × salesQty` 自算)。传给诊断/选品智能体的字段从 `psdChangetb` 改名为 `psdChange`(值取最新一期 `psd_hb_30d`,跨店场景用平均)。`store_competitor_products` 加 `tags TEXT`(店主自由标签,如"主推""引流款")。
 - **V028 诊断 / 选品 AI 工作流改后端常驻**：`store_scene_state` 加 `diagnose_status / diagnose_raw_outputs / strategy_status / strategy_raw_outputs` 四字段，让"三段诊断 / 选品策略"两个 Dify 工作流不再 SSE 透传到浏览器 —— 关 tab / 刷新页面后仍能拿回结果。`virtual_status / virtual_raw_outputs`（虚拟陈列，V006 起）+ `store_insights`（周边洞察，PR #41）现在和这两个工作流走同一范式。
 - **V029 促销数据整体重构**：老促销表 / 视图全删（`hq_promo_batch_items` / `hq_promo_mix_groups` / `v_promotion_active`），重建为「批次（`hq_promo_batches`）+ 档案行（`hq_promo_raw_items`）+ 标准化优惠（`hq_promo_offers`）」三层；新增 ENUM `promo_activity_type`（5 个 sheet 的活动类别）/ `promo_mechanic`（4 类优惠机制）；上传语义改为「新文件入库即把所有旧批次自动作废，同一时刻只有一份生效」；凑单组用 `pool_label` 串成虚拟组，无独立表。
 - **V030 星期掩码下放前端**：`v_active_offers` 不再按"今天是否在 offer 生效星期内"卡掉数据，而是把 `valid_weekday_mask` 透传前端，由"今明" toggle 自己决定显示策略 —— 否则非生效那天前端连"今明"按钮都没东西可过滤。

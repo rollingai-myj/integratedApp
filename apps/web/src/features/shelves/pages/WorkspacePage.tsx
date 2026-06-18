@@ -43,12 +43,11 @@ export function WorkspacePage() {
 
   const totals = (skusQ.data?.skus ?? []).reduce(
     (acc, s) => {
-      acc.amount += s.salesAmount30d ?? 0;
+      acc.amount += s.salesRealamt30d ?? 0;
       acc.qty += s.salesQty30d ?? 0;
-      acc.margin += s.grossMargin30d ?? 0;
       return acc;
     },
-    { amount: 0, qty: 0, margin: 0 },
+    { amount: 0, qty: 0 },
   );
 
   // 未登记货架 → 直接进入登记向导，省掉中间引导卡
@@ -98,11 +97,12 @@ export function WorkspacePage() {
               fontSize: 11.5, fontWeight: 800, color: TOKENS.inkMuted,
               letterSpacing: 1, marginBottom: 14,
             }}>近 30 日{def?.name ? ` · ${def.name}` : ''} · 经营概览</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', alignItems: 'end' }}>
+            {/* V031:"月毛利" KPI 拿掉 — gross_margin_30d 字段已删(ERP 不再导入利润率)。
+                 若后续要恢复,可改成从 retail_price - wholesale_price × salesQty30d 自算。 */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'end' }}>
               {[
                 { label: '总月销额', value: fmtBigYuan(totals.amount), color: TOKENS.red },
                 { label: '月销件数', value: fmtBigCount(totals.qty), color: TOKENS.ink },
-                { label: '月毛利', value: fmtBigYuan(totals.margin), color: TOKENS.green },
               ].map((m, idx) => (
                 <div key={m.label} style={{
                   display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center',

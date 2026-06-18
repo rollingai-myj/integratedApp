@@ -28,7 +28,8 @@ export interface BenchmarkSkuRow {
   subCategory: string;
   sales30d: string;
   salesVolume30d: string;
-  psdChangetb: string;
+  /** 销售环比 (%);V031 起字段名改为 psdChange 给智能体用,值来自 latest snapshot.psd_hb_30d (ERP 灌入) */
+  psdChange: string;
   shelfLifeDays: number | null;
 }
 
@@ -42,6 +43,7 @@ interface AggRow {
   l3_name: string | null;
   avg_qty: string | null;
   avg_amt: string | null;
+  /** 跨店本场景 SKU 销售环比 % (V031 起改读 snapshot.psd_hb_30d 而不是后端 LAG 自算) */
   psd_change: string | null;
 }
 
@@ -52,9 +54,11 @@ export async function computeBenchmarkForScene(
   const sql = `
     WITH ranked AS (
       -- 提早在 JOIN 处筛 scene：store_scene_totals 只统计本场景内的 SKU
+      -- V031:sales_amount_30d → sales_realamt_30d; psd_hb_30d 来自 ERP 直接灌入
       SELECT s.store_id, s.product_id,
-             COALESCE(s.sales_qty_30d, 0)::numeric    AS qty,
-             COALESCE(s.sales_amount_30d, 0)::numeric AS amt,
+             COALESCE(s.sales_qty_30d, 0)::numeric     AS qty,
+             COALESCE(s.sales_realamt_30d, 0)::numeric AS amt,
+             s.psd_hb_30d                              AS psd_hb_30d,
              ROW_NUMBER() OVER (
                PARTITION BY s.store_id, s.product_id
                ORDER BY s.snapshot_date DESC,
@@ -73,14 +77,10 @@ export async function computeBenchmarkForScene(
     ),
     pairs AS (
       SELECT latest.store_id, latest.product_id,
-             latest.qty AS latest_qty,
-             latest.amt AS latest_amt,
-             prev.amt   AS prev_amt
+             latest.qty        AS latest_qty,
+             latest.amt        AS latest_amt,
+             latest.psd_hb_30d AS latest_psd_hb_30d
         FROM ranked latest
-        LEFT JOIN ranked prev
-               ON prev.store_id = latest.store_id
-              AND prev.product_id = latest.product_id
-              AND prev.rn = 2
        WHERE latest.rn = 1
     ),
     store_scene_totals AS (
@@ -98,7 +98,7 @@ export async function computeBenchmarkForScene(
              p.latest_qty AS item_qty,
              t.store_amt,
              t.store_qty,
-             p.prev_amt
+             p.latest_psd_hb_30d
         FROM pairs p
         JOIN store_scene_totals t ON t.store_id = p.store_id
        WHERE t.store_amt > 0
@@ -109,9 +109,8 @@ export async function computeBenchmarkForScene(
              AVG(item_amt / store_amt) * AVG(store_amt) AS norm_avg_amt,
              -- 销量分母可能为 0（store_qty 全 null/0）→ NULLIF 让该店占比为 NULL，AVG 自动忽略
              AVG(item_qty / NULLIF(store_qty, 0)) * AVG(NULLIF(store_qty, 0)) AS norm_avg_qty,
-             -- 只对"两期都有"的样本算分子，prev 缺失被剔除避免稀释
-             SUM(CASE WHEN prev_amt IS NOT NULL THEN item_amt END) AS sum_paired_latest_amt,
-             SUM(prev_amt) AS sum_prev_amt
+             -- V031:跨店环比改为平均各店 ERP 直接灌入的 psd_hb_30d, 不再后端 LAG 自算
+             AVG(latest_psd_hb_30d) FILTER (WHERE latest_psd_hb_30d IS NOT NULL) AS avg_psd_hb_30d
         FROM joined
        GROUP BY product_id
     )
@@ -122,10 +121,7 @@ export async function computeBenchmarkForScene(
            fn_category_ancestor_name(p.category_id, 3::smallint) AS l3_name,
            a.norm_avg_qty AS avg_qty,
            a.norm_avg_amt AS avg_amt,
-           CASE WHEN a.sum_prev_amt > 0
-                THEN (a.sum_paired_latest_amt - a.sum_prev_amt) / a.sum_prev_amt * 100
-                ELSE NULL
-           END AS psd_change
+           a.avg_psd_hb_30d AS psd_change
       FROM aggregated a
       JOIN hq_products p ON p.id = a.product_id
                         AND p.deleted_at IS NULL
@@ -143,8 +139,8 @@ export async function computeBenchmarkForScene(
     subCategory: r.l3_name ?? '',
     sales30d: Number(r.avg_amt ?? 0).toFixed(2),
     salesVolume30d: Number(r.avg_qty ?? 0).toFixed(2),
-    // 环比变化%：保留 1 位；null = 没有 prev 期可参考
-    psdChangetb: r.psd_change != null ? Number(r.psd_change).toFixed(1) : '0',
+    // V031:环比来自 ERP 直接灌入的 snapshot.psd_hb_30d (跨店平均);null = 全店都没值
+    psdChange: r.psd_change != null ? Number(r.psd_change).toFixed(1) : '0',
     shelfLifeDays: r.shelf_life_days,
   }));
 }

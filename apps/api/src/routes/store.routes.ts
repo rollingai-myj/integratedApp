@@ -60,10 +60,13 @@ const importSchema = z.object({
     /** 本期实际售价（V027 起 snapshot 唯一价格列；批发价已迁回 hq_products，建议价不入快照） */
     retailPrice: z.number().optional(),
     salesQty30d: z.number().int().optional(),
-    salesAmount30d: z.number().optional(),
+    /** 近 30 日真实销售额(V031 起对齐 ERP 字段, 原 salesAmount30d 改名) */
+    salesRealamt30d: z.number().optional(),
     salesQty90d: z.number().int().optional(),
-    salesAmount90d: z.number().optional(),
-    grossMargin30d: z.number().optional(),
+    salesRealamt90d: z.number().optional(),
+    /** 近 30 日 PSD 销售环比 % (V031 新增, ERP 直接灌入) */
+    psdHb30d: z.number().optional(),
+    psdHb90d: z.number().optional(),
     stockQty: z.number().int().optional(),
   })).min(1),
 });

@@ -78,10 +78,10 @@ export async function getStoreSceneOverview(storeId: string): Promise<SceneOverv
           WHERE c.product_id IS NOT NULL
        ),
        before_amt AS (
-         SELECT prod.adjustment_id, SUM(s.sales_amount_30d) AS amt
+         SELECT prod.adjustment_id, SUM(s.sales_realamt_30d) AS amt
            FROM prod
            JOIN LATERAL (
-             SELECT sales_amount_30d FROM store_sku_snapshots
+             SELECT sales_realamt_30d FROM store_sku_snapshots
               WHERE store_id = prod.store_id AND product_id = prod.product_id
                 AND snapshot_date <= prod.d
               ORDER BY snapshot_date DESC LIMIT 1
@@ -89,10 +89,10 @@ export async function getStoreSceneOverview(storeId: string): Promise<SceneOverv
           GROUP BY prod.adjustment_id
        ),
        after_amt AS (
-         SELECT prod.adjustment_id, SUM(s.sales_amount_30d) AS amt
+         SELECT prod.adjustment_id, SUM(s.sales_realamt_30d) AS amt
            FROM prod
            JOIN LATERAL (
-             SELECT sales_amount_30d FROM store_sku_snapshots
+             SELECT sales_realamt_30d FROM store_sku_snapshots
               WHERE store_id = prod.store_id AND product_id = prod.product_id
                 AND snapshot_date > prod.d
               ORDER BY snapshot_date DESC LIMIT 1
