@@ -302,6 +302,40 @@ export function FlowPage() {
     }
   }, [stage, diagnosis]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 诊断 / 选品 5min 超时后 status='failed' — 提供单独重试,不要无脑重跑成功的那个
+  const diagnoseFailed = runtimeQ.data?.diagnoseStatus === 'failed';
+  const strategyFailed = runtimeQ.data?.strategyStatus === 'failed';
+
+  const retryFailedWorkflow = async (kind: 'diagnose' | 'strategy' | 'both') => {
+    setAiError(null);
+    // 乐观把 cache 里失败状态改回 processing,防止 aiError useEffect 立刻又把消息塞回去
+    qc.setQueryData(['scenes', scene, 'runtime'], (old: any) => {
+      if (!old) return old;
+      const next = { ...old };
+      if (kind !== 'strategy') next.diagnoseStatus = 'processing';
+      if (kind !== 'diagnose') next.strategyStatus = 'processing';
+      return next;
+    });
+
+    if (kind === 'diagnose' || kind === 'both') {
+      const rawUrl = photos.find((p) => p.url)?.url ?? '';
+      const photoUrl = rawUrl
+        ? (rawUrl.startsWith('http') ? rawUrl : `${window.location.origin}${rawUrl}`)
+        : '';
+      if (photoUrl) {
+        void scenesApi.triggerDiagnose(scene, photoUrl).catch((e) => {
+          setAiError(`诊断触发失败:${(e as Error).message}`);
+        });
+      }
+    }
+    if (kind === 'strategy' || kind === 'both') {
+      void scenesApi.triggerStrategy(scene).catch((e) => {
+        setAiError((prev) => prev ?? `方案触发失败:${(e as Error).message}`);
+      });
+    }
+    void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
+  };
+
   // ---- 阶段 3：诊断结果展示 → 阶段 4：逐条确认 --------------------------
 
   const startReview = () => {
@@ -523,23 +557,51 @@ export function FlowPage() {
           <Card pad={16}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <ProgressStep label="识别货架上的商品" done={detectDone} running={!detectDone} />
-              <ProgressStep label="结合你的回答与周边竞争生成诊断" done={!!diagnosis} running={!diagnosis} />
-              <ProgressStep label="生成选品调改方案" done={!!strategy} running={!strategy} />
+              <ProgressStep
+                label="结合你的回答与周边竞争生成诊断"
+                done={!!diagnosis}
+                running={!diagnosis && !diagnoseFailed}
+                failed={diagnoseFailed && !diagnosis}
+              />
+              <ProgressStep
+                label="生成选品调改方案"
+                done={!!strategy}
+                running={!strategy && !strategyFailed}
+                failed={strategyFailed && !strategy}
+              />
             </div>
           </Card>
           <div style={{ fontSize: 12, color: TOKENS.inkMuted, textAlign: 'center' }}>
-            诊断与方案需要 30-60 秒，请耐心等待
+            {diagnoseFailed || strategyFailed
+              ? '单次调用最长 5 分钟,超过会自动停止,可点下方按钮重试'
+              : '诊断与方案需要 30-60 秒，请耐心等待'}
           </div>
           {/* 等待期间让店长可以先看本场景的商品数据 */}
           <SkuListPanel scene={scene} defaultOpen />
-          {aiError && (
+          {(aiError || diagnoseFailed || strategyFailed) && (
             <Card pad={12} style={{ background: TOKENS.redSoft, boxShadow: 'none' }}>
-              <div style={{ fontSize: 12.5, color: TOKENS.red, lineHeight: 1.55 }}>{aiError}</div>
-              <button onClick={startDiagnosis} style={{
+              <div style={{ fontSize: 12.5, color: TOKENS.red, lineHeight: 1.55 }}>
+                {aiError ?? (
+                  diagnoseFailed && strategyFailed ? '诊断与方案生成均已超时,请重试。'
+                  : diagnoseFailed ? '诊断生成已超时,请重试。'
+                  : '方案生成已超时,请重试。'
+                )}
+              </div>
+              <button onClick={() => {
+                if (diagnoseFailed && strategyFailed) void retryFailedWorkflow('both');
+                else if (diagnoseFailed) void retryFailedWorkflow('diagnose');
+                else if (strategyFailed) void retryFailedWorkflow('strategy');
+                else void startDiagnosis();
+              }} style={{
                 appearance: 'none', border: 0, marginTop: 8, padding: '6px 12px',
                 background: '#fff', color: TOKENS.red, borderRadius: 14,
                 fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
-              }}>重试</button>
+              }}>
+                {diagnoseFailed && strategyFailed ? '重试诊断与方案'
+                  : diagnoseFailed ? '重试诊断'
+                  : strategyFailed ? '重试方案生成'
+                  : '重试'}
+              </button>
             </Card>
           )}
         </div>
@@ -575,7 +637,15 @@ export function FlowPage() {
             <SkuListPanel scene={scene} />
           </div>
           <BottomBar>
-            {strategy === null ? (
+            {strategy === null && strategyFailed ? (
+              <PrimaryBtn
+                onClick={() => void retryFailedWorkflow('strategy')}
+                icon={I.ArrowR({ size: 20, color: '#fff' })}
+                style={{ background: TOKENS.red }}
+              >
+                方案生成已超时,点击重试
+              </PrimaryBtn>
+            ) : strategy === null ? (
               <PrimaryBtn disabled icon={<Spin size={18} />}>
                 正在生成调改方案…
               </PrimaryBtn>
@@ -629,19 +699,31 @@ export function FlowPage() {
 
 // ---- 子组件：进度阶段步骤 ------------------------------------------------
 
-function ProgressStep({ label, done, running }: { label: string; done: boolean; running: boolean }) {
+function ProgressStep({ label, done, running, failed }: {
+  label: string; done: boolean; running: boolean; failed?: boolean;
+}) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 11, opacity: done || running ? 1 : 0.4 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 11, opacity: done || running || failed ? 1 : 0.4 }}>
       {done ? (
         <div style={{
           width: 22, height: 22, borderRadius: '50%', background: TOKENS.green, flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>{I.Check({ size: 13, color: '#fff' })}</div>
+      ) : failed ? (
+        <div style={{
+          width: 22, height: 22, borderRadius: '50%', background: TOKENS.red, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 14, fontWeight: 800, color: '#fff', lineHeight: 1,
+        }}>!</div>
       ) : running ? <Spin size={22} /> : (
         <div style={{ width: 22, height: 22, borderRadius: '50%', border: `2px solid ${TOKENS.line}`, flexShrink: 0 }} />
       )}
-      <div style={{ fontSize: 14, fontWeight: running ? 800 : 600, color: running ? TOKENS.ink : TOKENS.inkSoft }}>
-        {label}{running && !done && '…'}
+      <div style={{
+        fontSize: 14,
+        fontWeight: running || failed ? 800 : 600,
+        color: failed ? TOKENS.red : running ? TOKENS.ink : TOKENS.inkSoft,
+      }}>
+        {label}{failed ? '·已超时' : running && !done ? '…' : ''}
       </div>
     </div>
   );

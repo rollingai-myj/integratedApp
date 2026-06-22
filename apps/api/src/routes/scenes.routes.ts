@@ -30,6 +30,7 @@ import { writeAuditEvent } from '../services/audit.service.js';
 import {
   ensureDiagnose, ensureStrategy, ensureVirtualShelf,
 } from '../services/ai-shelves.service.js';
+import { buildDifyUser } from '../lib/dify-user.js';
 import { computeBenchmarkForScene } from '../services/benchmark.service.js';
 import { config } from '../config/env.js';
 import { logger } from '../lib/logger.js';
@@ -346,7 +347,7 @@ scenesRouter.post(
       payload: { scene, addedCount: adjustment.addedCount, removedCount: adjustment.removedCount },
     }).catch(() => {});
     // V028: 应用调改即触发后台 virtual-shelf 任务,前端不必再单独调 triggerVirtualShelf
-    void ensureVirtualShelf(req.user!.currentStoreId!, scene);
+    void ensureVirtualShelf(req.user!.currentStoreId!, scene, buildDifyUser(req.user!));
     res.status(201).json(adjustment);
   }),
 );
@@ -466,7 +467,7 @@ scenesRouter.post(
       targetStoreId: storeId, payload: { scene },
     }).catch(() => {});
     // fire-and-forget — ensureDiagnose 内部自带 in-flight 去重 + status 状态机
-    void ensureDiagnose(storeId, scene, body.photoUrl);
+    void ensureDiagnose(storeId, scene, body.photoUrl, buildDifyUser(req.user!));
     res.status(202).json({ accepted: true });
   }),
 );
@@ -482,7 +483,7 @@ scenesRouter.post(
       actorUserId: req.user!.id, isAiCall: true, aiWorkflow: 'selection',
       targetStoreId: storeId, payload: { scene },
     }).catch(() => {});
-    void ensureStrategy(storeId, scene);
+    void ensureStrategy(storeId, scene, buildDifyUser(req.user!));
     res.status(202).json({ accepted: true });
   }),
 );
@@ -498,7 +499,7 @@ scenesRouter.post(
       actorUserId: req.user!.id, isAiCall: true, aiWorkflow: 'virtual_shelf',
       targetStoreId: storeId, payload: { scene },
     }).catch(() => {});
-    void ensureVirtualShelf(storeId, scene);
+    void ensureVirtualShelf(storeId, scene, buildDifyUser(req.user!));
     res.status(202).json({ accepted: true });
   }),
 );

@@ -1008,7 +1008,7 @@ const virtualShelfInFlight = new Set<string>();
  * 失败:status='failed' + raw_outputs={error: msg}
  */
 export async function ensureDiagnose(
-  storeId: string, scene: number, photoUrl: string,
+  storeId: string, scene: number, photoUrl: string, difyUser: string,
 ): Promise<void> {
   const key = `${storeId}:${scene}`;
   if (diagnoseInFlight.has(key)) return;
@@ -1022,7 +1022,7 @@ export async function ensureDiagnose(
 
     let outputs: Record<string, unknown>;
     try {
-      outputs = await difyService.invoke('align', inputs, { userId: `ensure-diagnose:${storeId}:${scene}` });
+      outputs = await difyService.invoke('align', inputs, { userId: difyUser });
     } catch (err) {
       logger.warn({ err, storeId, scene }, 'ensureDiagnose: Dify align 调用失败');
       await setAiStatus(storeId, scene, 'diagnose', 'failed', { error: (err as Error).message });
@@ -1044,7 +1044,7 @@ export async function ensureDiagnose(
  * 触发 Dify selection (选品策略) 后台任务。
  * 用照片不需要,跟 ensureDiagnose 同时由前端"开始调改"触发。
  */
-export async function ensureStrategy(storeId: string, scene: number): Promise<void> {
+export async function ensureStrategy(storeId: string, scene: number, difyUser: string): Promise<void> {
   const key = `${storeId}:${scene}`;
   if (strategyInFlight.has(key)) return;
   strategyInFlight.add(key);
@@ -1057,7 +1057,7 @@ export async function ensureStrategy(storeId: string, scene: number): Promise<vo
 
     let outputs: Record<string, unknown>;
     try {
-      outputs = await difyService.invoke('selection', inputs, { userId: `ensure-strategy:${storeId}:${scene}` });
+      outputs = await difyService.invoke('selection', inputs, { userId: difyUser });
     } catch (err) {
       logger.warn({ err, storeId, scene }, 'ensureStrategy: Dify selection 调用失败');
       await setAiStatus(storeId, scene, 'strategy', 'failed', { error: (err as Error).message });
@@ -1080,7 +1080,7 @@ export async function ensureStrategy(storeId: string, scene: number): Promise<vo
  * 用 applyAdjustment 之后的调改差量;耗时 5~10 分钟,virtualStatus='processing' 期间
  * LastPage 显示加载态;成功 → completed + raw_outputs,前端读 raw_outputs.parsed 渲染。
  */
-export async function ensureVirtualShelf(storeId: string, scene: number): Promise<void> {
+export async function ensureVirtualShelf(storeId: string, scene: number, difyUser: string): Promise<void> {
   const key = `${storeId}:${scene}`;
   if (virtualShelfInFlight.has(key)) return;
   virtualShelfInFlight.add(key);
@@ -1094,7 +1094,7 @@ export async function ensureVirtualShelf(storeId: string, scene: number): Promis
 
     let outputs: Record<string, unknown>;
     try {
-      outputs = await difyService.invoke('virtual-shelf', inputs, { userId: `ensure-virtual:${storeId}:${scene}` });
+      outputs = await difyService.invoke('virtual-shelf', inputs, { userId: difyUser });
     } catch (err) {
       logger.warn({ err, storeId, scene }, 'ensureVirtualShelf: Dify virtual-shelf 调用失败');
       await setAiStatus(storeId, scene, 'virtual', 'failed', { error: (err as Error).message });
