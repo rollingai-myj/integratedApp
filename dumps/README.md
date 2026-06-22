@@ -1,0 +1,44 @@
+# 数据库 Dump 说明
+
+> 本目录被 `.gitignore` 排除(`dumps/` + `*.dump`)—— 含 `user_feishu_identities.open_id` 等敏感字段,不入仓库。
+
+## 当前 dump
+
+时间戳:**2026-06-18T063209Z**
+PostgreSQL 版本:**16.14** (Alpine, aarch64)
+迁移版本:**V001 → V031**(全部已应用)
+源容器:`myj-postgres` (database: `myj_dev`, user: `myj`)
+
+| 文件 | 大小 | 用途 |
+|---|---|---|
+| `schema-2026-06-18T063209Z.sql` | 86K | 只导出结构(表/视图/函数/枚举/索引),不含数据;复盘 schema 用 |
+| `full-2026-06-18T063209Z.sql` | 3.0M | 完整 SQL 形式(结构 + 数据),可读;`psql -f` 直接灌新库 |
+| `full-2026-06-18T063209Z.dump` | 741K | 压缩二进制(custom format);`pg_restore` 恢复,体积小 |
+
+## 恢复命令
+
+**用 plain SQL 文件灌新库**(可直接看到每条 SQL):
+
+```bash
+docker exec -i myj-postgres psql -U myj -d myj_dev_restore < dumps/full-2026-06-18T063209Z.sql
+```
+
+**用压缩 dump 恢复**(更快,但需要 `pg_restore`):
+
+```bash
+docker exec -i myj-postgres pg_restore -U myj -d myj_dev_restore --no-owner --no-privileges < dumps/full-2026-06-18T063209Z.dump
+```
+
+## 重新 dump 当前库
+
+```bash
+TS=$(date -u +%Y-%m-%dT%H%M%SZ)
+docker exec myj-postgres pg_dump -U myj -d myj_dev --schema-only --no-owner --no-privileges > dumps/schema-${TS}.sql
+docker exec myj-postgres pg_dump -U myj -d myj_dev --no-owner --no-privileges > dumps/full-${TS}.sql
+docker exec myj-postgres pg_dump -U myj -d myj_dev --no-owner --no-privileges -Fc > dumps/full-${TS}.dump
+```
+
+## 注意
+
+- 历史 dump(如 `myj_dev_20260610_175641.sql`、`myj_dev_pre_baseline_20260612.sql.gz`)是 baseline 之前的旧版本,保留作回滚备份,不要混用。
+- 文件大小若突然变大(单次 dump 超 100MB),先确认是否误把 `pg_data` 目录里的二进制日志一起 dump 了。
