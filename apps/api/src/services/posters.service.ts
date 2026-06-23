@@ -18,9 +18,9 @@ import { query, withTransaction } from '../db/index.js';
 import { AppError, ErrorCodes } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 import {
-  openRouterService,
+  cocoImageService,
   type PosterGenerateInput,
-} from './openrouter.service.js';
+} from './coco-image.service.js';
 import { ossService } from './oss.service.js';
 
 // ============================================================================
@@ -619,15 +619,15 @@ export async function claimAndProcess(
 
   if (!claim) return { generation: null };
 
-  // 第二步：拿 task inputs 调 openRouter（事务外，避免长事务）
+  // 第二步：拿 task inputs 调 Corelays gpt-image-2（事务外，避免长事务）
   const tRes = await query<TaskRow>(
     `SELECT * FROM store_poster_tasks WHERE id = $1`,
     [claim.task_id],
   );
   const task = tRes.rows[0]!;
   const inputs = (task.inputs ?? {}) as Record<string, unknown>;
-  // sourcePhotoUrl / productImageUrl / productImageUrls 都是反代 URL，OpenRouter
-  // 在外网拉不到——这里统一转回 OSS 直链
+  // sourcePhotoUrl / productImageUrl / productImageUrls 都是反代 URL，Corelays
+  // 在外网拉不到——这里统一转回 OSS 直链(coco-image.service 再 fetch 成 multipart)
   const aiInput: PosterGenerateInput = {
     template: task.template,
     mode: task.mode,
@@ -656,8 +656,8 @@ export async function claimAndProcess(
   );
 
   try {
-    const out = await openRouterService.generatePoster(aiInput);
-    // Gemini 走 OpenRouter 回的是 data:image/...;base64,... → 转存 OSS
+    const out = await cocoImageService.generatePoster(aiInput);
+    // gpt-image-2 返回 b64_json,服务里已包成 data:image/png;base64,... → 转存 OSS
     // 否则 DB 会塞 1-2MB/张大字符串 + iOS Safari 渲染大 base64 img 失败显示纯黑。
     let posterUrl = out.posterUrl;
     if (posterUrl.startsWith('data:')) {
@@ -701,7 +701,7 @@ export async function claimAndProcess(
               finished_at = now(), updated_at = now()
         WHERE id = $3
         RETURNING *`,
-      ['openrouter_error', err.message.slice(0, 500), claim.id],
+      ['coco_image_error', err.message.slice(0, 500), claim.id],
     );
     logger.warn(
       { workerId, taskId: claim.task_id, generationId: claim.id, err: err.message },

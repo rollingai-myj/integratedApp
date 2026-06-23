@@ -186,16 +186,27 @@ export async function enqueuePosterJobs(
  */
 export async function processPosterJob(
   input?: ServerFnInput<{ jobId?: string }>,
-): Promise<{ jobId: string | null; status: JobStatus | null }> {
+): Promise<{
+  jobId: string | null;
+  status: JobStatus | null;
+  posterImageUrl: string | null;
+  errorMessage: string | null;
+}> {
   const body = input?.data?.jobId ? { generationId: input.data.jobId } : {};
   const res = await jsonFetch<{ generation: PosterGeneration } | undefined>(
     '/posters/generations:claim',
     { method: 'POST', body: JSON.stringify(body) },
   );
-  if (!res?.generation) return { jobId: null, status: null };
+  if (!res?.generation) {
+    return { jobId: null, status: null, posterImageUrl: null, errorMessage: null };
+  }
+  // succeeded 时回 URL,failed 时回 errorMessage —— 不带回来本地状态拿不到,
+  // 因为后续 refresh() 只拉 status=active 集合,done/error 不会再回流。
   return {
     jobId: res.generation.id,
     status: statusToFront(res.generation.status),
+    posterImageUrl: res.generation.posterImageUrl,
+    errorMessage: res.generation.errorMessage,
   };
 }
 

@@ -304,7 +304,7 @@ export async function getRealtimeStats(): Promise<RealtimeStats> {
 // ============================================================================
 
 const SETTING_KEY = 'poster_image_model';
-const DEFAULT_MODEL = 'google/gemini-2.5-flash-image';
+const DEFAULT_MODEL = 'gemini-3.1-flash-image';
 
 export interface ImageModelSetting {
   key: string;
