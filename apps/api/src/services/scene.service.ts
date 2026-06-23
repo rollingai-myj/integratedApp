@@ -306,6 +306,34 @@ export interface AdjustmentItem {
   reasonText?: string | null;
 }
 
+/**
+ * 调改效果追踪指标(按场景聚合 30 日滚动销量 / 销售额):
+ *
+ *   - status='accumulating' —— 任何一个条件不满足时,前端显示"数据积累中":
+ *       1) 距 triggered_at 不足 14 天
+ *       2) 对比窗口 [+14d, +30d] 内一份快照都没有
+ *       3) 没有调改前的基线快照
+ *       4) 基线销量/销售额 = 0(整场景 30 天前一笔销量都没有,极端情况)
+ *   - status='computed' —— 都满足时,前端展示销量Δ% / 销售额Δ%
+ *       (qtyDeltaPct / amtDeltaPct,负数 = 下降,正数 = 上升,小数 1 位即可)
+ *
+ * 取数策略:
+ *   pre  = MAX(snapshot_date) WHERE snapshot_date <= triggered_at,场景内任一 SKU
+ *   post = MAX(snapshot_date) WHERE snapshot_date ∈ [triggered_at+14d, triggered_at+30d]
+ * 取窗口内"最新"快照而非最早,是因为越后面快照里 sales_qty_30d 的 30 日窗口含调改
+ * 后天数越多,数据越干净;到 +30d 几乎全是调改后销量。超过 +30d 后窗口不再有新
+ * 快照 → 数值自然锁定,不会因为时间往后再漂。
+ */
+export type AdjustmentEffect =
+  | { status: 'accumulating' }
+  | {
+      status: 'computed';
+      qtyDeltaPct: number | null;
+      amtDeltaPct: number | null;
+      preDate: string;
+      postDate: string;
+    };
+
 export interface Adjustment {
   id: string;
   scene: number;
@@ -316,6 +344,8 @@ export interface Adjustment {
   triggeredBy: string | null;
   triggeredByDisplay: string | null;
   triggeredAt: string;
+  /** 调改效果追踪:基于 store_sku_snapshots 滚动 30 日销量/销售额,场景维度聚合 */
+  effect?: AdjustmentEffect;
 }
 
 const VALID_REASON_CODES = new Set([
@@ -430,7 +460,7 @@ export async function listAdjustments(
    ORDER BY triggered_at DESC LIMIT $3`,
     [storeId, scene, limit],
   );
-  return res.rows.map((r: any) => ({
+  const adjustments: Adjustment[] = res.rows.map((r: any) => ({
     id: r.id,
     scene: r.scene,
     summaryText: r.summary_text,
@@ -441,6 +471,151 @@ export async function listAdjustments(
     triggeredByDisplay: r.triggered_by_display,
     triggeredAt: r.triggered_at,
   }));
+
+  if (adjustments.length > 0) {
+    const effects = await computeAdjustmentEffects(
+      storeId,
+      scene,
+      adjustments.map((a) => ({ id: a.id, triggeredAt: a.triggeredAt })),
+    );
+    for (const a of adjustments) {
+      a.effect = effects.get(a.id) ?? { status: 'accumulating' };
+    }
+  }
+
+  return adjustments;
+}
+
+/**
+ * 批量算多笔调改的效果指标。一次 SQL 完成,索引走 store_sku_snapshots_curve_idx
+ * (store_id, product_id, snapshot_date DESC)。
+ *
+ * 关键设计:
+ *   1) 场景过滤复用 fn_category_scene(),跟 listStoreSkus 同口径
+ *   2) 同 SKU 同日多份快照按 manual > others, created_at DESC 去重(跟价盘曲线一致)
+ *   3) 每笔调改各自查 pre/post 日期 + sum 销量销额,单条 SQL 跑完
+ *   4) 距离 triggered_at 不到 14 天的直接归 accumulating,SQL 里也不做无用功
+ */
+async function computeAdjustmentEffects(
+  storeId: string,
+  scene: number,
+  adjustments: Array<{ id: string; triggeredAt: string }>,
+): Promise<Map<string, AdjustmentEffect>> {
+  const out = new Map<string, AdjustmentEffect>();
+  // 1) 先把 < 14 天的提前归 accumulating,不用进 SQL
+  const now = Date.now();
+  const eligible: Array<{ id: string; triggeredAt: string }> = [];
+  for (const a of adjustments) {
+    const elapsedMs = now - new Date(a.triggeredAt).getTime();
+    if (elapsedMs < 14 * 24 * 3600 * 1000) {
+      out.set(a.id, { status: 'accumulating' });
+    } else {
+      eligible.push(a);
+    }
+  }
+  if (eligible.length === 0) return out;
+
+  const ids = eligible.map((a) => a.id);
+  const ats = eligible.map((a) => a.triggeredAt);
+
+  const sql = `
+    WITH adjs AS (
+      SELECT id, triggered_at::date AS trig
+        FROM unnest($1::uuid[], $2::timestamptz[]) AS t(id, triggered_at)
+    ),
+    scene_products AS (
+      SELECT p.id AS product_id
+        FROM hq_products p
+       WHERE fn_category_scene(p.category_id) = $3
+         AND p.deleted_at IS NULL
+    ),
+    dedup AS (
+      SELECT s.product_id, s.snapshot_date,
+             s.sales_qty_30d, s.sales_realamt_30d,
+             ROW_NUMBER() OVER (
+               PARTITION BY s.product_id, s.snapshot_date
+               ORDER BY CASE s.source WHEN 'manual' THEN 1 ELSE 2 END, s.created_at DESC
+             ) AS rn_day
+        FROM store_sku_snapshots s
+       WHERE s.store_id = $4
+         AND s.product_id IN (SELECT product_id FROM scene_products)
+    ),
+    ds AS (
+      SELECT product_id, snapshot_date, sales_qty_30d, sales_realamt_30d
+        FROM dedup WHERE rn_day = 1
+    ),
+    dates AS (
+      SELECT a.id AS adj_id, a.trig,
+             (SELECT MAX(snapshot_date) FROM ds
+               WHERE snapshot_date <= a.trig) AS pre_date,
+             (SELECT MAX(snapshot_date) FROM ds
+               WHERE snapshot_date >= a.trig + INTERVAL '14 days'
+                 AND snapshot_date <= a.trig + INTERVAL '30 days') AS post_date
+        FROM adjs a
+    )
+    SELECT d.adj_id, d.pre_date, d.post_date,
+           pre_agg.qty  AS pre_qty,
+           pre_agg.amt  AS pre_amt,
+           post_agg.qty AS post_qty,
+           post_agg.amt AS post_amt
+      FROM dates d
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(sales_qty_30d), 0)::float8     AS qty,
+               COALESCE(SUM(sales_realamt_30d), 0)::float8 AS amt
+          FROM ds
+         WHERE snapshot_date = d.pre_date
+      ) pre_agg ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(sales_qty_30d), 0)::float8     AS qty,
+               COALESCE(SUM(sales_realamt_30d), 0)::float8 AS amt
+          FROM ds
+         WHERE snapshot_date = d.post_date
+      ) post_agg ON TRUE
+  `;
+  const res = await query<{
+    adj_id: string;
+    pre_date: string | null;
+    post_date: string | null;
+    pre_qty: number | null;
+    pre_amt: number | null;
+    post_qty: number | null;
+    post_amt: number | null;
+  }>(sql, [ids, ats, scene, storeId]);
+
+  for (const r of res.rows) {
+    // 任一前置数据缺 -> accumulating
+    if (!r.pre_date || !r.post_date) {
+      out.set(r.adj_id, { status: 'accumulating' });
+      continue;
+    }
+    const preQty = r.pre_qty ?? 0;
+    const preAmt = r.pre_amt ?? 0;
+    const postQty = r.post_qty ?? 0;
+    const postAmt = r.post_amt ?? 0;
+    // 基线 0 时 % 没有意义 —— 整场景 30 天前都没销量,直接归 accumulating
+    if (preQty <= 0 && preAmt <= 0) {
+      out.set(r.adj_id, { status: 'accumulating' });
+      continue;
+    }
+    const qtyDeltaPct =
+      preQty > 0 ? Math.round(((postQty - preQty) / preQty) * 1000) / 10 : null;
+    const amtDeltaPct =
+      preAmt > 0 ? Math.round(((postAmt - preAmt) / preAmt) * 1000) / 10 : null;
+    out.set(r.adj_id, {
+      status: 'computed',
+      qtyDeltaPct,
+      amtDeltaPct,
+      preDate: r.pre_date,
+      postDate: r.post_date,
+    });
+  }
+
+  // 资格内但 SQL 没返回(理论不会,SQL 是从 unnest 来的) -> accumulating
+  for (const a of eligible) {
+    if (!out.has(a.id)) out.set(a.id, { status: 'accumulating' });
+  }
+
+  return out;
 }
 
 // ---- 勘误 ----------------------------------------------------------------

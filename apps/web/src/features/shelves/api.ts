@@ -129,6 +129,21 @@ export interface AdjustmentItem {
   reasonText?: string | null;
 }
 
+/**
+ * 调改效果追踪指标:
+ *   - 'accumulating' = 数据不足(< 14 天 / 窗口无快照 / 无基线 / 基线 0),前端显示"数据积累中"
+ *   - 'computed'     = 算出销量Δ% / 销售额Δ%。任一为 null = 该项基线 0(罕见),前端显示 "—"
+ */
+export type AdjustmentEffect =
+  | { status: 'accumulating' }
+  | {
+      status: 'computed';
+      qtyDeltaPct: number | null;
+      amtDeltaPct: number | null;
+      preDate: string;
+      postDate: string;
+    };
+
 export interface Adjustment {
   id: string;
   scene: number;
@@ -138,6 +153,7 @@ export interface Adjustment {
   items: AdjustmentItem[];
   triggeredAt: string;
   triggeredByDisplay: string | null;
+  effect?: AdjustmentEffect;
 }
 
 export interface SurveyQuestion {
@@ -152,9 +168,31 @@ export interface SurveyQuestion {
 
 // ---- 端点 ---------------------------------------------------------------
 
+/**
+ * 标杆店(参考店) SKU 跨店加权平均指标 —— 同场景下排除本店后,按店配重均出的销量/销售额/环比。
+ * 数值字段后端落库是 numeric,序列化后是 string;前端展示前要 Number() 一下。
+ */
+export interface BenchmarkSku {
+  skuCode: string;
+  skuName: string;
+  spec: string;
+  majorCategory: string;
+  midCategory: string;
+  subCategory: string;
+  /** 跨店 30 日真实销售额加权平均(元) */
+  sales30d: string;
+  /** 跨店 30 日销量加权平均(件) */
+  salesVolume30d: string;
+  /** 跨店 PSD 销售环比(%);V031 起读 ERP 灌入的 snapshot.psd_hb_30d */
+  psdChange: string;
+  shelfLifeDays: number | null;
+}
+
 export const scenesApi = {
   list: () => request<{ scenes: SceneDef[] }>('/scenes'),
   overview: () => request<{ scenes: SceneOverview[] }>('/scenes/overview'),
+  benchmark: (scene: number) =>
+    request<{ scene: number; items: BenchmarkSku[] }>(`/scenes/${scene}/benchmark`),
   runtime: (scene: number) => request<SceneRuntime>(`/scenes/${scene}/runtime`),
   saveRuntime: (scene: number, patch: Partial<SceneRuntime>) =>
     request<SceneRuntime>(`/scenes/${scene}/runtime`, { method: 'PUT', body: patch }),

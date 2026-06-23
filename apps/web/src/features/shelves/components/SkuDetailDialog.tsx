@@ -36,7 +36,8 @@ export function SkuDetailDialog({
         background: '#fff', borderRadius: 18, padding: 16,
         display: 'flex', flexDirection: 'column', gap: 12,
         boxShadow: '0 12px 36px rgba(0,0,0,0.28)',
-        animation: 'shv-card-in 0.22s ease',
+        // 不加 transform 动画 —— shv-card-in 的 translateX 会覆盖居中的 translate(-50%, -50%),
+        // 出现"从角落飞入"的错位。背景 shv-fadein 已经够柔和。
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>

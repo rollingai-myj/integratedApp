@@ -13,6 +13,7 @@
  */
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
+import { useQueries } from '@tanstack/react-query';
 import {
   Tooltip,
   TooltipContent,
@@ -22,7 +23,8 @@ import {
 import { IOSDevice } from '@/components/IOSDevice';
 import { BrandHeader } from '@/components/prices/BrandHeader';
 import { useMe } from '@/lib/auth';
-import { useScenes, useStoreSkus } from '@/lib/hooks';
+import { useScenes } from '@/lib/hooks';
+import { masterApi } from '@/lib/api-client';
 import { emojiForScene } from '@/lib/scenes';
 
 export const Route = createFileRoute('/prices/')({
@@ -48,12 +50,27 @@ const ENABLED_SCENES: Record<string, { scene?: string }> = {
 function PricesHomePage() {
   const meQuery = useMe();
   const storeId = meQuery.data?.currentStore?.id ?? null;
-  // 仅用于展示"x 个商品"角标；不阻塞渲染
-  const skusQuery = useStoreSkus(storeId);
-  const skuCount = skusQuery.data?.skus?.length ?? 0;
 
   const scenesQuery = useScenes();
   const scenes = scenesQuery.data?.scenes ?? [];
+
+  // 每个场景的 SKU 条数 —— 旧实现是用 useStoreSkus(storeId) 全量拉一遍把同一个 total 显示
+  // 在每张卡上,所有场景看上去 SKU 数都一样。改成对每个场景独立拉 /store/skus?scene=X,
+  // useQueries 同时发起、各自缓存。复用跟 useStoreSkus 一致的 queryKey,跟其他页面(如选品
+  // SkuListPanel)的相同请求共享缓存,不会重复发请求。
+  const perSceneQueries = useQueries({
+    queries: scenes.map((s) => ({
+      queryKey: ['master', 'skus', storeId, s.scene, ''] as const,
+      queryFn: () => masterApi.listSkus({ scene: s.scene }),
+      enabled: !!storeId,
+      staleTime: 30_000,
+    })),
+  });
+  const countByScene = new Map<number, number | null>();
+  scenes.forEach((s, i) => {
+    const q = perSceneQueries[i];
+    countByScene.set(s.scene, q?.data ? q.data.skus.length : null);
+  });
 
   return (
     <IOSDevice>
@@ -77,6 +94,7 @@ function PricesHomePage() {
                 const enabledSearch = ENABLED_SCENES[s.name];
                 const emoji = emojiForScene(s.name);
                 if (enabledSearch) {
+                  const count = countByScene.get(s.scene);
                   return (
                     <Link
                       key={key}
@@ -87,7 +105,11 @@ function PricesHomePage() {
                       <div className="text-3xl">{emoji}</div>
                       <div className="mt-3 text-base font-medium text-foreground">{s.name}</div>
                       <div className="mt-0.5 text-xs text-muted-foreground">
-                        <span className="num font-semibold text-brand">{skuCount || 73}</span> 个商品
+                        {count === null || count === undefined ? (
+                          <span className="text-muted-foreground/70">加载中…</span>
+                        ) : (
+                          <><span className="num font-semibold text-brand">{count}</span> 个商品</>
+                        )}
                       </div>
                       <div className="mt-2 text-[11px] text-brand">进入 →</div>
                     </Link>

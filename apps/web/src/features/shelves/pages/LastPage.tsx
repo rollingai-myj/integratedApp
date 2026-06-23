@@ -17,6 +17,7 @@ import { emojiForScene, fmtDate } from '../data';
 import { SkuThumb } from '../components/SkuThumb';
 import { SkuDetailDialog, type SkuDetailLike } from '../components/SkuDetailDialog';
 import { VirtualShelfRenderer } from '../virtual-shelf/VirtualShelfRenderer';
+import { unwrapSkuLct } from '../virtual-shelf/parseDifyOutput';
 
 interface SnapshotShape {
   at?: string;
@@ -28,10 +29,25 @@ interface SnapshotShape {
     kind: 'add' | 'remove';
   }>;
   photos?: Array<{ url: string }>;
+  /**
+   * 诊断 snapshot 同时兼容新/旧 schema:
+   *   新:paragraphCustomer = string[];paragraphStatus = StatusItem[];summary;paragraphSeason
+   *   旧:paragraphCustomer / paragraphCompetition / paragraphStatus 都是单段 string
+   * apply 时直接把当时的 diagnosis 整体序列化进 lastSnapshot,所以历史快照可能仍是旧 shape。
+   * LastPage 在渲染时分别 narrow,任何一种都不该崩。
+   */
   diagnosis?: {
-    paragraphCustomer?: string;
+    summary?: string;
+    paragraphSeason?: string;
+    paragraphCustomer?: string[] | string;
     paragraphCompetition?: string;
-    paragraphStatus?: string;
+    paragraphStatus?: string | Array<{
+      midCategory?: string;
+      salesPct?: number;
+      dailyAvgVolume?: number;
+      headline?: string;
+      description?: string;
+    }>;
   } | null;
 }
 
@@ -43,11 +59,12 @@ export function LastPage() {
   const rtQ = useQuery({
     queryKey: ['scenes', scene, 'runtime'],
     queryFn: () => scenesApi.runtime(scene),
-    // Dify virtual-shelf 工作流 5~10 分钟才完成；FlowPage 异步 IIFE 完成时
-    // 跨页 invalidate 在某些时序下打不到 LastPage，自己轮询最稳。
+    // Dify virtual-shelf 工作流 5~10 分钟才完成;FlowPage 异步完成时跨页 invalidate
+    // 在某些时序下打不到 LastPage,自己轮询最稳。轮询间隔 2 秒 —— 用户已经等 5-10 分钟了,
+    // Dify 一返回就要立刻见到结果,而不是再忍 5 秒空窗。
     refetchInterval: (q) => {
       const status = (q.state.data as { virtualStatus?: string } | undefined)?.virtualStatus;
-      return status === 'processing' ? 5_000 : false;
+      return status === 'processing' ? 2_000 : false;
     },
   });
   const adjQ = useQuery({ queryKey: ['scenes', scene, 'adjustments'], queryFn: () => scenesApi.listAdjustments(scene, 1) });
@@ -76,13 +93,9 @@ export function LastPage() {
   const shelfWidths = (() => {
     const raw = virtualOutputs;
     if (!raw) return [120];
-    let groups: Array<{ skus?: Array<{ shelf_id: number; end_x: number }> }> = [];
-    const sku_lct = raw.sku_lct;
-    try {
-      groups = typeof sku_lct === 'string' ? JSON.parse(sku_lct) : (sku_lct as typeof groups);
-    } catch { return [120]; }
+    const groups = unwrapSkuLct(raw.sku_lct);
     const maxByShelf = new Map<number, number>();
-    for (const g of groups ?? []) {
+    for (const g of groups) {
       for (const s of g.skus ?? []) {
         const cur = maxByShelf.get(s.shelf_id) ?? 0;
         if (s.end_x > cur) maxByShelf.set(s.shelf_id, s.end_x);
@@ -159,23 +172,89 @@ export function LastPage() {
           </div>
         )}
 
-        {diagnosis && (
-          <div>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: TOKENS.inkMuted, letterSpacing: 1, margin: '2px 2px 8px' }}>当时的诊断结论</div>
-            <Card pad={0} style={{ overflow: 'hidden' }}>
-              {[
-                { key: 'paragraphCustomer' as const, label: '客群分析' },
-                { key: 'paragraphCompetition' as const, label: '竞争分析' },
-                { key: 'paragraphStatus' as const, label: '货架现状' },
-              ].map((s, i) => diagnosis[s.key] && (
-                <div key={s.key} style={{ padding: '12px 14px', borderTop: i > 0 ? `1px solid ${TOKENS.lineSoft}` : 'none' }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: TOKENS.red, marginBottom: 4 }}>{s.label}</div>
-                  <div style={{ fontSize: 12.5, color: TOKENS.ink, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{diagnosis[s.key]}</div>
-                </div>
-              ))}
-            </Card>
-          </div>
-        )}
+        {diagnosis && (() => {
+          // 把可能的旧 string 字段归一化为统一渲染数据
+          const customers: string[] = Array.isArray(diagnosis.paragraphCustomer)
+            ? diagnosis.paragraphCustomer
+            : typeof diagnosis.paragraphCustomer === 'string'
+              ? diagnosis.paragraphCustomer.split(/[、,，;；\n]+/).map((s) => s.trim()).filter(Boolean)
+              : [];
+          const statusItems = Array.isArray(diagnosis.paragraphStatus) ? diagnosis.paragraphStatus : [];
+          const legacyStatusText = typeof diagnosis.paragraphStatus === 'string' ? diagnosis.paragraphStatus : '';
+          const legacyCompetition = typeof diagnosis.paragraphCompetition === 'string' ? diagnosis.paragraphCompetition : '';
+          const hasAny =
+            diagnosis.summary || diagnosis.paragraphSeason ||
+            customers.length > 0 || statusItems.length > 0 ||
+            legacyStatusText || legacyCompetition;
+          if (!hasAny) return null;
+          return (
+            <div>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: TOKENS.inkMuted, letterSpacing: 1, margin: '2px 2px 8px' }}>当时的诊断结论</div>
+              <Card pad={14}>
+                {diagnosis.summary && (
+                  <div style={{ fontSize: 14.5, fontWeight: 800, color: TOKENS.ink, lineHeight: 1.55 }}>
+                    {diagnosis.summary}
+                  </div>
+                )}
+                {diagnosis.paragraphSeason && (
+                  <div style={{
+                    fontSize: 12.5, color: TOKENS.inkSoft, lineHeight: 1.7,
+                    marginTop: diagnosis.summary ? 6 : 0,
+                  }}>
+                    {diagnosis.paragraphSeason}
+                  </div>
+                )}
+                {customers.length > 0 && (
+                  <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {customers.map((c, i) => (
+                      <span key={`${i}-${c}`} style={{
+                        display: 'inline-flex', alignItems: 'center',
+                        padding: '4px 10px', borderRadius: 14,
+                        background: '#f1ece4', color: TOKENS.inkSoft,
+                        fontSize: 12, fontWeight: 700, lineHeight: 1.3,
+                      }}>{c}</span>
+                    ))}
+                  </div>
+                )}
+                {statusItems.length > 0 && (
+                  <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {statusItems.map((item, i) => (
+                      <div key={`${i}-${item.midCategory ?? ''}`} style={{
+                        borderTop: `1px solid ${TOKENS.lineSoft}`, paddingTop: 8,
+                      }}>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: TOKENS.ink }}>
+                          {item.midCategory ?? ''}{item.midCategory && item.headline ? ' · ' : ''}{item.headline ?? ''}
+                        </div>
+                        {item.description && (
+                          <div style={{ fontSize: 12.5, color: TOKENS.inkSoft, lineHeight: 1.7, marginTop: 4 }}>
+                            {item.description}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* 兼容旧 schema:paragraphCompetition/paragraphStatus 是单段 string 时直接当文本展示 */}
+                {legacyCompetition && (
+                  <div style={{
+                    marginTop: 10, paddingTop: 8, borderTop: `1px solid ${TOKENS.lineSoft}`,
+                  }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: TOKENS.red, marginBottom: 4 }}>竞争分析</div>
+                    <div style={{ fontSize: 12.5, color: TOKENS.ink, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{legacyCompetition}</div>
+                  </div>
+                )}
+                {legacyStatusText && (
+                  <div style={{
+                    marginTop: 10, paddingTop: 8, borderTop: `1px solid ${TOKENS.lineSoft}`,
+                  }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: TOKENS.red, marginBottom: 4 }}>货架现状</div>
+                    <div style={{ fontSize: 12.5, color: TOKENS.ink, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{legacyStatusText}</div>
+                  </div>
+                )}
+              </Card>
+            </div>
+          );
+        })()}
 
         <div>
           <div style={{ fontSize: 12.5, fontWeight: 800, color: TOKENS.inkMuted, letterSpacing: 1, margin: '2px 2px 8px' }}>应用的调改清单</div>
