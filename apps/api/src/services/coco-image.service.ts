@@ -85,17 +85,25 @@ async function getCurrentImageModel(): Promise<string> {
   return res.rows[0]?.value ?? DEFAULT_IMAGE_MODEL;
 }
 
+/**
+ * 收集所有要喂给 Gemini 的参考图。
+ *
+ * 旧版只按 mode 二选一:multi_product 只挑 productImageUrls,official_bg_only
+ * 只挑 productImageUrl —— 把用户上传的 sourcePhotoUrl(门店背景照)直接丢了,
+ * 海报背景全靠 prompt 文字瞎编。
+ *
+ * 现在三种模式都把可用的图全收上来。顺序约定:**sourcePhotoUrl(底图)放前面**,
+ * 后面是商品图;Gemini 多模态输入按出现顺序参考,底图先到模型脑子里更可能被当
+ * 背景看待。mode 仍然影响 prompt 文字(由 buildPosterPrompt 处理)。
+ */
 function collectReferenceImageUrls(input: PosterGenerateInput): string[] {
-  if (input.mode === 'multi_product' && input.productImageUrls?.length) {
-    return input.productImageUrls.filter(Boolean);
+  const urls: string[] = [];
+  if (input.sourcePhotoUrl) urls.push(input.sourcePhotoUrl);
+  if (input.productImageUrl) urls.push(input.productImageUrl);
+  if (input.productImageUrls?.length) {
+    urls.push(...input.productImageUrls.filter(Boolean));
   }
-  if (input.mode === 'official_bg_only' && input.productImageUrl) {
-    return [input.productImageUrl];
-  }
-  if (input.mode === 'photo_compose' && input.sourcePhotoUrl) {
-    return [input.sourcePhotoUrl];
-  }
-  return [];
+  return urls;
 }
 
 interface InlinePart {
