@@ -242,7 +242,15 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
           // 直接消失（status=processing 的占位被服务端 active 集合替换为空）。
           const r = await processPosterJob({ data: { jobId: id } });
           if (r.status) {
-            setJobs(prev => prev.map(j => (j.id === id ? { ...j, status: r.status! } : j)));
+            // 必须同时带 posterImageUrl/error 进本地 state ——
+            // refresh() 只回 active 集合,done/error 不会再被刷新带回,
+            // 这里不就地拼上的话用户永远看不到结果图 / 错误原因。
+            setJobs(prev => prev.map(j => (j.id === id ? {
+              ...j,
+              status: r.status!,
+              result_image_url: r.posterImageUrl ?? j.result_image_url,
+              error: r.errorMessage ?? j.error,
+            } : j)));
           }
         } catch (e) {
           console.warn("[jobs] process failed", id, e);

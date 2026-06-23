@@ -13,7 +13,7 @@
  *   - 素材库 CRUD + 跨店隔离（admin 切店看不到 ops 店素材）
  *   - 销量追踪视图至少能查（不报错；空库返回 []）
  *
- * 注：worker claim/process 路径会调 openRouter（外网 AI），本测试用 SQL 直接把
+ * 注：worker claim/process 路径会调 Corelays gpt-image-2（外网 AI），本测试用 SQL 直接把
  * generation 状态推到 succeeded，绕开 AI 调用——重点是 adopt/download/assets 业务规则。
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

@@ -66,7 +66,7 @@ apps/api/src/
 ├── services/                 外部服务接入点（M1+ 实现）
 │   ├── feishu.service.ts
 │   ├── dify.service.ts
-│   ├── openrouter.service.ts
+│   ├── coco-image.service.ts
 │   └── oss.service.ts
 └── types/
     ├── api.ts                通用 API 类型
@@ -132,7 +132,7 @@ npm run migrate
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | M1 飞书登录 |
 | `OSS_*` | M2 / M4 文件上传 |
 | `DIFY_*` | M2 / M3 AI 工作流 |
-| `OPENROUTER_API_KEY` | M4 海报生成 |
+| `COCO_API_KEY` / `COCO_BASE_URL` | M4 海报生成 (Corelays gpt-image-2) |
 | `DETECT_SERVICE_URL` | M2 商品检测 |
 
 ## 调试技巧

@@ -65,8 +65,12 @@ const envSchema = z.object({
   DIFY_KEY_QUESTIONS: z.string().optional().default(''),
   DIFY_KEY_VIRTUAL_SHELF: z.string().optional().default(''),
 
-  // OpenRouter（M4 用）
-  OPENROUTER_API_KEY: z.string().optional().default(''),
+  // Corelays Gemini 原生入口(海报生图,走 generateContent)
+  COCO_API_KEY: z.string().optional().default(''),
+  COCO_BASE_URL: z
+    .string()
+    .optional()
+    .default('https://api.corelays.com/proxy/gemini/v1beta'),
 
   // Detect Service：商品识别 GPU 服务。空 = 走 detect.routes 的 mock fixture
   DETECT_SERVICE_URL: z.string().optional().default(''),

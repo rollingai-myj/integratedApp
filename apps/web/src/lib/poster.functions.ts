@@ -90,7 +90,7 @@ export async function generatePoster(
     throw new Error('建任务后未返回 generation id');
   }
 
-  // 2) 精确认领并同步执行（claim 路由内部直接调 openRouter）
+  // 2) 精确认领并同步执行（claim 路由内部直接调 Corelays gpt-image-2）
   const claim = await jsonFetch<{ generation: PosterGeneration } | undefined>(
     '/posters/generations:claim',
     { method: 'POST', body: JSON.stringify({ generationId }) },
