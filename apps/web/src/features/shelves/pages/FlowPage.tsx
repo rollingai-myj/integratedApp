@@ -1259,11 +1259,21 @@ function ReviewDeck({
   const meta = KIND_META[kind];
   const [skipAsk, setSkipAsk] = useState(false);
   const storeSku = storeSkuByCode.get(s.skuCode);
-  // 标杆店(参考店)指标 —— 卡片三个数据 + 上架类型 chip 都用这套,详见对应 props 注释
+  // 三个指标 tile 的来源按 kind 分:
+  //   remove (停止进货)  → 本店快照(SKU 本就在本店,自己的数据就是判断依据)
+  //   push   (上架)      → 参考店(本店还没这 SKU,只能看标杆店)
+  // 同步影响下方 "* 参考店数据 / * 本店数据" 标注 + tags chip 的 "(参考店)" 后缀。
   const benchmark = benchmarkByCode.get(s.skuCode);
-  const benchmarkAmount = benchmark ? Number(benchmark.sales30d) : null;
-  const benchmarkQty = benchmark ? Number(benchmark.salesVolume30d) : null;
-  const benchmarkChange = benchmark ? Number(benchmark.psdChange) : null;
+  const useStoreMetrics = kind === 'remove';
+  const metricAmount = useStoreMetrics
+    ? (storeSku?.salesRealamt30d ?? null)
+    : (benchmark ? Number(benchmark.sales30d) : null);
+  const metricQty = useStoreMetrics
+    ? (storeSku?.salesQty30d ?? null)
+    : (benchmark ? Number(benchmark.salesVolume30d) : null);
+  const metricChange = useStoreMetrics
+    ? (storeSku?.psdHb30d ?? null)
+    : (benchmark ? Number(benchmark.psdChange) : null);
   // 规格优先用 Dify 选品输出的 s.spec;若该字段缺失/空(常见),回退到本店 storeSku.spec(数据库 canonical);
   // 若名字里已经含规格(如 AI 自己拼了),避免重复拼接。
   const rawSpec = (s.spec || storeSku?.spec || '').trim();
@@ -1316,7 +1326,6 @@ function ReviewDeck({
               <span style={{ marginLeft: 'auto', maxWidth: '60%' }}>
                 <Chip tone={kind === 'remove' ? 'red' : 'green'}>
                   {s.tags.join(' · ')}
-                  <span style={{ fontSize: 9, fontWeight: 600, opacity: 0.78, marginLeft: 3 }}>(参考店)</span>
                 </Chip>
               </span>
             )}
@@ -1370,19 +1379,20 @@ function ReviewDeck({
               <div style={{
                 display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8,
               }}>
-                <MetricTile label="30日销售额" value={fmtCnyShort(benchmarkAmount)} />
-                <MetricTile label="30日销量"   value={fmtQtyShort(benchmarkQty)} />
+                <MetricTile label="30日销售额" value={fmtCnyShort(metricAmount)} />
+                <MetricTile label="30日销量"   value={fmtQtyShort(metricQty)} />
                 <MetricTile
                   label="30日销量环比"
-                  value={fmtChange(benchmarkChange)}
-                  tone={changeTone(benchmarkChange)}
+                  value={fmtChange(metricChange)}
+                  tone={changeTone(metricChange)}
                 />
               </div>
               <div style={{
                 marginTop: 4, fontSize: 10, color: TOKENS.inkMuted, fontWeight: 600,
                 textAlign: 'right', letterSpacing: 0.2,
               }}>
-                * 参考店数据
+                {/* 新品尝试 = 本店和参考店都没历史数据,标注直接换成 "新品尝试" */}
+                * {s.tags.includes('新品尝试') ? '新品尝试' : useStoreMetrics ? '本店数据' : '参考店数据'}
               </div>
             </div>
           </div>

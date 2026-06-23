@@ -1048,6 +1048,24 @@ function normalizeStrategy(item: Record<string, unknown>): StrategyResult {
   };
 }
 
+/**
+ * 用 hq_products 给 Dify selection 输出里 spec 为空的 SKU 兜底填规格。
+ * Dify selection 工作流当前 spec 几乎总回 ""(产品名里也常没拼),前端在"全新上架"(本店 + 参考店都没快照)的品上拿不到任何 spec 兜底,导致卡片只展示纯名称。
+ */
+async function enrichStrategySpecs(items: StrategyItem[]): Promise<void> {
+  const needCodes = Array.from(new Set(items.filter((i) => !i.spec).map((i) => i.skuCode)));
+  if (needCodes.length === 0) return;
+  const res = await query<{ sku_code: string; spec: string | null }>(
+    `SELECT sku_code, spec FROM hq_products
+      WHERE sku_code = ANY($1::text[]) AND deleted_at IS NULL`,
+    [needCodes],
+  );
+  const specByCode = new Map(res.rows.map((r) => [r.sku_code, r.spec ?? '']));
+  for (const it of items) {
+    if (!it.spec) it.spec = specByCode.get(it.skuCode) ?? '';
+  }
+}
+
 function extractStrategy(outputs: Record<string, unknown>): StrategyResult | null {
   for (const key of ['Selection', 'ShelfAiResult', 'SelectionResult', 'result', 'text', 'output']) {
     const list = coerceStrategyList(outputs[key]);
@@ -1191,6 +1209,9 @@ export async function ensureStrategy(storeId: string, scene: number, difyUser: s
       return;
     }
     const parsed = extractStrategy(outputs);
+    // Dify selection 输出的 spec 字段经常空 — 但 hq_products 里 canonical spec 都有。
+    // 后端这里一次性兜底,避免 FE 在 storeSku/benchmark 都没命中的"全新上架"品上拼不出规格。
+    if (parsed?.items.length) await enrichStrategySpecs(parsed.items);
     await setAiStatus(storeId, scene, 'strategy', 'completed', { raw: outputs, parsed });
     logger.info({ storeId, scene, itemCount: parsed?.items.length ?? 0 }, 'ensureStrategy: 已完成');
   } catch (err) {
