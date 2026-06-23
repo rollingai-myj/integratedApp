@@ -4,29 +4,31 @@
 
 ## 当前 dump
 
-时间戳:**2026-06-18T063209Z**
+时间戳:**2026-06-23T042758Z**
 PostgreSQL 版本:**16.14** (Alpine, aarch64)
 迁移版本:**V001 → V031**(全部已应用)
 源容器:`myj-postgres` (database: `myj_dev`, user: `myj`)
 
+> 本次 dump 前已清空所有店的:调改状态(`store_scene_state` / `store_scene_adjustments` / `store_scene_remakes` / `store_scene_virtual_history`、级联清掉 `store_assortment_changes`)、货架登记(`store_scene_shelves`)、问答(`store_survey_questions` / `store_survey_answers`)。其他业务数据保持原状。
+
 | 文件 | 大小 | 用途 |
 |---|---|---|
-| `schema-2026-06-18T063209Z.sql` | 86K | 只导出结构(表/视图/函数/枚举/索引),不含数据;复盘 schema 用 |
-| `full-2026-06-18T063209Z.sql` | 3.0M | 完整 SQL 形式(结构 + 数据),可读;`psql -f` 直接灌新库 |
-| `full-2026-06-18T063209Z.dump` | 741K | 压缩二进制(custom format);`pg_restore` 恢复,体积小 |
+| `schema-2026-06-23T042758Z.sql` | 86K | 只导出结构(表/视图/函数/枚举/索引),不含数据;复盘 schema 用 |
+| `full-2026-06-23T042758Z.sql` | 3.0M | 完整 SQL 形式(结构 + 数据),可读;`psql -f` 直接灌新库 |
+| `full-2026-06-23T042758Z.dump` | 735K | 压缩二进制(custom format);`pg_restore` 恢复,体积小 |
 
 ## 恢复命令
 
 **用 plain SQL 文件灌新库**(可直接看到每条 SQL):
 
 ```bash
-docker exec -i myj-postgres psql -U myj -d myj_dev_restore < dumps/full-2026-06-18T063209Z.sql
+docker exec -i myj-postgres psql -U myj -d myj_dev_restore < dumps/full-2026-06-23T042758Z.sql
 ```
 
 **用压缩 dump 恢复**(更快,但需要 `pg_restore`):
 
 ```bash
-docker exec -i myj-postgres pg_restore -U myj -d myj_dev_restore --no-owner --no-privileges < dumps/full-2026-06-18T063209Z.dump
+docker exec -i myj-postgres pg_restore -U myj -d myj_dev_restore --no-owner --no-privileges < dumps/full-2026-06-23T042758Z.dump
 ```
 
 ## 重新 dump 当前库

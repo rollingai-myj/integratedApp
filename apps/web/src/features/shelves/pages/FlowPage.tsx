@@ -1331,7 +1331,7 @@ function ReviewDeck({
             <div style={{ display: 'flex', gap: 13, alignItems: 'center', flexShrink: 0 }}>
               <SkuThumb skuCode={s.skuCode} size={86} />
               <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: TOKENS.ink, lineHeight: 1.3 }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: TOKENS.ink, lineHeight: 1.3 }}>
                   {displayName}
                 </div>
                 <div style={{
@@ -1344,19 +1344,19 @@ function ReviewDeck({
               </div>
             </div>
 
-            {/* 卡片 1:理由(占大部分空间);"理由"标签 + 正文统一放大到 17.5 */}
+            {/* 卡片 1:理由(占大部分空间);"理由"标签 + 正文 16,比商品名小一号 */}
             <div style={{
               flex: 1, minHeight: 120,
               background: TOKENS.bg, borderRadius: 14, padding: '14px 16px',
               display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto',
             }}>
               <div style={{
-                fontSize: 17.5, fontWeight: 800, color: meta.color,
+                fontSize: 16, fontWeight: 800, color: meta.color,
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
-                {I.Sparkles({ size: 19, color: meta.color })} 理由
+                {I.Sparkles({ size: 18, color: meta.color })} 理由
               </div>
-              <div style={{ fontSize: 17.5, fontWeight: 600, color: TOKENS.ink, lineHeight: 1.7 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: TOKENS.ink, lineHeight: 1.7 }}>
                 {s.reason || '（AI 未提供原因）'}
               </div>
             </div>
