@@ -7,9 +7,9 @@
  *
  * 已登记但未"聊一聊"：点拍照前先去聊一聊（仅一次）。
  */
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppBar, Card, Chip, PrimaryBtn, ListRow, ScreenWrap } from '../ui/primitives';
 import { TOKENS } from '../ui/tokens';
 import { I } from '../ui/icons';
@@ -69,6 +69,31 @@ export function WorkspacePage() {
     if (!ov?.qaDone) goQA();
     else goFlow();
   };
+
+  // 重新开始调改:清空 in-progress 状态(photos/draft/各 AI 任务),但保留 lastSnapshot /
+  // envCrowd / envCompetitor 这类历史/问卷数据,然后跳到 flow 重新拍照。
+  const qc = useQueryClient();
+  const [restartConfirm, setRestartConfirm] = useState(false);
+  const restartMut = useMutation({
+    mutationFn: () => scenesApi.saveRuntime(scene, {
+      status: 'empty',
+      photos: [],
+      detectionData: {},
+      virtualStatus: 'idle',
+      virtualRawOutputs: null,
+      virtualContext: null,
+      diagnoseStatus: 'idle',
+      diagnoseRawOutputs: null,
+      strategyStatus: 'idle',
+      strategyRawOutputs: null,
+      draft: null,
+    }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['scenes', scene, 'runtime'] });
+      void qc.invalidateQueries({ queryKey: ['scenes', 'overview'] });
+      goFlow();
+    },
+  });
 
   const lastSnap = rt?.lastSnapshot as null | {
     at: string; summary: string;
@@ -135,7 +160,68 @@ export function WorkspacePage() {
               </div>
             </div>
             <PrimaryBtn onClick={goFlow} style={{ height: 48 }}>继续调改</PrimaryBtn>
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
+              <button
+                onClick={() => setRestartConfirm(true)}
+                disabled={restartMut.isPending}
+                style={{
+                  appearance: 'none', border: 0, background: 'transparent', fontFamily: 'inherit',
+                  cursor: restartMut.isPending ? 'not-allowed' : 'pointer',
+                  fontSize: 12, color: TOKENS.inkMuted, textDecoration: 'underline',
+                  padding: '4px 8px',
+                }}
+              >
+                {restartMut.isPending ? '正在清空…' : '重新开始调改'}
+              </button>
+            </div>
           </Card>
+        )}
+
+        {restartConfirm && (
+          <div style={{ position: 'absolute', inset: 0, zIndex: 300 }}>
+            <div
+              onClick={() => !restartMut.isPending && setRestartConfirm(false)}
+              style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', animation: 'shv-fadein 0.2s ease' }}
+            />
+            <div style={{
+              position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+              width: 'min(86%, 320px)', background: '#fff', borderRadius: 16, padding: 18,
+              display: 'flex', flexDirection: 'column', gap: 12, boxShadow: '0 12px 36px rgba(0,0,0,0.28)',
+            }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: TOKENS.ink }}>
+                确认重新开始调改？
+              </div>
+              <div style={{ fontSize: 13, color: TOKENS.inkSoft, lineHeight: 1.55 }}>
+                当前的照片、诊断结果与方案都会清空,需要从拍照重新开始。历史调改记录不受影响。
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                <button
+                  onClick={() => setRestartConfirm(false)}
+                  disabled={restartMut.isPending}
+                  style={{
+                    flex: 1, appearance: 'none', border: `1px solid ${TOKENS.line}`,
+                    background: '#fff', color: TOKENS.ink, borderRadius: 12,
+                    padding: '10px 0', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                  }}
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => restartMut.mutate()}
+                  disabled={restartMut.isPending}
+                  style={{
+                    flex: 1, appearance: 'none', border: 0,
+                    background: TOKENS.red, color: '#fff', borderRadius: 12,
+                    padding: '10px 0', fontSize: 14, fontWeight: 700,
+                    cursor: restartMut.isPending ? 'not-allowed' : 'pointer',
+                    opacity: restartMut.isPending ? 0.6 : 1,
+                  }}
+                >
+                  {restartMut.isPending ? '正在清空…' : '确认清空'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {ov?.shelfConfigured && !ov.hasDraft && (

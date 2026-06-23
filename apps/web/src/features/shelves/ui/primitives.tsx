@@ -169,7 +169,15 @@ export function BottomBar({ children }: { children: ReactNode }) {
   );
 }
 
-export function FlowSteps({ current, steps }: { current: number; steps: string[] }) {
+export function FlowSteps({
+  current, steps, onStepClick, clickableIndices,
+}: {
+  current: number;
+  steps: string[];
+  onStepClick?: (index: number) => void;
+  /** 哪些步骤可点击;未传或不在列表里则只展示,不响应点击 */
+  clickableIndices?: number[];
+}) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -178,16 +186,50 @@ export function FlowSteps({ current, steps }: { current: number; steps: string[]
       {steps.map((label, i) => {
         const stDone = i < current;
         const stActive = i === current;
+        const clickable = !!onStepClick && (clickableIndices?.includes(i) ?? false);
         return (
-          <FlowStepFrag key={label} index={i} label={label} done={stDone} active={stActive} current={current} />
+          <FlowStepFrag
+            key={label}
+            index={i}
+            label={label}
+            done={stDone}
+            active={stActive}
+            current={current}
+            onClick={clickable ? () => onStepClick!(i) : undefined}
+          />
         );
       })}
     </div>
   );
 }
 function FlowStepFrag({
-  index, label, done, active, current,
-}: { index: number; label: string; done: boolean; active: boolean; current: number }) {
+  index, label, done, active, current, onClick,
+}: { index: number; label: string; done: boolean; active: boolean; current: number; onClick?: () => void }) {
+  const stepNode = (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
+      cursor: onClick ? 'pointer' : 'default',
+    }}>
+      <div style={{
+        width: 26, height: 26, borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: done || active ? TOKENS.red : '#fff',
+        border: done || active ? `2px solid ${TOKENS.red}` : '2px solid #e5dfd6',
+        color: '#fff', fontSize: 12.5, fontWeight: 800,
+        boxShadow: active ? `0 4px 10px ${TOKENS.red}40` : 'none',
+        transition: 'all 0.3s',
+      }}>
+        {done ? I.Check({ size: 14, color: '#fff' }) : <span style={{ color: active ? '#fff' : TOKENS.inkMuted }}>{index + 1}</span>}
+      </div>
+      <div style={{
+        fontSize: 11, fontWeight: active ? 800 : 600,
+        color: active ? TOKENS.red : done ? TOKENS.ink : TOKENS.inkMuted,
+        whiteSpace: 'nowrap',
+        textDecoration: onClick ? 'underline' : 'none',
+        textUnderlineOffset: 2,
+      }}>{label}</div>
+    </div>
+  );
   return (
     <>
       {index > 0 && (
@@ -197,24 +239,19 @@ function FlowStepFrag({
           transition: 'background 0.3s',
         }} />
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
-        <div style={{
-          width: 26, height: 26, borderRadius: '50%',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: done || active ? TOKENS.red : '#fff',
-          border: done || active ? `2px solid ${TOKENS.red}` : '2px solid #e5dfd6',
-          color: '#fff', fontSize: 12.5, fontWeight: 800,
-          boxShadow: active ? `0 4px 10px ${TOKENS.red}40` : 'none',
-          transition: 'all 0.3s',
-        }}>
-          {done ? I.Check({ size: 14, color: '#fff' }) : <span style={{ color: active ? '#fff' : TOKENS.inkMuted }}>{index + 1}</span>}
-        </div>
-        <div style={{
-          fontSize: 11, fontWeight: active ? 800 : 600,
-          color: active ? TOKENS.red : done ? TOKENS.ink : TOKENS.inkMuted,
-          whiteSpace: 'nowrap',
-        }}>{label}</div>
-      </div>
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={`返回 ${label} 步骤`}
+          style={{
+            appearance: 'none', border: 0, background: 'transparent',
+            fontFamily: 'inherit', padding: 0, cursor: 'pointer',
+          }}
+        >
+          {stepNode}
+        </button>
+      ) : stepNode}
     </>
   );
 }

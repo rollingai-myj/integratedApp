@@ -30,6 +30,28 @@ export function getSkuImageUrl(skuCode: string | undefined): string | null {
   return `${STORAGE_BASE}/product_pic/${padded}.png`;
 }
 
+/**
+ * 把 Dify 输出里的 sku_lct 解出来,统一返回 sub_category 分组数组。
+ * 兼容三种存法:① array 直接给(老格式) ② JSON-encoded string ③ {result: [...]} wrapper(Dify 新版)。
+ * 找不到时返回 [],调用方按空数组兜底,不应抛异常 —— shelfWidths 这类视觉派生只要拿不到也能给默认。
+ */
+export function unwrapSkuLct(rawSkuLct: unknown): Array<{ skus?: Array<{ shelf_id: number; end_x: number }> }> {
+  let val: unknown = rawSkuLct;
+  if (typeof val === 'string') {
+    try { val = JSON.parse(val); } catch { return []; }
+  }
+  if (Array.isArray(val)) return val as Array<{ skus?: Array<{ shelf_id: number; end_x: number }> }>;
+  if (val && typeof val === 'object') {
+    const o = val as Record<string, unknown>;
+    for (const key of ['result', 'data', 'items', 'sku_lct'] as const) {
+      if (Array.isArray(o[key])) {
+        return o[key] as Array<{ skus?: Array<{ shelf_id: number; end_x: number }> }>;
+      }
+    }
+  }
+  return [];
+}
+
 /** parseDifyOutput 用得到的 SKU 维度数据（仅 sku_code/depth/height） */
 export interface SkuDimLite {
   skuCode: string;
@@ -75,13 +97,24 @@ export function parseDifyOutput(
       const o = obj as Record<string, unknown>;
       if (Array.isArray(o.sku_lct)) return o.sku_lct;
       if (Array.isArray(o.placed)) return o.placed as unknown[];
+      // Dify 新版工作流外层多包了一层 {"result": [...]},也兼容 data/items 这种常见 wrapper
+      if (Array.isArray(o.result)) return o.result as unknown[];
+      if (Array.isArray(o.data)) return o.data as unknown[];
+      if (Array.isArray(o.items)) return o.items as unknown[];
     }
     return null;
   };
 
   const extractReasonLayer = (obj: unknown): Array<{ layer: number; reason: string }> | null => {
-    if (obj && typeof obj === 'object' && Array.isArray((obj as { reason_layer?: unknown }).reason_layer)) {
-      return (obj as { reason_layer: Array<{ layer: number; reason: string }> }).reason_layer;
+    if (!obj || typeof obj !== 'object') return null;
+    const raw = (obj as { reason_layer?: unknown }).reason_layer;
+    if (Array.isArray(raw)) return raw as Array<{ layer: number; reason: string }>;
+    // Dify outputs 里 reason_layer 与 sku_lct 同样可能是 JSON-encoded string
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed as Array<{ layer: number; reason: string }>;
+      } catch { /* ignore */ }
     }
     return null;
   };

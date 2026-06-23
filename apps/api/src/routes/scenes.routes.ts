@@ -28,7 +28,7 @@ import {
 import { ossService } from '../services/oss.service.js';
 import { writeAuditEvent } from '../services/audit.service.js';
 import {
-  ensureDiagnose, ensureStrategy, ensureVirtualShelf,
+  ensureDiagnose, ensureStrategy, ensureVirtualShelf, markAiStatusProcessing,
 } from '../services/ai-shelves.service.js';
 import { buildDifyUser } from '../lib/dify-user.js';
 import { computeBenchmarkForScene } from '../services/benchmark.service.js';
@@ -108,6 +108,12 @@ const runtimePatchSchema = z.object({
   virtualStatus: z.enum(['idle', 'processing', 'completed', 'failed']).optional(),
   virtualRawOutputs: z.unknown().optional(),
   virtualContext: z.unknown().optional(),
+  // V028: diagnose / strategy 状态也允许 FE 清(用于"重新开始调改"重置流);
+  // 正常途径仍由后端 triggerDiagnose / triggerStrategy 设置 processing/completed/failed。
+  diagnoseStatus: z.enum(['idle', 'processing', 'completed', 'failed']).optional(),
+  diagnoseRawOutputs: z.unknown().optional(),
+  strategyStatus: z.enum(['idle', 'processing', 'completed', 'failed']).optional(),
+  strategyRawOutputs: z.unknown().optional(),
   lastSnapshot: z.unknown().optional(),
   envCrowd: z.string().nullable().optional(),
   envCompetitor: z.string().nullable().optional(),
@@ -461,12 +467,15 @@ scenesRouter.post(
     await assertSceneExists(scene);
     const body = diagnoseSchema.parse(req.body);
     const storeId = req.user!.currentStoreId!;
+    // 同步把 diagnose_status 推到 'processing',返回 202 之前 DB 必然已是 processing,
+    // 前端任何后续 invalidateQueries/refetch 都不会再读到旧的 'failed'。
+    await markAiStatusProcessing(storeId, scene, 'diagnose');
     void writeAuditEvent({
       eventKind: 'scene_ai_diagnose',
       actorUserId: req.user!.id, isAiCall: true, aiWorkflow: 'align',
       targetStoreId: storeId, payload: { scene },
     }).catch(() => {});
-    // fire-and-forget — ensureDiagnose 内部自带 in-flight 去重 + status 状态机
+    // fire-and-forget — ensureDiagnose 内部自带 in-flight 去重
     void ensureDiagnose(storeId, scene, body.photoUrl, buildDifyUser(req.user!));
     res.status(202).json({ accepted: true });
   }),
@@ -478,6 +487,7 @@ scenesRouter.post(
     const scene = parseScene(req);
     await assertSceneExists(scene);
     const storeId = req.user!.currentStoreId!;
+    await markAiStatusProcessing(storeId, scene, 'strategy');
     void writeAuditEvent({
       eventKind: 'scene_ai_strategy',
       actorUserId: req.user!.id, isAiCall: true, aiWorkflow: 'selection',
@@ -494,6 +504,7 @@ scenesRouter.post(
     const scene = parseScene(req);
     await assertSceneExists(scene);
     const storeId = req.user!.currentStoreId!;
+    await markAiStatusProcessing(storeId, scene, 'virtual');
     void writeAuditEvent({
       eventKind: 'scene_virtual_generate',
       actorUserId: req.user!.id, isAiCall: true, aiWorkflow: 'virtual_shelf',

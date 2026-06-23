@@ -28,4 +28,6 @@ ENV NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/conf.d
 EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+  CMD wget --quiet --tries=1 --spider http://127.0.0.1/ || exit 1
+# 用 127.0.0.1 而不是 localhost —— 容器内 localhost 优先解 IPv6 [::1],
+# 而 nginx 默认只 listen 80(IPv4),IPv6 sock 拒连 → healthcheck 永远 unhealthy。

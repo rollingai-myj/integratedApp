@@ -271,7 +271,13 @@ export function SkuDetailDialog({
       }));
   }, [sku, curve]);
 
-  // 调价警示：以利润最高点为锚，仅在有邻点的一侧设安全边界
+  // 调价警示:以利润最高点为锚,仅在"实际有比 best 利润更低的对照点"那一侧设安全边界。
+  //
+  // 之前的 bug:bestIdx 落在 sorted 端点时(如用户场景:11 元利润高 / 10.5 元利润低,best
+  // 就在数组末尾),maxSafe 会兜底回 sorted[bestIdx].price = 11,导致用户往 11 以上调时
+  // 触发"已验证利润更低"。但 11 以上根本没有验证过的数据,不该这么断言。
+  //
+  // 修复后:某一侧没有更低利润的对照点时,该侧 safe = null,表示"无数据 → 不警告"。
   const priceWarning = useMemo(() => {
     if (!sku || !editing || Math.abs(newPrice - (sku?.currentPrice ?? 0)) < 0.01) return null;
     const periods = curve?.periods;
@@ -283,12 +289,15 @@ export function SkuDetailDialog({
         arr[i]!.monthlyGrossProfit > arr[best]!.monthlyGrossProfit ? i : best,
       0,
     );
-    const minSafe = bestIdx > 0 ? sorted[bestIdx - 1]!.price : sorted[bestIdx]!.price;
-    const maxSafe =
-      bestIdx < sorted.length - 1 ? sorted[bestIdx + 1]!.price : sorted[bestIdx]!.price;
+    const minSafe = bestIdx > 0 ? sorted[bestIdx - 1]!.price : null;
+    const maxSafe = bestIdx < sorted.length - 1 ? sorted[bestIdx + 1]!.price : null;
 
-    if (newPrice < minSafe) return `该价格已验证利润更低，建议调到${minSafe.toFixed(1)}元以上`;
-    if (newPrice > maxSafe) return `该价格已验证利润更低，建议调到${maxSafe.toFixed(1)}元以下`;
+    if (minSafe != null && newPrice < minSafe) {
+      return `该价格已验证利润更低，建议调到${minSafe.toFixed(1)}元以上`;
+    }
+    if (maxSafe != null && newPrice > maxSafe) {
+      return `该价格已验证利润更低，建议调到${maxSafe.toFixed(1)}元以下`;
+    }
     return null;
   }, [sku, editing, newPrice, curve]);
 
@@ -421,7 +430,7 @@ export function SkuDetailDialog({
         </span>
         {validation.ok && newPrice < dbWholesale && (
           <span className="ml-auto min-w-0 truncate text-right text-[11px] font-medium text-[#b91c1c]">
-            ⚠️ 低于批发价，每件亏 {fmtMoney(Math.abs(newUnit))}
+            ⚠️ 低于批发价
           </span>
         )}
       </div>

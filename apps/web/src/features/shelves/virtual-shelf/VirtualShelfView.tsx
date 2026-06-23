@@ -5,12 +5,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
 import { type VirtualShelfBlock, type VirtualShelfGroup, type VirtualShelfLayer } from "./types";
 import { getSkuImageUrl } from "./parseDifyOutput";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import html2canvas from "html2canvas";
 import ReactMarkdown from "react-markdown";
@@ -25,24 +19,29 @@ interface PromoGroup {
   promoset: string;
   leftRatio: number;
   rightRatio: number;
+  /** 该 promo group 是否包含任一本次上架的 SKU。开启"只看上架"时,
+   *  没有新品的 promo group 会跟非新品商品一样被淡化掉,避免抢戏。 */
+  hasNewListing: boolean;
 }
 
 function computePromoGroups(blocks: VirtualShelfBlock[]): PromoGroup[] {
-  const map = new Map<string, { left: number; right: number }>();
+  const map = new Map<string, { left: number; right: number; hasNewListing: boolean }>();
   for (const b of blocks) {
     if (!b.promoset) continue;
     const g = map.get(b.promoset);
     if (g) {
       if (b.startRatio < g.left) g.left = b.startRatio;
       if (b.endRatio > g.right) g.right = b.endRatio;
+      if (b.isNewListing) g.hasNewListing = true;
     } else {
-      map.set(b.promoset, { left: b.startRatio, right: b.endRatio });
+      map.set(b.promoset, { left: b.startRatio, right: b.endRatio, hasNewListing: !!b.isNewListing });
     }
   }
-  return Array.from(map.entries()).map(([promoset, { left, right }]) => ({
+  return Array.from(map.entries()).map(([promoset, { left, right, hasNewListing }]) => ({
     promoset,
     leftRatio: left,
     rightRatio: right,
+    hasNewListing,
   }));
 }
 
@@ -201,27 +200,38 @@ export const VirtualShelfView = forwardRef<VirtualShelfViewHandle, Props>(({ lay
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperOuterRef = useRef<HTMLDivElement>(null);
 
+  // 多货架时一次只展示一组,通过下方按钮组在货架间切换
+  const [activeGroupIdx, setActiveGroupIdx] = useState(0);
+  const safeActiveIdx = Math.min(activeGroupIdx, Math.max(0, layout.length - 1));
+  const activeGroup = layout[safeActiveIdx];
+
   useEffect(() => { ensureFridgeStyles(); }, []);
 
-  // Trigger pulse highlight on layer buttons for 10s whenever a new layout arrives
+  // 新 layout 进来时重置选中到第一架,避免旧 index 落到不存在的位置
+  useEffect(() => {
+    setActiveGroupIdx(0);
+  }, [layout]);
+
+  // Trigger pulse highlight on layer buttons for 10s whenever a new layout arrives or shelf switches
   useEffect(() => {
     if (!layout || layout.length === 0) return;
     setPulseLayerButtons(true);
     const t = setTimeout(() => setPulseLayerButtons(false), 10000);
     return () => clearTimeout(t);
-  }, [layout]);
+  }, [layout, safeActiveIdx]);
 
   const BASE_PX_PER_CM = 6;
   const pxPerCm = BASE_PX_PER_CM;
 
-  const allLayerHeights = useMemo(() => {
-    return layout.map((group: VirtualShelfGroup) =>
-      group.layers.map((layer: VirtualShelfLayer) => {
-        const maxH = layer.blocks.reduce((max: number, b: VirtualShelfBlock) => Math.max(max, b.heightCm), 10);
-        return Math.min(Math.max(maxH * pxPerCm, 40), 120);
-      })
-    );
-  }, [layout]);
+  /** 只计算 active group 的逐层高度;旧版按全 layout 取 max 让所有架同高,
+   * 多架切换体验下每架按自己的内容自适应高度更直观。 */
+  const activeLayerHeights = useMemo(() => {
+    if (!activeGroup) return [];
+    return activeGroup.layers.map((layer: VirtualShelfLayer) => {
+      const maxH = layer.blocks.reduce((max: number, b: VirtualShelfBlock) => Math.max(max, b.heightCm), 10);
+      return Math.min(Math.max(maxH * pxPerCm, 40), 120);
+    });
+  }, [activeGroup]);
 
   const WIRE_SHELF_H = 14;
   const HEADER_H = 50;
@@ -230,16 +240,15 @@ export const VirtualShelfView = forwardRef<VirtualShelfViewHandle, Props>(({ lay
   const GLASS_PAD = 26;
 
   const totalHeight = useMemo(() => {
-    const maxLayers = allLayerHeights.reduce((max: number, lh: number[]) => {
-      const sum = lh.reduce((s: number, h: number) => s + h + WIRE_SHELF_H, 0);
-      return Math.max(max, sum);
-    }, 200);
-    return HEADER_H + maxLayers + GLASS_PAD + DOOR_PAD + FOOTER_H;
-  }, [allLayerHeights]);
+    const sum = activeLayerHeights.reduce((s: number, h: number) => s + h + WIRE_SHELF_H, 0);
+    return HEADER_H + Math.max(sum, 200) + GLASS_PAD + DOOR_PAD + FOOTER_H;
+  }, [activeLayerHeights]);
 
   const contentWidth = useMemo(() => {
-    return Math.max(shelfWidthCm * BASE_PX_PER_CM, 500);
-  }, [shelfWidthCm]);
+    // 优先用 active group 自带的真实宽度,fallback 到 prop(老调用方仍传第一个)
+    const w = activeGroup?.shelfWidthCm ?? shelfWidthCm;
+    return Math.max(w * BASE_PX_PER_CM, 500);
+  }, [activeGroup, shelfWidthCm]);
 
   const aspectRatio = contentWidth / totalHeight;
 
@@ -497,32 +506,53 @@ export const VirtualShelfView = forwardRef<VirtualShelfViewHandle, Props>(({ lay
             transition: dragging ? "none" : "transform 0.15s ease-out",
           }}
         >
-          <TooltipProvider delayDuration={100}>
-            <div className="vf-fridge-unit" style={{ width: contentWidth, height: totalHeight }}>
-              <div className="vf-header">
-                <div className="vf-header-panel" />
-              </div>
-              <div className="vf-doors">
-                {layout.map((group, gi) => (
-                  <FridgeDoorRender
-                    key={group.groupIndex}
-                    group={group}
-                    layerHeights={allLayerHeights[gi] || []}
-                    pxPerCm={pxPerCm}
-                    containerWidth={contentWidth}
-                    hoveredBlock={hoveredBlock}
-                    onHoverBlock={setHoveredBlock}
-                    wireShelfH={WIRE_SHELF_H}
-                    highlightNewOnly={highlightNewOnly}
-                    pulseLayerButtons={pulseLayerButtons}
-                  />
-                ))}
-              </div>
-              <div className="vf-footer" />
+          <div className="vf-fridge-unit" style={{ width: contentWidth, height: totalHeight }}>
+            <div className="vf-header">
+              <div className="vf-header-panel" />
             </div>
-          </TooltipProvider>
+            <div className="vf-doors">
+              {activeGroup && (
+                <FridgeDoorRender
+                  key={activeGroup.groupIndex}
+                  group={activeGroup}
+                  layerHeights={activeLayerHeights}
+                  pxPerCm={pxPerCm}
+                  containerWidth={contentWidth}
+                  hoveredBlock={hoveredBlock}
+                  onHoverBlock={setHoveredBlock}
+                  wireShelfH={WIRE_SHELF_H}
+                  highlightNewOnly={highlightNewOnly}
+                  pulseLayerButtons={pulseLayerButtons}
+                />
+              )}
+            </div>
+            <div className="vf-footer" />
+          </div>
         </div>
       </div>
+      {/* 多货架切换按钮组(只在 layout 有 >1 组时显示),紧贴陈列图下方 */}
+      {layout.length > 1 && (
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+          {layout.map((g, i) => {
+            const active = i === safeActiveIdx;
+            return (
+              <button
+                key={g.groupIndex}
+                type="button"
+                onClick={() => setActiveGroupIdx(i)}
+                aria-pressed={active}
+                className={`px-3.5 py-1.5 rounded-lg text-[13px] font-semibold transition-colors ${
+                  active
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'bg-card border border-border text-foreground hover:bg-muted'
+                }`}
+              >
+                货架 {i + 1}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {/* Zoom toolbar — placed below shelf so controls don't cover it */}
       <div className="mt-2 flex items-center justify-between gap-2">
         <div className={`text-[11px] text-muted-foreground flex items-center gap-1 ${pulseLayerButtons ? 'text-primary font-medium' : ''}`}>
@@ -662,26 +692,8 @@ const FridgeDoorRender = ({
             const mappedBlocks = blocks;
             return (
               <div key={layer.layerIndex} className="vf-wire-shelf" style={{ height: layerH + wireShelfH }}>
-                {/* Promo group highlight overlays */}
-                {computePromoGroups(mappedBlocks).map((g) => (
-                  <div
-                    key={`promo-hl-${layer.layerIndex}-${g.promoset}`}
-                    className="vf-promo-highlight"
-                    style={{
-                      position: "absolute",
-                      left: `${g.leftRatio * 100}%`,
-                      width: `${(g.rightRatio - g.leftRatio) * 100}%`,
-                      top: 0,
-                      bottom: 8,
-                      zIndex: 5,
-                      border: "1px solid rgba(24, 144, 255, 0.35)",
-                      borderRadius: 4,
-                      boxShadow: "0 0 12px 3px rgba(24, 144, 255, 0.35)",
-                      background: "rgba(24, 144, 255, 0.04)",
-                      pointerEvents: "none",
-                    }}
-                  />
-                ))}
+                {/* 不画 promo group 的蓝色高亮框 —— 黄色新品 ring 已经够凸显;
+                    蓝色框反而和黄色环抢戏,被产品同学叫停。promo 活动标 tag 单独保留。 */}
                 {/* Product blocks area - absolutely positioned, z-index 1, behind wire shelf rails */}
                 <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}>
                   {mappedBlocks.map((block: VirtualShelfBlock) => (
@@ -692,7 +704,10 @@ const FridgeDoorRender = ({
                       pxPerCm={pxPerCm}
                       containerWidth={containerWidth}
                       isHovered={hoveredBlock === block.id}
-                      isDimmed={hoveredBlock !== null && hoveredBlock !== block.id}
+                      // 不再因为某个 block 被 hover/clicked 就把其他全部变灰 —— 用户反馈
+                      // 点击单品时整图灰掉很扰人;现在仅当"只看上架"模式时,非新品自然灰
+                      // (在 ShelfBlockRender 内部基于 highlightNewOnly 处理),与 hover 无关。
+                      isDimmed={false}
                       onHover={onHoverBlock}
                       highlightNewOnly={highlightNewOnly}
                     />
@@ -701,6 +716,7 @@ const FridgeDoorRender = ({
                 {/* Promo activity tags — rendered above wire shelf beam */}
                 {computePromoGroups(mappedBlocks).map((g) => {
                   const centerPct = ((g.leftRatio + g.rightRatio) / 2) * 100;
+                  const dim = highlightNewOnly && !g.hasNewListing;
                   return (
                     <img
                       key={`promo-${layer.layerIndex}-${g.promoset}`}
@@ -716,6 +732,9 @@ const FridgeDoorRender = ({
                         width: "auto",
                         zIndex: 15,
                         pointerEvents: "none",
+                        opacity: dim ? 0.25 : 1,
+                        filter: dim ? "grayscale(0.4)" : undefined,
+                        transition: "opacity 0.2s ease, filter 0.2s ease",
                       }}
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = "none";
@@ -792,26 +811,15 @@ const ShelfBlockRender = ({
     );
   };
 
-  const [clicked, setClicked] = useState(false);
-  const open = isHovered || clicked;
-
-  useEffect(() => {
-    if (!clicked) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(`[data-sku-block-id="${block.id}"]`)) {
-        setClicked(false);
-      }
-    };
-    document.addEventListener("click", handler);
-    return () => document.removeEventListener("click", handler);
-  }, [clicked, block.id]);
-
+  // Radix Tooltip 在触屏上 hover 事件极不稳定 —— 用户一抬手 pointerleave 就把 tooltip
+  // 关掉,出现"标签只出现一瞬就消失"的闪烁。改用 Popover(本就是点击式),开关由我们
+  // 用受控 open 自己控,触屏抬手不会触发关闭。Hover 在桌面仍有视觉 ring(走父级 hoveredBlock)。
+  const [open, setOpen] = useState(false);
   const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
 
   return (
-    <Tooltip open={open} onOpenChange={(o) => { if (!o) setClicked(false); }}>
-      <TooltipTrigger asChild>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
         <div
           data-sku-block-id={block.id}
           draggable={false}
@@ -819,7 +827,7 @@ const ShelfBlockRender = ({
             'absolute transition-all',
             isDimmed ? 'opacity-30' : '',
             (highlightNewOnly && !block.isNewListing) ? 'opacity-25 grayscale-[0.4]' : '',
-            (isHovered || clicked) ? 'z-10 ring-1 ring-foreground/50' : '',
+            (isHovered || open) ? 'z-10 ring-1 ring-foreground/50' : '',
             block.isNewListing ? 'ring-2 ring-amber-400/70' : '',
             (block.isNewListing && !highlightNewOnly) ? 'shadow-[0_0_12px_3px_rgba(251,191,36,0.45)]' : '',
             (block.isNewListing && highlightNewOnly) ? 'z-10' : '',
@@ -845,10 +853,13 @@ const ShelfBlockRender = ({
             if (!start) return;
             const dx = e.clientX - start.x;
             const dy = e.clientY - start.y;
+            // 大移动 = 拖货架,不当作 tap;Popover 的 PopoverTrigger 默认会响应原生 click,
+            // 这里手动 stopPropagation 后用受控 open,可避免与 trigger 自身 click 重复触发。
             if (Math.hypot(dx, dy) < 5) {
-              setClicked(c => !c);
+              setOpen(o => !o);
             }
           }}
+          onClick={(e) => e.preventDefault()}
           onDragStart={(e) => e.preventDefault()}
         >
           {block.isNewListing && (
@@ -863,15 +874,15 @@ const ShelfBlockRender = ({
             {renderImages()}
           </div>
         </div>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-[240px] text-white" onPointerDownOutside={() => setClicked(false)}>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="center" className="max-w-[240px] w-auto p-3">
         {block.isNewListing && (
-          <p className="text-xs font-semibold mb-1">本次上架</p>
+          <p className="text-xs font-semibold mb-1 text-amber-600">本次上架</p>
         )}
         <p className="text-sm font-semibold leading-tight">{block.skuName}</p>
-        <p className="text-xs mt-0.5">编码:{block.skuCode || "—"}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">编码:{block.skuCode || "—"}</p>
         {block.subcategory && (
-          <p className="text-xs">{block.subcategory}</p>
+          <p className="text-xs text-muted-foreground">{block.subcategory}</p>
         )}
         {block.sales30d && (
           <div className="flex gap-2 mt-1 text-xs">
@@ -879,7 +890,7 @@ const ShelfBlockRender = ({
             {block.salesVolume30d && <span>销量 {block.salesVolume30d}</span>}
           </div>
         )}
-      </TooltipContent>
-    </Tooltip>
+      </PopoverContent>
+    </Popover>
   );
 };

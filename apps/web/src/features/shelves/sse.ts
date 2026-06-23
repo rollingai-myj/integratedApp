@@ -98,10 +98,27 @@ export function tryParseDifyValue(raw: unknown): unknown {
 //        extractVirtualShelf);前端只保留 shape 用于 setState 类型对齐(raw_outputs.parsed
 //        从轮询拿)。questions extractor 保留 — QAPage bootstrap 兜底仍走 SSE。
 
+export interface DiagnosisStatusItem {
+  /** 中类名,如 鲜奶/酸奶/饮料 */
+  midCategory: string;
+  /** 该中类销售额在本场景中的占比(%) */
+  salesPct: number;
+  /** 该中类日均销量(件) */
+  dailyAvgVolume: number;
+  /** 一句标题,如 卖得最好 / 卖得动,品类太杂 / 没备对 */
+  headline: string;
+  /** 详细描述 */
+  description: string;
+}
 export interface DiagnosisResult {
-  /** 客群分析 */ paragraphCustomer: string;
-  /** 竞争分析 */ paragraphCompetition: string;
-  /** 现状分析 */ paragraphStatus: string;
+  /** 主要客群标签 */
+  paragraphCustomer: string[];
+  /** 各中类现状卡 */
+  paragraphStatus: DiagnosisStatusItem[];
+  /** 季节/时机叙事 */
+  paragraphSeason: string;
+  /** 一句话总结(展示时字号最大) */
+  summary: string;
 }
 
 export interface StrategyItem {

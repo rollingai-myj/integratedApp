@@ -466,23 +466,26 @@ async function loadSurveyAnswers(
  *   poi_data            周边洞察（store_insights：category / top_competitors / competitor_analysis / crowd_source_analysis）
  *   question_answers    店长问答（已有，{items:[{question, answer}]}）
  *   current_date        Asia/Shanghai 时区今日 YYYY-MM-DD
+ *   major_category      本场景所属 L1 大类标签集（hq_categories 中 scene 直属 L1 子节点 name），
+ *                       多个用英文逗号连接;让 Dify prompt 可以点名"当前场景的大类"
  *   align 多一个 photo
  *
- * 已删除的旧字段：sku_data / major_category / mid_category / whitelist / new_product_skus
+ * 已删除的旧字段：sku_data / mid_category / whitelist / new_product_skus
  *   - 白名单信息现在以每 SKU 的 is_whitelisted 标记表达（Dify 端自己 filter）
  *   - 新品同理：每 SKU 的 isNew 标记
- *   - 类目集合：每 SKU 都带 majorCategory / midCategory，Dify 自己 distinct
+ *   - 中/小类集合：每 SKU 都带 midCategory / subCategory，Dify 自己 distinct
  *
  * 全部顶层字段在 Dify Studio 端 type=text；dify.service.ts:serializeInputs 会把对象/数组自动 JSON.stringify。
  */
 async function buildCommonInputs(ctx: BuildContext): Promise<Record<string, unknown>> {
-  const [skuAttr, storeSku, benchmarkRich, storeProfile, poi, qa] = await Promise.all([
+  const [skuAttr, storeSku, benchmarkRich, storeProfile, poi, qa, sceneDef] = await Promise.all([
     buildSkuAttributes(ctx.scene),
     loadStoreSkuMetrics(ctx.storeId, ctx.scene),
     computeBenchmarkForScene(ctx.storeId, ctx.scene),
     loadStoreProfile(ctx.storeId),
     loadStructuredPoi(ctx.storeId),
     loadSurveyAnswers(ctx.storeId, ctx.scene),
+    loadSceneDef(ctx.scene),
   ]);
   // benchmark.service.ts 还返回富 row（含 skuName / 三级 category / spec），这里 trim 到 4 字段对齐 store_sku_data
   const benchmarkSku = {
@@ -493,6 +496,11 @@ async function buildCommonInputs(ctx: BuildContext): Promise<Record<string, unkn
       psdChange: b.psdChange,
     })),
   };
+  // 场景所属 L1 大类标签;多个大类用英文逗号连接(Dify 工作流要在 prompt 里点名当前场景的大类)
+  const majorCategory = (sceneDef?.categories ?? [])
+    .map((c) => c.name.trim())
+    .filter((s) => s.length > 0)
+    .join(',');
   return {
     sku_attributes: skuAttr,
     store_sku_data: storeSku,
@@ -501,6 +509,7 @@ async function buildCommonInputs(ctx: BuildContext): Promise<Record<string, unkn
     poi_data: poi,
     question_answers: qa,
     current_date: todayInShanghai(),
+    major_category: majorCategory,
   };
 }
 
@@ -541,7 +550,7 @@ export async function buildVirtualShelfInputs(args: {
     addSkuCodes: items.filter((i) => i.action === 'add').map((i) => i.skuCode),
     removeSkuCodes: items.filter((i) => i.action === 'remove').map((i) => i.skuCode),
   };
-  const [skuJson, def, shelves] = await Promise.all([
+  const [skuJson, def, shelves, promo] = await Promise.all([
     buildSkuJsonForVirtualShelf(args.storeId, args.scene, delta),
     loadSceneDef(args.scene),
     query<{ width_cm: string | null; layer_count: number | null }>(
@@ -549,6 +558,7 @@ export async function buildVirtualShelfInputs(args: {
         WHERE store_id = $1 AND scene = $2 ORDER BY group_index`,
       [args.storeId, args.scene],
     ),
+    buildPromoMap(args.scene),
   ]);
   const widths = shelves.rows.map((r) => (r.width_cm ? Number(r.width_cm) : 75));
   const layers = shelves.rows.map((r) => r.layer_count ?? 5);
@@ -558,9 +568,56 @@ export async function buildVirtualShelfInputs(args: {
     shelf_width: widths,
     shelf_layers: layers,
     sku_json: skuJson,
-    promo: {},
+    promo,
     store_id: args.storeId,
   };
+}
+
+/**
+ * Dify virtual-shelf 入参 promo:本场景大类(L1)目前有效的会员价活动,
+ * 按 promo_group_code 分组 → 每组列出参与的 sku_code 与原始优惠描述。
+ *
+ * 取数:
+ *   - 表 hq_promo_raw_items × hq_promo_batches(过滤掉已作废 batch)
+ *   - activity_type = 'member_price'
+ *   - category_code 命中场景的 L1 集合(loadSceneDef.categories[].code)
+ *   - promo_group_code / raw_method_text 都非空(分组键 + 文案必须存在)
+ *
+ * 结构(Dify 那边 text 字段接收,后续会被 serializeInputs 整体 JSON.stringify):
+ *   { "<promo_group_code>": { "<sku_code>": "<raw_method_text>" } }
+ */
+async function buildPromoMap(scene: number): Promise<Record<string, Record<string, string>>> {
+  const def = await loadSceneDef(scene);
+  const codes = (def?.categories ?? [])
+    .map((c) => c.code)
+    .filter((s): s is string => typeof s === 'string' && s.length > 0);
+  if (codes.length === 0) return {};
+
+  const res = await query<{
+    group_code: string;
+    sku_code: string;
+    raw_method_text: string;
+  }>(
+    `SELECT r.promo_group_code AS group_code,
+            r.sku_code,
+            r.raw_method_text
+       FROM hq_promo_raw_items r
+       JOIN hq_promo_batches b ON b.id = r.batch_id
+      WHERE r.activity_type = 'member_price'
+        AND NOT b.is_voided
+        AND r.promo_group_code IS NOT NULL
+        AND r.raw_method_text IS NOT NULL
+        AND r.category_code = ANY($1::text[])
+      ORDER BY r.promo_group_code, r.sku_code`,
+    [codes],
+  );
+
+  const map: Record<string, Record<string, string>> = {};
+  for (const r of res.rows) {
+    if (!map[r.group_code]) map[r.group_code] = {};
+    map[r.group_code]![r.sku_code] = r.raw_method_text;
+  }
+  return map;
 }
 
 export async function buildQuestionsInputs(args: {
@@ -865,10 +922,63 @@ function padSkuCode(v: unknown): string {
   return s;
 }
 
+interface DiagnosisStatusItem {
+  midCategory: string;
+  salesPct: number;
+  dailyAvgVolume: number;
+  headline: string;
+  description: string;
+}
 interface DiagnosisResult {
-  paragraphCustomer: string;
-  paragraphCompetition: string;
-  paragraphStatus: string;
+  /** 客群标签列表(原长文本现已拆为单标签数组) */
+  paragraphCustomer: string[];
+  /** 每个中类的现状卡 */
+  paragraphStatus: DiagnosisStatusItem[];
+  /** 季节/时机说明 */
+  paragraphSeason: string;
+  /** 一句话总结(展示时字号最大) */
+  summary: string;
+}
+
+function toStringArray(v: unknown): string[] {
+  if (Array.isArray(v)) {
+    return v.map((x) => String(x ?? '').trim()).filter((s) => s.length > 0);
+  }
+  // 兼容 Dify 偶尔输出顿号/逗号拼接的字符串
+  if (typeof v === 'string') {
+    return v.split(/[、,，;；\n]+/).map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function toNumber(v: unknown): number {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/[¥,，%\s]/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function normalizeStatusItems(v: unknown): DiagnosisStatusItem[] {
+  const arr = Array.isArray(v) ? v : (typeof v === 'object' && v !== null ? [v] : []);
+  return arr
+    .map((raw): DiagnosisStatusItem | null => {
+      if (!raw || typeof raw !== 'object') return null;
+      const r = raw as Record<string, unknown>;
+      const midCategory = String(r.midCategory ?? r.mid_category ?? r['中类'] ?? '').trim();
+      const headline = String(r.headline ?? r['标题'] ?? '').trim();
+      const description = String(r.description ?? r['描述'] ?? '').trim();
+      if (!midCategory && !headline && !description) return null;
+      return {
+        midCategory,
+        headline,
+        description,
+        salesPct: toNumber(r.salesPct ?? r.sales_pct ?? r['销售额占比']),
+        dailyAvgVolume: toNumber(r.dailyAvgVolume ?? r.daily_avg_volume ?? r['日均销量']),
+      };
+    })
+    .filter((x): x is DiagnosisStatusItem => x !== null);
 }
 
 function extractDiagnosis(outputs: Record<string, unknown>): DiagnosisResult | null {
@@ -882,11 +992,12 @@ function extractDiagnosis(outputs: Record<string, unknown>): DiagnosisResult | n
     const inner = (o.diagnosis && typeof o.diagnosis === 'object' && !Array.isArray(o.diagnosis))
       ? (o.diagnosis as Record<string, unknown>)
       : o;
-    const customer = String(inner.paragraph_customer ?? inner.paragraphCustomer ?? '');
-    const competition = String(inner.paragraph_competition ?? inner.paragraphCompetition ?? '');
-    const status = String(inner.paragraph_status ?? inner.paragraphStatus ?? '');
-    if (customer || competition || status) {
-      return { paragraphCustomer: customer, paragraphCompetition: competition, paragraphStatus: status };
+    const paragraphCustomer = toStringArray(inner.paragraph_customer ?? inner.paragraphCustomer);
+    const paragraphStatus = normalizeStatusItems(inner.paragraph_status ?? inner.paragraphStatus);
+    const paragraphSeason = String(inner.paragraph_season ?? inner.paragraphSeason ?? '').trim();
+    const summary = String(inner.summary ?? inner['总结'] ?? '').trim();
+    if (paragraphCustomer.length || paragraphStatus.length || paragraphSeason || summary) {
+      return { paragraphCustomer, paragraphStatus, paragraphSeason, summary };
     }
   }
   return null;
@@ -961,7 +1072,8 @@ function extractVirtualShelf(outputs: Record<string, unknown>): unknown {
 
 // ---- 通用状态写入辅助 ---------------------------------------------------
 
-type AiStatusColumn = 'diagnose' | 'strategy' | 'virtual';
+export type AiStatusKind = 'diagnose' | 'strategy' | 'virtual';
+type AiStatusColumn = AiStatusKind;
 const STATUS_COL: Record<AiStatusColumn, { status: string; raw: string }> = {
   diagnose: { status: 'diagnose_status', raw: 'diagnose_raw_outputs' },
   strategy: { status: 'strategy_status', raw: 'strategy_raw_outputs' },
@@ -996,6 +1108,18 @@ async function readAiStatus(
   return res.rows[0]?.s ?? null;
 }
 
+/**
+ * 触发路由用:返回 202 之前把状态同步推到 'processing'。
+ * 之前 trigger 路由是 fire-and-forget,ensureXxx 自己写 'processing' 状态,导致前端
+ * 立刻 invalidateQueries 时常拿到旧的 'failed' 而覆盖乐观更新 — 出现"按钮要点两次才生效"。
+ * 这里把状态写入卡在路由 200 之前,前端任何后续 GET 都看得到 'processing'。
+ */
+export async function markAiStatusProcessing(
+  storeId: string, scene: number, kind: AiStatusKind,
+): Promise<void> {
+  await setAiStatus(storeId, scene, kind, 'processing', null);
+}
+
 // ---- ensureDiagnose / ensureStrategy / ensureVirtualShelf -----------------
 
 const diagnoseInFlight = new Set<string>();
@@ -1015,7 +1139,9 @@ export async function ensureDiagnose(
   diagnoseInFlight.add(key);
   try {
     const status = await readAiStatus(storeId, scene, 'diagnose');
-    if (status === 'processing' || status === 'completed') return;
+    // 只跳过已完成的;'processing' 可能是路由层刚同步推上去的(见 markAiStatusProcessing),
+    // 进程内并发由 diagnoseInFlight 锁拦截,这里不再因为 status='processing' 误跳。
+    if (status === 'completed') return;
 
     await setAiStatus(storeId, scene, 'diagnose', 'processing', null);
     const inputs = await buildAlignInputs({ storeId, scene }, photoUrl);
@@ -1050,7 +1176,8 @@ export async function ensureStrategy(storeId: string, scene: number, difyUser: s
   strategyInFlight.add(key);
   try {
     const status = await readAiStatus(storeId, scene, 'strategy');
-    if (status === 'processing' || status === 'completed') return;
+    // 只跳过已完成的;'processing' 可能是路由层刚同步推上去的,见 markAiStatusProcessing。
+    if (status === 'completed') return;
 
     await setAiStatus(storeId, scene, 'strategy', 'processing', null);
     const inputs = await buildStrategyInputs({ storeId, scene });
@@ -1085,10 +1212,8 @@ export async function ensureVirtualShelf(storeId: string, scene: number, difyUse
   if (virtualShelfInFlight.has(key)) return;
   virtualShelfInFlight.add(key);
   try {
-    const status = await readAiStatus(storeId, scene, 'virtual');
-    if (status === 'processing') return;
-    // virtual 允许 completed 重跑(applyAdjustment 已 reset 到 idle)
-
+    // virtual 不靠 status 判断幂等 —— 只依赖进程内 in-flight 锁;允许重跑(applyAdjustment 已
+    // reset 到 idle,触发路由也可能刚刚 markAiStatusProcessing 把 status 推到 processing)。
     await setAiStatus(storeId, scene, 'virtual', 'processing', null);
     const inputs = await buildVirtualShelfInputs({ storeId, scene });
 
