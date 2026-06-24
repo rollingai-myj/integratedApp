@@ -20,6 +20,13 @@
 #     ports:
 #       - '8788:8787'           # 避开别的项目的 8787
 
+# 示例 1b:nginx 整段 !override 替换两条端口(80→移动端 / 81→PC admin)
+# services:
+#   nginx:
+#     ports: !override
+#       - '8089:80'             # 移动端门店助手
+#       - '8090:81'             # PC 超管控制台
+
 # 示例 2:开启 Node.js inspect 调试
 # services:
 #   api:
