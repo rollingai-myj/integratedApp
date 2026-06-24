@@ -37,6 +37,12 @@ a {
   text-decoration: none;
 }
 
+/* Skeleton shimmer */
+@keyframes sc-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* 简洁滚动条(桌面) */
 ::-webkit-scrollbar {
   width: 10px;

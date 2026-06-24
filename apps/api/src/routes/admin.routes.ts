@@ -42,6 +42,12 @@ import {
   getImageModel,
   setImageModel,
 } from '../services/admin-stats.service.js';
+import {
+  getDashboardKpis,
+  getAdjustmentTrend,
+  getTopActiveStores,
+  getSceneDistribution,
+} from '../services/admin-dashboard.service.js';
 import { createTasks as createPosterTasks } from '../services/posters.service.js';
 
 export const adminRouter = Router();
@@ -254,6 +260,55 @@ adminRouter.get(
   '/realtime-stats',
   asyncHandler(async (_req, res) => {
     res.json(await getRealtimeStats());
+  }),
+);
+
+// Dashboard 聚合(admin-web)----------------------------------------------
+
+const dashboardQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(180).optional(),
+});
+
+const topStoresQuerySchema = dashboardQuerySchema.extend({
+  limit: z.coerce.number().int().min(1).max(20).optional(),
+});
+
+/** 4 张 KPI 卡(活跃门店 / 调改 SKU / 海报生成 / 价格调整,含上一窗口环比) */
+adminRouter.get(
+  '/dashboard/kpis',
+  asyncHandler(async (req, res) => {
+    const q = dashboardQuerySchema.parse(req.query);
+    res.json(await getDashboardKpis(q.days ?? 30));
+  }),
+);
+
+/** 调改趋势(按天 added/removed,空天补 0) */
+adminRouter.get(
+  '/dashboard/trend',
+  asyncHandler(async (req, res) => {
+    const q = dashboardQuerySchema.parse(req.query);
+    const points = await getAdjustmentTrend(q.days ?? 30);
+    res.json({ points });
+  }),
+);
+
+/** Top N 活跃门店(按窗口期内调改总数排序) */
+adminRouter.get(
+  '/dashboard/top-stores',
+  asyncHandler(async (req, res) => {
+    const q = topStoresQuerySchema.parse(req.query);
+    const stores = await getTopActiveStores(q.days ?? 30, q.limit ?? 5);
+    res.json({ stores });
+  }),
+);
+
+/** 场景占比(调改 SKU 在各场景下的分布) */
+adminRouter.get(
+  '/dashboard/scenes',
+  asyncHandler(async (req, res) => {
+    const q = dashboardQuerySchema.parse(req.query);
+    const scenes = await getSceneDistribution(q.days ?? 30);
+    res.json({ scenes });
   }),
 );
 
