@@ -1,23 +1,26 @@
-/**
- * 活动数据上传(占位)— PR 4 接 /admin/uploads/promotions
- */
 import { createFileRoute } from '@tanstack/react-router';
-import { UploadPagePlaceholder } from '@/components/UploadPagePlaceholder';
+import { useQuery } from '@tanstack/react-query';
+import { CsvUploadPage } from '@/components/CsvUploadPage';
+import { fetchSpecs } from '@/lib/uploads';
+import { TOKENS } from '@/tokens';
 
 export const Route = createFileRoute('/_app/uploads/promotions')({
-  component: () => (
-    <UploadPagePlaceholder
-      title="活动数据"
-      description="上传促销活动配置(满减券 / 会员价 / 周末啤酒日 等)。上传后会自动比对活动池,新增的入库,过期的标记下线。"
-      templateFields={[
-        'sku_code',
-        'activity_type',
-        'mechanic',
-        'mechanic_params_json',
-        'valid_from',
-        'valid_to',
-        'pool_label',
-      ]}
-    />
-  ),
+  component: PromotionsUploadPage,
 });
+
+function PromotionsUploadPage() {
+  const specsQ = useQuery({
+    queryKey: ['uploads', 'specs'],
+    queryFn: fetchSpecs,
+    staleTime: 5 * 60_000,
+  });
+  const spec = specsQ.data?.find(s => s.kind === 'promotions');
+  if (!spec) {
+    return (
+      <div style={{ padding: 32, color: TOKENS.inkMuted }}>
+        {specsQ.isLoading ? '加载字段定义…' : '字段定义加载失败'}
+      </div>
+    );
+  }
+  return <CsvUploadPage kind="promotions" spec={spec} />;
+}

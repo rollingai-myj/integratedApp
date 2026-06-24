@@ -1,25 +1,26 @@
-/**
- * 门店销售快照上传(占位)— PR 4 接 /admin/uploads/snapshots
- */
 import { createFileRoute } from '@tanstack/react-router';
-import { UploadPagePlaceholder } from '@/components/UploadPagePlaceholder';
+import { useQuery } from '@tanstack/react-query';
+import { CsvUploadPage } from '@/components/CsvUploadPage';
+import { fetchSpecs } from '@/lib/uploads';
+import { TOKENS } from '@/tokens';
 
 export const Route = createFileRoute('/_app/uploads/snapshots')({
-  component: () => (
-    <UploadPagePlaceholder
-      title="门店销售快照"
-      description="上传各门店当期销售快照(SKU 维度的 30/90 天销量、库存、零售价)。同店同 SKU 同日期会以最后一次为准。"
-      templateFields={[
-        'store_code',
-        'sku_code',
-        'snapshot_date',
-        'retail_price',
-        'sales_qty_30d',
-        'sales_realamt_30d',
-        'sales_qty_90d',
-        'sales_realamt_90d',
-        'stock_qty',
-      ]}
-    />
-  ),
+  component: SnapshotsUploadPage,
 });
+
+function SnapshotsUploadPage() {
+  const specsQ = useQuery({
+    queryKey: ['uploads', 'specs'],
+    queryFn: fetchSpecs,
+    staleTime: 5 * 60_000,
+  });
+  const spec = specsQ.data?.find(s => s.kind === 'snapshots');
+  if (!spec) {
+    return (
+      <div style={{ padding: 32, color: TOKENS.inkMuted }}>
+        {specsQ.isLoading ? '加载字段定义…' : '字段定义加载失败'}
+      </div>
+    );
+  }
+  return <CsvUploadPage kind="snapshots" spec={spec} />;
+}

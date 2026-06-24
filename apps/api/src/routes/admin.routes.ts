@@ -20,6 +20,7 @@
  */
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { AppError, ErrorCodes } from '../lib/errors.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -55,6 +56,17 @@ import {
   listSceneOptions,
   exportChangesCsv,
 } from '../services/admin-changes.service.js';
+import {
+  uploadAndStage,
+  listBatches,
+  getBatchDetail,
+  deleteStagedBatch,
+} from '../services/admin-uploads/service.js';
+import {
+  templateOf,
+  allSpecs,
+  type UploadKind,
+} from '../services/admin-uploads/schemas.js';
 import { createTasks as createPosterTasks } from '../services/posters.service.js';
 
 export const adminRouter = Router();
@@ -407,6 +419,99 @@ adminRouter.get(
   asyncHandler(async (_req, res) => {
     const scenes = await listSceneOptions();
     res.json({ scenes });
+  }),
+);
+
+// 数据上传(admin-web 上传页)-------------------------------------------
+
+const uploadKindSchema = z.enum(['promotions', 'products', 'snapshots']);
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+});
+
+/** 列出所有上传类型的列定义(给前端展示字段说明用) */
+adminRouter.get(
+  '/uploads/specs',
+  asyncHandler(async (_req, res) => {
+    res.json({ specs: allSpecs() });
+  }),
+);
+
+/** CSV 模板下载(BOM + 表头 + 一行示例) */
+adminRouter.get(
+  '/uploads/:kind/template',
+  asyncHandler(async (req, res) => {
+    const kind = uploadKindSchema.parse(req.params.kind);
+    const csv = templateOf(kind);
+    const filename = `${kind}-template.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  }),
+);
+
+/** 上传 CSV → 解析 → 落 staging。multipart/form-data,字段名 'file' */
+adminRouter.post(
+  '/uploads/:kind',
+  csvUpload.single('file'),
+  asyncHandler(async (req, res) => {
+    const kind = uploadKindSchema.parse(req.params.kind);
+    const file = (req as Request & { file?: Express.Multer.File }).file;
+    if (!file) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, '缺少上传文件 (field name: file)');
+    }
+    const result = await uploadAndStage({
+      kind: kind as UploadKind,
+      fileName: file.originalname || `${kind}.csv`,
+      buffer: file.buffer,
+      uploadedBy: req.user!.id,
+    });
+    auditAdmin(
+      req,
+      'app_setting_change',
+      `上传 ${kind} CSV (${file.originalname || 'unnamed'}, ${result.validRows}/${result.totalRows} 行有效)`,
+      result.batchId,
+      { kind, fileName: file.originalname, ...result },
+    );
+    res.status(201).json(result);
+  }),
+);
+
+/** 历史批次列表(按 kind) */
+adminRouter.get(
+  '/uploads/:kind/batches',
+  asyncHandler(async (req, res) => {
+    const kind = uploadKindSchema.parse(req.params.kind);
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const batches = await listBatches(kind as UploadKind, Number.isFinite(limit) ? limit : 50);
+    res.json({ batches });
+  }),
+);
+
+/** 批次详情(错误清单 + 解析后预览前 20 行) */
+adminRouter.get(
+  '/uploads/batches/:id',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    const detail = await getBatchDetail(req.params.id);
+    if (!detail) throw new AppError(404, ErrorCodes.NOT_FOUND, '批次不存在');
+    res.json(detail);
+  }),
+);
+
+/** 删除 staged/failed 批次(误传清理用;已应用的不能删) */
+adminRouter.delete(
+  '/uploads/batches/:id',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    await deleteStagedBatch(req.params.id);
+    auditAdmin(req, 'app_setting_change', `删除上传批次`, req.params.id, {});
+    res.status(204).end();
   }),
 );
 
