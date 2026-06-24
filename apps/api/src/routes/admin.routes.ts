@@ -20,6 +20,7 @@
  */
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { AppError, ErrorCodes } from '../lib/errors.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -42,6 +43,34 @@ import {
   getImageModel,
   setImageModel,
 } from '../services/admin-stats.service.js';
+import {
+  getDashboardKpis,
+  getAdjustmentTrend,
+  getTopActiveStores,
+  getSceneDistribution,
+} from '../services/admin-dashboard.service.js';
+import {
+  listChanges,
+  getChangeDetail,
+  listStoreOptions,
+  listSceneOptions,
+  exportChangesCsv,
+} from '../services/admin-changes.service.js';
+import {
+  uploadAndStage,
+  listBatches,
+  getBatchDetail,
+  deleteStagedBatch,
+} from '../services/admin-uploads/service.js';
+import {
+  templateOf,
+  allSpecs,
+  type UploadKind,
+} from '../services/admin-uploads/schemas.js';
+import {
+  applyBatch,
+  rollbackBatch,
+} from '../services/admin-uploads/apply.js';
 import { createTasks as createPosterTasks } from '../services/posters.service.js';
 
 export const adminRouter = Router();
@@ -254,6 +283,280 @@ adminRouter.get(
   '/realtime-stats',
   asyncHandler(async (_req, res) => {
     res.json(await getRealtimeStats());
+  }),
+);
+
+// Dashboard 聚合(admin-web)----------------------------------------------
+
+const dashboardQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(180).optional(),
+});
+
+const topStoresQuerySchema = dashboardQuerySchema.extend({
+  limit: z.coerce.number().int().min(1).max(20).optional(),
+});
+
+/** 4 张 KPI 卡(活跃门店 / 调改 SKU / 海报生成 / 价格调整,含上一窗口环比) */
+adminRouter.get(
+  '/dashboard/kpis',
+  asyncHandler(async (req, res) => {
+    const q = dashboardQuerySchema.parse(req.query);
+    res.json(await getDashboardKpis(q.days ?? 30));
+  }),
+);
+
+/** 调改趋势(按天 added/removed,空天补 0) */
+adminRouter.get(
+  '/dashboard/trend',
+  asyncHandler(async (req, res) => {
+    const q = dashboardQuerySchema.parse(req.query);
+    const points = await getAdjustmentTrend(q.days ?? 30);
+    res.json({ points });
+  }),
+);
+
+/** Top N 活跃门店(按窗口期内调改总数排序) */
+adminRouter.get(
+  '/dashboard/top-stores',
+  asyncHandler(async (req, res) => {
+    const q = topStoresQuerySchema.parse(req.query);
+    const stores = await getTopActiveStores(q.days ?? 30, q.limit ?? 5);
+    res.json({ stores });
+  }),
+);
+
+/** 场景占比(调改 SKU 在各场景下的分布) */
+adminRouter.get(
+  '/dashboard/scenes',
+  asyncHandler(async (req, res) => {
+    const q = dashboardQuerySchema.parse(req.query);
+    const scenes = await getSceneDistribution(q.days ?? 30);
+    res.json({ scenes });
+  }),
+);
+
+// 调改记录(admin-web 表格)----------------------------------------------
+
+const changesQuerySchema = z.object({
+  storeId: z.string().uuid().optional(),
+  scene: z.coerce.number().int().optional(),
+  action: z.enum(['add', 'remove']).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  search: z.string().max(64).optional(),
+  page: z.coerce.number().int().min(1).max(1000).optional(),
+  pageSize: z.coerce.number().int().min(1).max(200).optional(),
+  sortBy: z.enum(['created_at', 'effective_date']).optional(),
+  sortDir: z.enum(['asc', 'desc']).optional(),
+});
+
+/** 分页 + 筛选 + 排序拉调改记录 */
+adminRouter.get(
+  '/changes',
+  asyncHandler(async (req, res) => {
+    const q = changesQuerySchema.parse(req.query);
+    const page = q.page ?? 1;
+    const pageSize = q.pageSize ?? 50;
+    const result = await listChanges({
+      storeId: q.storeId,
+      scene: q.scene,
+      action: q.action,
+      from: q.from,
+      to: q.to,
+      search: q.search,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      sortBy: q.sortBy,
+      sortDir: q.sortDir,
+    });
+    res.json({ ...result, page, pageSize });
+  }),
+);
+
+/** 单条详情(行展开拿 ai_diagnosis 完整 JSON 用) */
+adminRouter.get(
+  '/changes/:id',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    const detail = await getChangeDetail(req.params.id);
+    if (!detail) throw new AppError(404, ErrorCodes.NOT_FOUND, '记录不存在');
+    res.json(detail);
+  }),
+);
+
+/** CSV 导出(同一组筛选,不分页) */
+adminRouter.get(
+  '/changes.csv',
+  asyncHandler(async (req, res) => {
+    const q = changesQuerySchema.parse(req.query);
+    const csv = await exportChangesCsv({
+      storeId: q.storeId,
+      scene: q.scene,
+      action: q.action,
+      from: q.from,
+      to: q.to,
+      search: q.search,
+      sortBy: q.sortBy,
+      sortDir: q.sortDir,
+    });
+    const filename = `assortment-changes-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  }),
+);
+
+/** 筛选下拉:门店列表 */
+adminRouter.get(
+  '/changes-filters/stores',
+  asyncHandler(async (_req, res) => {
+    const stores = await listStoreOptions();
+    res.json({ stores });
+  }),
+);
+
+/** 筛选下拉:场景列表 */
+adminRouter.get(
+  '/changes-filters/scenes',
+  asyncHandler(async (_req, res) => {
+    const scenes = await listSceneOptions();
+    res.json({ scenes });
+  }),
+);
+
+// 数据上传(admin-web 上传页)-------------------------------------------
+
+const uploadKindSchema = z.enum(['products', 'snapshots']);
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+});
+
+/** 列出所有上传类型的列定义(给前端展示字段说明用) */
+adminRouter.get(
+  '/uploads/specs',
+  asyncHandler(async (_req, res) => {
+    res.json({ specs: allSpecs() });
+  }),
+);
+
+/** CSV 模板下载(BOM + 表头 + 一行示例) */
+adminRouter.get(
+  '/uploads/:kind/template',
+  asyncHandler(async (req, res) => {
+    const kind = uploadKindSchema.parse(req.params.kind);
+    const csv = templateOf(kind);
+    const filename = `${kind}-template.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  }),
+);
+
+/** 上传 CSV → 解析 → 落 staging。multipart/form-data,字段名 'file' */
+adminRouter.post(
+  '/uploads/:kind',
+  csvUpload.single('file'),
+  asyncHandler(async (req, res) => {
+    const kind = uploadKindSchema.parse(req.params.kind);
+    const file = (req as Request & { file?: Express.Multer.File }).file;
+    if (!file) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, '缺少上传文件 (field name: file)');
+    }
+    const result = await uploadAndStage({
+      kind: kind as UploadKind,
+      fileName: file.originalname || `${kind}.csv`,
+      buffer: file.buffer,
+      uploadedBy: req.user!.id,
+    });
+    auditAdmin(
+      req,
+      'app_setting_change',
+      `上传 ${kind} CSV (${file.originalname || 'unnamed'}, ${result.validRows}/${result.totalRows} 行有效)`,
+      result.batchId,
+      { kind, fileName: file.originalname, ...result },
+    );
+    res.status(201).json(result);
+  }),
+);
+
+/** 历史批次列表(按 kind) */
+adminRouter.get(
+  '/uploads/:kind/batches',
+  asyncHandler(async (req, res) => {
+    const kind = uploadKindSchema.parse(req.params.kind);
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const batches = await listBatches(kind as UploadKind, Number.isFinite(limit) ? limit : 50);
+    res.json({ batches });
+  }),
+);
+
+/** 批次详情(错误清单 + 解析后预览前 20 行) */
+adminRouter.get(
+  '/uploads/batches/:id',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    const detail = await getBatchDetail(req.params.id);
+    if (!detail) throw new AppError(404, ErrorCodes.NOT_FOUND, '批次不存在');
+    res.json(detail);
+  }),
+);
+
+/** 删除 staged/failed 批次(误传清理用;已应用的不能删) */
+adminRouter.delete(
+  '/uploads/batches/:id',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    await deleteStagedBatch(req.params.id);
+    auditAdmin(req, 'app_setting_change', `删除上传批次`, req.params.id, {});
+    res.status(204).end();
+  }),
+);
+
+/** 应用 staged 批次到业务表;事务内完成,落库失败整体回滚 */
+adminRouter.post(
+  '/uploads/batches/:id/apply',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    const summary = await applyBatch({
+      batchId: req.params.id,
+      appliedBy: req.user!.id,
+    });
+    auditAdmin(
+      req,
+      'app_setting_change',
+      `应用上传批次 (新增 ${summary.inserted}, 更新 ${summary.updated}, 跳过 ${summary.skipped})`,
+      req.params.id,
+      { ...summary },
+    );
+    res.json(summary);
+  }),
+);
+
+/** 回滚 applied 批次,按 before_snapshot 还原 */
+adminRouter.post(
+  '/uploads/batches/:id/rollback',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    const result = await rollbackBatch(req.params.id);
+    auditAdmin(
+      req,
+      'app_setting_change',
+      `回滚上传批次 (${result.reverted} 条)`,
+      req.params.id,
+      { ...result },
+    );
+    res.json(result);
   }),
 );
 

@@ -165,9 +165,48 @@ services:
     networks:
       - app-network
 
+  # ---- PC 超管控制台(新增,纯客户端 SPA)---------------------------------------
+  # dev:Vite dev on 5174;prod overlay 切到 vite build + nginx 静态
+  admin-web:
+    build:
+      context: .
+      dockerfile: apps/admin-web/Dockerfile
+      target: build
+      args:
+        VITE_API_BASE_URL: ''
+    container_name: myj-admin-web
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HTTP_PROXY: ''
+      HTTPS_PROXY: ''
+      http_proxy: ''
+      https_proxy: ''
+      NO_PROXY: 'localhost,127.0.0.1,postgres,api,web,admin-web,nginx,.local,.internal'
+      no_proxy: 'localhost,127.0.0.1,postgres,api,web,admin-web,nginx,.local,.internal'
+      VITE_API_BASE_URL: 'http://api:8787'
+    ports:
+      - '5174:5174'
+    volumes:
+      - ./apps/admin-web/src:/app/apps/admin-web/src:delegated
+      - ./apps/admin-web/public:/app/apps/admin-web/public:delegated
+      - ./apps/admin-web/index.html:/app/apps/admin-web/index.html:delegated
+      - ./apps/admin-web/vite.config.ts:/app/apps/admin-web/vite.config.ts:delegated
+      - ./packages/shared/src:/app/packages/shared/src:delegated
+      - /app/node_modules
+    working_dir: /app/apps/admin-web
+    command: ['npx', 'vite', 'dev', '--host', '0.0.0.0', '--port', '5174']
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - app-network
+
   # ---- 反向代理 ---------------------------------------------------------------
-  # dev:对接 web:5173(Vite dev) + api:8787
+  # dev:对接 web:5173(Vite dev) + admin-web:5174 + api:8787
   # prod:overlay 改 WEB_UPSTREAM_PORT=3000 对接 srvx
+  # 监听两个端口:80 → 移动端 / 81 → PC 超管控制台
   nginx:
     build:
       context: .
@@ -175,17 +214,20 @@ services:
     container_name: myj-nginx
     environment:
       WEB_UPSTREAM_PORT: '5173'
+      ADMIN_UPSTREAM_PORT: '5174'
       HTTP_PROXY: ''
       HTTPS_PROXY: ''
       NO_PROXY: '*'
       no_proxy: '*'
     ports:
       - '${WEB_PORT:-8080}:80'
+      - '${ADMIN_PORT:-8090}:81'
     volumes:
       - myj_static_assets:/var/www/static
     depends_on:
       - api
       - web
+      - admin-web
     restart: unless-stopped
     networks:
       - app-network
