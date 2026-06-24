@@ -11,7 +11,10 @@
  * 后端解析时做 FK lookup,把 store_code → store_id 等。
  */
 
-export type UploadKind = 'promotions' | 'products' | 'snapshots';
+// promotions 不走这套简化 CSV staging 框架,继续用 hq_promo_batches 的 xlsx 工作流
+// (POST /promotions/batches:upload),因为它需要多 sheet 解析 + 库内联表 + 凑单池
+// 等业务概念,跟 products/snapshots 的"一表一上传"模型差太远。
+export type UploadKind = 'products' | 'snapshots';
 
 type FieldType = 'string' | 'number' | 'integer' | 'date' | 'enum';
 
@@ -83,48 +86,12 @@ const SNAPSHOTS_SPEC: ColumnSpec = {
 };
 
 // =============================================================================
-// promotions — 活动数据(简化 CSV,正式上传仍推荐用 xlsx 流程)
-// =============================================================================
-
-const PROMO_ACTIVITY_TYPES = [
-  'member_price',
-  'weekend_beer',
-  'brand_coupon',
-  'regular_coupon',
-  'tuesday_member',
-] as const;
-
-const PROMO_MECHANICS = [
-  'flat_price',
-  'percent_discount',
-  'pool_threshold',
-  'bundle_price',
-] as const;
-
-const PROMOTIONS_SPEC: ColumnSpec = {
-  kind: 'promotions',
-  label: '活动数据',
-  description:
-    '简化 CSV 版,字段较底层。如果要上传整套促销日历(含会员价 + 凑单池 + 满减券),仍推荐用 xlsx 工作流。',
-  columns: [
-    { name: 'sku_code',             required: true,  type: 'string', description: '商品编码',                                 sample: '22033344' },
-    { name: 'activity_type',        required: true,  type: 'enum',   description: '活动类型',                                 sample: 'member_price', enumValues: [...PROMO_ACTIVITY_TYPES] },
-    { name: 'mechanic',             required: true,  type: 'enum',   description: '玩法',                                      sample: 'flat_price',   enumValues: [...PROMO_MECHANICS] },
-    { name: 'mechanic_params_json', required: true,  type: 'string', description: '玩法参数(JSON 字符串)',                    sample: '{"kind":"flat_price","target_price":2.00}' },
-    { name: 'valid_from',           required: true,  type: 'date',   description: '生效起(YYYY-MM-DD)',                       sample: '2026-06-01' },
-    { name: 'valid_to',             required: true,  type: 'date',   description: '生效止(YYYY-MM-DD)',                       sample: '2026-06-30' },
-    { name: 'pool_label',           required: false, type: 'string', description: '凑单池标签(brand_coupon 用)',              sample: '怡宝饮料' },
-  ],
-};
-
-// =============================================================================
 // 总注册表
 // =============================================================================
 
 const SPECS: Record<UploadKind, ColumnSpec> = {
   products: PRODUCTS_SPEC,
   snapshots: SNAPSHOTS_SPEC,
-  promotions: PROMOTIONS_SPEC,
 };
 
 export function specOf(kind: UploadKind): ColumnSpec {
@@ -132,7 +99,7 @@ export function specOf(kind: UploadKind): ColumnSpec {
 }
 
 export function allSpecs(): ColumnSpec[] {
-  return [PROMOTIONS_SPEC, PRODUCTS_SPEC, SNAPSHOTS_SPEC];
+  return [PRODUCTS_SPEC, SNAPSHOTS_SPEC];
 }
 
 // =============================================================================

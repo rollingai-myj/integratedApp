@@ -78,12 +78,6 @@ export async function applyBatch(args: {
       case 'snapshots':
         ({ summary, beforeSnapshot } = await applySnapshots(client, staging, args.appliedBy));
         break;
-      case 'promotions':
-        throw new AppError(
-          400,
-          ErrorCodes.BAD_REQUEST,
-          'promotions 暂未支持直接应用,请走 xlsx 工作流',
-        );
       default:
         throw new AppError(400, ErrorCodes.BAD_REQUEST, `unknown kind: ${kind}`);
     }

@@ -428,7 +428,7 @@ adminRouter.get(
 
 // 数据上传(admin-web 上传页)-------------------------------------------
 
-const uploadKindSchema = z.enum(['promotions', 'products', 'snapshots']);
+const uploadKindSchema = z.enum(['products', 'snapshots']);
 const csvUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
