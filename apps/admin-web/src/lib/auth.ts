@@ -22,9 +22,14 @@ interface LoginResponse {
   expiresAt: string;
 }
 
+/** 后端 /auth/me 实际返回的形状(没有 authenticated 字段,用 user==null 判断未登录) */
 interface MeResponse {
-  authenticated: boolean;
-  user?: AdminUser;
+  user: AdminUser | null;
+  currentStore: unknown;
+  stores: unknown[];
+  feishuLinked: boolean;
+  modules: unknown[];
+  notice?: unknown;
 }
 
 export async function login(account: string, password: string): Promise<AdminUser> {
@@ -37,8 +42,7 @@ export async function login(account: string, password: string): Promise<AdminUse
 
 export async function fetchMe(): Promise<AdminUser | null> {
   const res = await apiFetch<MeResponse>('/auth/me');
-  if (!res.authenticated || !res.user) return null;
-  return res.user;
+  return res.user ?? null;
 }
 
 export async function logout(): Promise<void> {
