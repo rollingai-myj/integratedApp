@@ -53,14 +53,12 @@ export function HomePage() {
   const goWorkspace = (scene: number) => {
     void navigate({ to: '/shelves/scene/$scene', params: { scene: String(scene) } });
   };
-  const goBackHome = () => void navigate({ to: '/' });
 
   return (
     <ScreenWrap>
       <AppBar
         title="货盘选品"
         subtitle={`${me.data?.currentStore?.code ?? ''} · ${me.data?.currentStore?.name ?? ''}`}
-        onBack={goBackHome}
       />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px 28px' }}>

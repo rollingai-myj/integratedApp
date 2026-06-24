@@ -1,7 +1,9 @@
+import * as React from 'react';
 import { TOKENS } from '../tokens';
 import { Icon } from '../icons';
 import { AppBar, GhostBtn, PrimaryBtn } from '../ui';
 import type { PosterResult } from '../ai';
+import { addFavorite, removeFavorite } from '@/lib/poster-favorites.functions';
 
 type ToastPayload = { text: string; icon?: React.ReactNode };
 
@@ -14,6 +16,30 @@ export function ScreenResult({ accent, poster, copy, onBack, onNew, onReselectSt
   onReselectStyle: () => void;
   onToast: (p: ToastPayload) => void;
 }) {
+  // 每次切到新结果(generationId 变)就把收藏状态重置回未收藏。
+  const [favorited, setFavorited] = React.useState(false);
+  const [favBusy, setFavBusy] = React.useState(false);
+  React.useEffect(() => { setFavorited(false); }, [poster?.generationId]);
+
+  const toggleFavorite = async () => {
+    if (!poster?.generationId || favBusy) return;
+    setFavBusy(true);
+    try {
+      if (favorited) {
+        await removeFavorite(poster.generationId);
+        setFavorited(false);
+        onToast({ text: '已取消收藏' });
+      } else {
+        await addFavorite(poster.generationId);
+        setFavorited(true);
+        onToast({ text: '已添加到收藏 ♥', icon: <Icon.Check size={16} color="#fff" /> });
+      }
+    } catch (e) {
+      onToast({ text: (e as Error).message || '操作失败' });
+    } finally {
+      setFavBusy(false);
+    }
+  };
   const triggerDownload = async () => {
     if (!poster?.imageUrl) return;
     try {
@@ -84,6 +110,21 @@ export function ScreenResult({ accent, poster, copy, onBack, onNew, onReselectSt
             }}/>
           ) : (
             <div style={{ color: '#fff', fontSize: 13 }}>无图片</div>
+          )}
+          {poster?.generationId && (
+            <button onClick={toggleFavorite} aria-label={favorited ? '取消收藏' : '添加到收藏'}
+              disabled={favBusy}
+              style={{
+                position: 'absolute', top: 10, right: 10,
+                appearance: 'none', border: 0, padding: 0, cursor: 'pointer',
+                width: 36, height: 36, borderRadius: '50%',
+                background: 'rgba(0,0,0,0.55)',
+                color: favorited ? '#ef4444' : '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                backdropFilter: 'blur(6px)',
+                fontSize: 18, lineHeight: 1, fontFamily: 'inherit',
+                opacity: favBusy ? 0.6 : 1,
+              }}>{favorited ? '♥' : '♡'}</button>
           )}
         </div>
       </div>

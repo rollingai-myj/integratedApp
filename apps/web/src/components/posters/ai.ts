@@ -13,6 +13,9 @@ export type GeneratePosterInput = {
   category?: string | null;
   mode?: 'normal' | 'bg_only';
   productImageUrl?: string | null;
+  /** 活动类型 raw 枚举,后端用来挑右下角二维码 */
+  baseActivityType?: string | null;
+  addonActivityType?: string | null;
 };
 
 export async function generatePoster(input: GeneratePosterInput): Promise<PosterResult> {

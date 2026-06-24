@@ -297,6 +297,8 @@ export function ScreenBatch({
             productImageUrls: memberUrls,
             brandLabel: it.promo?.brandLabel ?? null,
             storeId, sku: it.promo?.sku ?? null, category: it.promo?.category ?? null,
+            baseActivityType: it.promo?.baseActivityType ?? null,
+            addonActivityType: it.promo?.addonActivityType ?? null,
           };
         }
         return {
@@ -309,6 +311,8 @@ export function ScreenBatch({
           productImageUrls: null,
           brandLabel: null,
           storeId, sku: it.promo?.sku ?? null, category: it.promo?.category ?? null,
+          baseActivityType: it.promo?.baseActivityType ?? null,
+          addonActivityType: it.promo?.addonActivityType ?? null,
         };
       });
       await enqueueBatch(items_payload);

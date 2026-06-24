@@ -17,6 +17,7 @@ type IconProps = { size?: number; color?: string };
 
 export const I = {
   Back: (p?: IconProps) => svg(['M15 5l-7 7 7 7'], p),
+  Home: (p?: IconProps) => svg(['M3 11.5L12 4l9 7.5', 'M5 10.5V20h14V10.5'], p),
   ChevronR: (p?: IconProps) => svg(['M9 5l7 7-7 7'], p),
   ChevronD: (p?: IconProps) => svg(['M5 9l7 7 7-7'], p),
   Check: (p?: IconProps) => svg(['M4.5 12.5l5 5 10-11'], p),

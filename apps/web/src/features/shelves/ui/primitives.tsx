@@ -3,6 +3,7 @@
  * 仅用于选品模块（features/shelves）。
  */
 import type { CSSProperties, ReactNode } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { TOKENS } from './tokens';
 import { I } from './icons';
 
@@ -47,7 +48,16 @@ interface AppBarProps {
   right?: ReactNode;
 }
 
+/**
+ * 顶部条交互规则(全站三模块共同遵守):
+ *   - 左 ← 返回键:**始终显示**。传 `onBack` 走该回调(回模块内上一级);不传时默认跳 `/`(回功能选择)。
+ *   - 右 ⌂ 主页键:**始终显示**,直接跳 `/`(回功能选择)。`right` 业务槽在主页键左侧。
+ *   - 入口页 ← 与 ⌂ 同趋(都跳 /),但用户始终看到两个键 —— 习惯一致。
+ */
 export function AppBar({ title, subtitle, onBack, right }: AppBarProps) {
+  const navigate = useNavigate();
+  const goHome = () => void navigate({ to: '/' });
+  const handleBack = onBack ?? goHome;
   return (
     <div style={{
       paddingTop: 'calc(env(safe-area-inset-top, 0px) + 14px)',
@@ -55,20 +65,27 @@ export function AppBar({ title, subtitle, onBack, right }: AppBarProps) {
       background: TOKENS.red, color: '#fff',
       display: 'flex', alignItems: 'center', position: 'relative', flexShrink: 0, zIndex: 10,
     }}>
-      {onBack ? (
-        <button onClick={onBack} aria-label="返回" style={{
-          appearance: 'none', border: 0, background: 'transparent', color: '#fff',
-          padding: 8, marginLeft: -4, cursor: 'pointer', borderRadius: 8,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          {I.Back({ size: 22, color: '#fff' })}
-        </button>
-      ) : <div style={{ width: 30 }} />}
+      <button onClick={handleBack} aria-label="返回" style={{
+        appearance: 'none', border: 0, background: 'transparent', color: '#fff',
+        padding: 8, marginLeft: -4, cursor: 'pointer', borderRadius: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        {I.Back({ size: 22, color: '#fff' })}
+      </button>
       <div style={{ flex: 1, textAlign: 'center', minWidth: 0 }}>
         <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
         {subtitle && <div style={{ fontSize: 11, opacity: 0.85, marginTop: 1 }}>{subtitle}</div>}
       </div>
-      <div style={{ minWidth: 30, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', whiteSpace: 'nowrap' }}>{right}</div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', whiteSpace: 'nowrap', gap: 4 }}>
+        {right}
+        <button onClick={goHome} aria-label="回到主页" style={{
+          appearance: 'none', border: 0, background: 'transparent', color: '#fff',
+          padding: 8, marginRight: -4, cursor: 'pointer', borderRadius: 8,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          {I.Home({ size: 22, color: '#fff' })}
+        </button>
+      </div>
     </div>
   );
 }

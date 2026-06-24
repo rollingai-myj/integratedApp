@@ -36,7 +36,7 @@ export const Route = createRootRoute({
       { title: '门店助手 · 美宜佳' },
       {
         name: 'description',
-        content: '美宜佳门店助手统一应用：货盘选品、价盘管理、活动海报。',
+        content: '美宜佳门店助手统一应用：货盘选品、调价模拟器、活动海报。',
       },
     ],
     links: [
@@ -79,10 +79,16 @@ const IOS_DEVICE_BOOTSTRAP = `(function(){try{
 var vv=window.visualViewport;
 var w=(vv&&vv.width)||window.innerWidth;
 var h=(vv&&vv.height)||window.innerHeight;
+var ot=(vv&&vv.offsetTop)||0;
+var ol=(vv&&vv.offsetLeft)||0;
 var z=w/390;
 var de=document.documentElement;
 de.style.setProperty('--iod-zoom',String(z));
 de.style.setProperty('--iod-h',(h/z)+'px');
+de.style.setProperty('--iod-outer-h',h+'px');
+de.style.setProperty('--iod-outer-w',w+'px');
+de.style.setProperty('--iod-outer-top',ot+'px');
+de.style.setProperty('--iod-outer-left',ol+'px');
 }catch(e){}})();`;
 
 function RootDocument({ children }: { children: ReactNode }) {

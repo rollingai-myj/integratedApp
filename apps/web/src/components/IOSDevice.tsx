@@ -70,12 +70,22 @@ export function IOSDevice({ children }: Props) {
       const vv = window.visualViewport;
       const w = vv?.width ?? window.innerWidth;
       const h = vv?.height ?? window.innerHeight;
+      const offTop = vv?.offsetTop ?? 0;
+      const offLeft = vv?.offsetLeft ?? 0;
       const z = w / DESIGN_WIDTH;
       // 把 CSS 变量同步到 documentElement，inline style 通过 var() 读取，
       // 避免 React 重渲染 → DOM 写入的延迟，URL bar 折叠时 zoom 容器立刻跟随。
       const de = document.documentElement;
       de.style.setProperty('--iod-zoom', String(z));
       de.style.setProperty('--iod-h', `${h / z}px`);
+      // 外层 outer-* 用 visualViewport 像素值 —— 不依赖 layout viewport 是否被
+      // interactive-widget=resizes-content 真的缩到位。iOS Safari 18.x 实测会
+      // race:visualViewport 立刻缩,layout viewport 滞后/或被 pan,导致 inset:0
+      // 的外层比内层 zoom 高一截,中间露出 bg-background 米色条挡住表单。
+      de.style.setProperty('--iod-outer-h', `${h}px`);
+      de.style.setProperty('--iod-outer-w', `${w}px`);
+      de.style.setProperty('--iod-outer-top', `${offTop}px`);
+      de.style.setProperty('--iod-outer-left', `${offLeft}px`);
       setZoom(z);
     };
     update();
@@ -93,11 +103,21 @@ export function IOSDevice({ children }: Props) {
 
   return (
     <Ctx.Provider value={{ zoom, designWidth: DESIGN_WIDTH }}>
-      {/* position: fixed + inset:0 把容器钉死在视口，body 上下左右的 rubber-band
-         在 iOS Safari 上 overflow:hidden 拦不住，必须配合 fixed 才能彻底锁死。 */}
+      {/* position: fixed + 显式贴 visualViewport(top/left/width/height)把容器钉死
+         在「可见视口」,不依赖 layout viewport 是否被 interactive-widget 真的缩到位。
+         iOS Safari 18.x 上 layout viewport 比 visualViewport 慢半拍/被 pan 时,
+         inset:0 的外层会比内层 zoom 高一截,中间露出 bg-background 米色条挡住表单。
+         body 上下左右的 rubber-band 在 iOS Safari 上 overflow:hidden 拦不住,
+         必须配合 fixed 才能彻底锁死。 */}
       <div
         className="bg-background overflow-hidden"
-        style={{ position: 'fixed', inset: 0 }}
+        style={{
+          position: 'fixed',
+          top: 'var(--iod-outer-top, 0)',
+          left: 'var(--iod-outer-left, 0)',
+          width: 'var(--iod-outer-w, 100vw)',
+          height: 'var(--iod-outer-h, 100vh)',
+        }}
       >
         <div
           style={{

@@ -25,6 +25,10 @@ RUN npm ci
 COPY packages/shared packages/shared
 COPY apps/api apps/api
 
+# 风格参考图(海报 prompt 的"最后一张图")—— 跟前端 public/style-refs 同一份
+# 后端按 ./style-refs/{vibrant,premium,minimal}.webp 读取
+COPY apps/web/public/style-refs apps/api/style-refs
+
 # tsc 编译:apps/api/src → apps/api/dist
 RUN npm run -w apps/api build
 
@@ -44,6 +48,8 @@ COPY --from=build /app/apps/api/dist apps/api/dist
 COPY --from=build /app/apps/api/openapi.yaml apps/api/openapi.yaml
 # 迁移 SQL 文件不被 tsc 编译,手动拷贝到 dist/db/migrations(migrate.js 期望路径)
 COPY --from=build /app/apps/api/src/db/migrations apps/api/dist/db/migrations
+# 风格参考图(同 build 阶段,prod runtime 也需要这份本地文件)
+COPY --from=build /app/apps/api/style-refs apps/api/style-refs
 
 # 工作目录设置到 apps/api,匹配 dotenv 路径解析($APP/../../../../.env 落在 /app/.env)
 # 生产容器没有 .env 文件,dotenv 静默 no-op,直接走 process.env(由 --env-file 注入)

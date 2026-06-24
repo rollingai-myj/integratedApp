@@ -300,11 +300,14 @@ function buildCategoriesTree(results: PromoBestResult[]): Array<{ name: string; 
       unit: rep.unit ?? null,
       original_price: rep.originalPrice ?? null,
       category: rep.categoryName ?? null,
-      // base/addon_activity_type 仍置 null:组内成员可能混进 weekend_beer base
-      // 等不同类型,validityBadge 入口依旧用 null 走 mask 兜底,不被 rep 类型拽偏。
-      // 绿标文字另走 best_label (= comboLabel(rep.base, rep.addon)),与本字段解耦。
+      // base_activity_type:组内成员 base 可能异构(member 组里混 weekend_beer 等),
+      // 保持 null,validityBadge 走 mask 兜底。
+      // addon_activity_type:跟 best_label 同源,都取 rep.addonActivityType。
+      // - member 组 preferred=纯会员价(addon=null)优先 → rep.addon=null → 无 QR ✅
+      // - member 组成员全有 addon → preferred 空,rep 从全集挑最高省 → 用 rep.addon ✅
+      // - brand 组 rep.addon 必为 brand_coupon → 贴「大牌好券」QR ✅
       base_activity_type: null,
-      addon_activity_type: null,
+      addon_activity_type: rep.addonActivityType ?? null,
       best_label: label,
       best_qty: displayQty,
       best_total: rep.bestBundleTotal,

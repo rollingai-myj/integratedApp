@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { TOKENS } from '../tokens';
 import { Icon } from '../icons';
-import { loadRecent, countThisWeek, type RecentPoster } from '../recent';
+import { useJobs } from '../JobsContext';
 // 原 repo 用 useServerFn 包装 server function，统一应用里 shim 是普通 async fn，
 // 直接调用即可，给一个同名 wrapper 保留下面这一行 useServerFn() 用法不变。
 const useServerFn = <T extends (...args: never[]) => unknown>(fn: T): T => fn;
@@ -230,6 +230,9 @@ function toSelectedPromotion(it: CategoryItem, best: DerivedBest): SelectedPromo
     groupId: it.is_group ? it.group_id ?? null : null,
     brandLabel: it.is_group ? it.brand_label ?? null : null,
     groupMembers: it.is_group ? (it.group_members ?? null) : null,
+    // 透传活动类型 -> 后端 worker 用它挑右下角二维码
+    baseActivityType: it.base_activity_type ?? null,
+    addonActivityType: it.addon_activity_type ?? null,
   };
 }
 
@@ -370,14 +373,16 @@ function GroupCard({
 }
 
 
-export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast }: {
+export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onGoHome, onToast }: {
   accent: string;
   onStart: (promo?: SelectedPromotion) => void;
   onStartBatch: (list: SelectedPromotion[]) => void;
   onShowGuide: () => void;
+  onGoHome: () => void;
   onToast: (text: string) => void;
 }) {
-  const [recent, setRecent] = React.useState<RecentPoster[]>([]);
+  // 「历史记录」徽标计数 -- 从 JobsContext 的 recentJobs(近 30 天服务端数据)算
+  const { recentJobs } = useJobs();
   // 后端把"允许叠券"和"只用会员价"算成两条独立的品类树,这里两份都缓存,按 promoMode 选用
   const [categoriesStack, setCategoriesStack] = React.useState<Array<{ name: string; items: CategoryItem[] }>>([]);
   const [categoriesMemberOnly, setCategoriesMemberOnly] = React.useState<Array<{ name: string; items: CategoryItem[] }>>([]);
@@ -394,7 +399,7 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
   const fetchReco = useServerFn(getPersonalizedPromotions);
   const guide = useGuide();
 
-  React.useEffect(() => { setRecent(loadRecent()); setPromoMode(loadPromoMode()); }, []);
+  React.useEffect(() => { setPromoMode(loadPromoMode()); }, []);
 
   // 首次进入 Home 且推荐已加载完成时，自动启动新手引导
   React.useEffect(() => {
@@ -442,7 +447,18 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
     return m;
   }, [categories, promoMode, onlyValid]);
 
-  const weekCount = countThisWeek(recent);
+  // 本周(周一开始)生成成功的海报数,徽标用
+  const weekCount = React.useMemo(() => {
+    const now = new Date();
+    const day = (now.getDay() + 6) % 7; // 0 = Monday
+    const monday = new Date(now);
+    monday.setHours(0, 0, 0, 0);
+    monday.setDate(now.getDate() - day);
+    const startMs = monday.getTime();
+    return recentJobs.filter(j =>
+      j.status === 'done' && new Date(j.created_at).getTime() >= startMs,
+    ).length;
+  }, [recentJobs]);
   const visibleCategories = React.useMemo(() => {
     // 不再做力度筛选：展示该分类下全部商品；按当前模式的折扣力度降序，
     // 力度相同时按当前模式的折后价降序排列；没有当前模式价格的排在最后。
@@ -553,15 +569,26 @@ export function ScreenHome({ accent, onStart, onStartBatch, onShowGuide, onToast
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
       {/* Header */}
-      {/* padding-top 加到 84px：让标题和右侧按钮避开 BrandHeader 胶囊（mt-3 + h-14 ≈ 68px）。 */}
+      {/* padding-top 用 safe-area + 36:之前 84 是要让开外层浮动玻璃胶囊,胶囊已删,
+         恢复 hero 原本的留白。 */}
       <div style={{
         background: `linear-gradient(160deg, ${accent}, ${TOKENS.redDark})`,
-        color: '#fff', padding: '84px 20px 28px', position: 'relative', overflow: 'hidden',
+        color: '#fff',
+        padding: 'calc(env(safe-area-inset-top, 0px) + 36px) 20px 28px',
+        position: 'relative', overflow: 'hidden',
         flexShrink: 0,
       }}>
         <div style={{ position: 'absolute', top: -60, right: -40, width: 200, height: 200, borderRadius: '50%', background: 'rgba(255,255,255,0.08)' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {/* 返回键(全站三模块左侧 ← 统一约定):入口屏没上一级,直接跳 / 退出 PosterApp */}
+            <button onClick={onGoHome} aria-label="返回" style={{
+              appearance: 'none', border: 0, padding: 6, cursor: 'pointer',
+              background: 'rgba(255,255,255,0.18)', color: '#fff',
+              borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Icon.Back size={22} color="#fff" />
+            </button>
             <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: 1 }}>促销海报设计师</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>

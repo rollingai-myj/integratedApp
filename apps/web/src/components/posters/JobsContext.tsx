@@ -1,19 +1,18 @@
-// Background poster-generation queue, lives at the app root.
-// Exposes enqueueBatch(items) to kick off N posters; tracks live progress via
-// polling since we no longer use Supabase Realtime.
+// 海报任务上下文(后端 worker 接管后的版本)。
 //
-// On top of raw batches we maintain a *Session*: a store-manager-visible
-// "work block" that aggregates multiple batches queued close together. UI
-// reads `activeSession` instead of the single-batch `active`.
+// 关键差别(对比旧版浏览器即 worker):
+//   - 不再调 processPosterJob、不再开 runWorkerPool —— AI 由 api-worker 容器跑。
+//   - 不再有 STUCK_MS 自杀逻辑 —— 卡死交给后端 claim_expires_at + reclaim 超时回收。
+//   - 轮询从 listMyActiveJobs(只回 active) 换成 listMyRecentJobs(近 30 天全状态)
+//     → 关 tab/换浏览器/换电脑回来,生成记录全在,任务队列「常驻」。
+//   - localStorage 里的 Session 只剩"当前队列的视觉分隔",不再承载结果数据。
 import * as React from "react";
 import { toast } from "sonner";
 import { authClient } from "./auth-client";
 import {
   enqueuePosterJobs,
-  processPosterJob,
-  listMyActiveJobs,
+  listMyRecentJobs,
   dismissBatch,
-  resetStaleJob,
   requeuePosterJob,
   type JobItemInput,
 } from "@/lib/poster-jobs.functions";
@@ -24,18 +23,12 @@ import {
   clearSession,
   getCurrentSession,
   isLive,
-  touchSession,
+  readHiddenJobIds,
+  addHiddenJobIds,
   type CurrentSession,
 } from "./session";
 
-const CONCURRENCY = 5;
-// A queued/processing job older than this is considered "stuck" (worker
-// likely died with the tab). We hide it from the active session view and
-// silently dismiss it, so it can't contaminate the next group's count.
-const STUCK_MS = 90_000;
-// Processing rows older than this almost certainly have no live worker —
-// reset them to queued so the auto-resume loop will pick them up.
-const PROCESSING_STALE_MS = 60_000;
+const RECENT_DAYS = 30;
 
 export type Job = {
   id: string;
@@ -75,9 +68,13 @@ type Ctx = {
   batches: Batch[];
   active: Batch | null;          // kept for backwards-compat (latest batch)
   activeSession: SessionView | null;
+  /** 全部近 30 天 task,「生成记录」面板用 */
+  recentJobs: Job[];
   enqueueBatch: (items: JobItemInput[]) => Promise<{ batchId: string; sessionId: string; appended: boolean }>;
   requeueJob: (sourceJob: Job, style: { styleId: "vibrant" | "premium" | "minimal" | "custom"; customStyle?: string | null; copy?: string; newPhotoBase64?: string }) => Promise<void>;
   dismiss: (batchId: string) => Promise<void>;
+  /** 把单个 job 从当前队列视图里藏掉(localStorage 标记,30 天历史不动) */
+  dismissJob: (jobId: string) => void;
   endCurrentSession: (reason: "saved" | "cleared" | "new-batch" | "timeout" | "logout") => void;
   dismissCurrentSession: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -115,9 +112,18 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
   const [jobs, setJobs] = React.useState<Job[]>([]);
   const [userId, setUserId] = React.useState<string | null>(null);
   const [sessionTick, setSessionTick] = React.useState(0); // re-read localStorage on change
-  const workersByBatch = React.useRef<Set<string>>(new Set());
+  const [hiddenIds, setHiddenIds] = React.useState<Set<string>>(() => readHiddenJobIds());
 
   const bumpSession = React.useCallback(() => setSessionTick(t => t + 1), []);
+
+  const dismissJob = React.useCallback((jobId: string) => {
+    addHiddenJobIds([jobId]);
+    setHiddenIds(prev => {
+      const next = new Set(prev);
+      next.add(jobId);
+      return next;
+    });
+  }, []);
 
   React.useEffect(() => {
     const sess = authClient.getSession();
@@ -133,7 +139,7 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, [bumpSession]);
 
-  // Dedupe by job.id, keeping the most "complete" copy (later status wins).
+  // Dedupe by job.id, keeping the most "advanced" status.
   const dedupeJobs = (rows: Job[]): Job[] => {
     const byId = new Map<string, Job>();
     const statusRank: Record<Job["status"], number> = {
@@ -142,7 +148,6 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     for (const r of rows) {
       const prev = byId.get(r.id);
       if (!prev) { byId.set(r.id, r); continue; }
-      // Prefer the row with the more advanced status; merge fields otherwise.
       const winner = statusRank[r.status] >= statusRank[prev.status] ? r : prev;
       const loser  = winner === r ? prev : r;
       byId.set(r.id, { ...loser, ...winner });
@@ -150,63 +155,23 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     return Array.from(byId.values());
   };
 
+  // 拉近 30 天全状态 → 服务端 = 唯一事实源。
+  // 关 tab 后回来也能完整重建队列 + 生成记录。
   const refresh = React.useCallback(async () => {
     if (!userId) return;
     try {
-      const { jobs: rows } = await listMyActiveJobs();
-      // listMyActiveJobs 只回 active（queued/claimed/processing），但本地已经完成
-      // 的 done/error 行必须保留——否则任务一完成 badge 就消失，用户看不到
-      // "已完成 N 张"的结果态。
-      setJobs((prev) => {
-        const fresh = dedupeJobs(rows as Job[]);
-        const freshIds = new Set(fresh.map((j) => j.id));
-        const keptLocal = prev.filter(
-          (j) => !freshIds.has(j.id) && (j.status === "done" || j.status === "error"),
-        );
-        return dedupeJobs([...keptLocal, ...fresh]);
-      });
+      const { jobs: rows } = await listMyRecentJobs(RECENT_DAYS);
+      setJobs(dedupeJobs(rows as Job[]));
     } catch (e) { console.warn("[jobs] list", e); }
   }, [userId]);
 
-  // Initial load + polling (replaces Supabase Realtime).
+  // Initial load + 3s polling.
   React.useEffect(() => {
     if (!userId) return;
     refresh();
     const interval = setInterval(() => refresh(), 3000);
     return () => clearInterval(interval);
   }, [userId, refresh]);
-
-  // Auto-resume processing for queued jobs (covers tab-reload mid-batch).
-  // Also rescues "processing" rows whose worker died with the previous tab:
-  // we reset them to queued (server-side, idempotent) then enqueue them.
-  React.useEffect(() => {
-    if (!userId) return;
-    const now = Date.now();
-    const queuedByBatch = new Map<string, Job[]>();
-    const staleProcessing: Job[] = [];
-    for (const j of jobs) {
-      const ageMs = now - new Date(j.created_at).getTime();
-      if (j.status === "queued") {
-        if (ageMs > STUCK_MS) continue; // hidden / will be dismissed elsewhere
-        if (!queuedByBatch.has(j.batch_id)) queuedByBatch.set(j.batch_id, []);
-        queuedByBatch.get(j.batch_id)!.push(j);
-      } else if (j.status === "processing" && ageMs > PROCESSING_STALE_MS && ageMs <= STUCK_MS) {
-        staleProcessing.push(j);
-      }
-    }
-    // Kick off rescue for stale-processing rows; once reset they'll show up
-    // as queued via realtime and the next effect run will pick them up.
-    for (const j of staleProcessing) {
-      resetStaleJob({ data: { jobId: j.id } }).catch(e => console.warn("[jobs] reset", e));
-    }
-    for (const [batchId, list] of queuedByBatch) {
-      if (workersByBatch.current.has(batchId)) continue;
-      workersByBatch.current.add(batchId);
-      runWorkerPool(list.map(j => j.id)).finally(() => {
-        workersByBatch.current.delete(batchId);
-      });
-    }
-  }, [jobs, userId]);
 
   // Idle timeout: every 60s, if session is fully finalized and idle > TTL,
   // auto-end it silently so the next enqueue starts a fresh group.
@@ -222,72 +187,7 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(t);
   }, [bumpSession]);
 
-  const runWorkerPool = async (jobIds: string[]) => {
-    const queue = jobIds.slice();
-    const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
-      while (queue.length > 0) {
-        const id = queue.shift();
-        if (!id) break;
-        // Optimistically mark as processing locally — Supabase realtime does
-        // NOT guarantee event order, so the server's "processing" UPDATE can
-        // arrive after "done" and get dropped by the statusRank dedupe,
-        // causing UI to jump straight from "排队中" to the finished image.
-        setJobs(prev => prev.map(j =>
-          j.id === id && j.status === "queued" ? { ...j, status: "processing" } : j
-        ));
-        try {
-          // process 是同步通路：返回时该 job 已经 succeeded/failed。立即用返回值
-          // 更新本地状态，避免依赖下一轮 refresh —— 下一轮 refresh 拉的是 active
-          // 集合（不含 done/error），如果不在这里就地更新，badge 会从"处理中"
-          // 直接消失（status=processing 的占位被服务端 active 集合替换为空）。
-          const r = await processPosterJob({ data: { jobId: id } });
-          if (r.status) {
-            // 必须同时带 posterImageUrl/error 进本地 state ——
-            // refresh() 只回 active 集合,done/error 不会再被刷新带回,
-            // 这里不就地拼上的话用户永远看不到结果图 / 错误原因。
-            setJobs(prev => prev.map(j => (j.id === id ? {
-              ...j,
-              status: r.status!,
-              result_image_url: r.posterImageUrl ?? j.result_image_url,
-              error: r.errorMessage ?? j.error,
-            } : j)));
-          }
-        } catch (e) {
-          console.warn("[jobs] process failed", id, e);
-          setJobs(prev => prev.map(j => (j.id === id ? { ...j, status: "error", error: (e as Error).message } : j)));
-        }
-      }
-    });
-    await Promise.all(workers);
-  };
-
   const enqueueBatch = async (items: JobItemInput[]) => {
-    // Health check: if the existing "live" session is actually empty after
-    // we hide stuck/abandoned rows, force-end it so the next batch starts a
-    // fresh group instead of inheriting phantom counters.
-    const existing = getCurrentSession();
-    if (existing && existing.endedAt === null) {
-      const now = Date.now();
-      const aliveInSession = jobsRef.current.filter(j => {
-        if (!existing.batchIds.includes(j.batch_id)) return false;
-        const ageMs = now - new Date(j.created_at).getTime();
-        const isStuck = (j.status === "queued" || j.status === "processing") && ageMs > STUCK_MS;
-        return !isStuck;
-      });
-      if (aliveInSession.length === 0 && existing.batchIds.length > 0) {
-        // Silently dismiss the phantom batches so they stop being pulled back.
-        const ids = existing.batchIds.slice();
-        endSession("timeout");
-        clearSession();
-        bumpSession();
-        for (const bid of ids) {
-          dismissBatch({ data: { batchId: bid } }).catch(() => {});
-        }
-        // Drop them from local state too.
-        setJobs(prev => prev.filter(j => !ids.includes(j.batch_id)));
-      }
-    }
-
     const res = await enqueuePosterJobs({ data: { items } });
 
     // Update Session BEFORE state set so activeSession picks it up.
@@ -295,26 +195,14 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     appendBatchToSession(res.batchId ?? '');
     bumpSession();
 
-    // No optimistic local insert — realtime + refresh are the only source of
-    // truth for job rows, which avoids "ghost" duplicates of the same batch.
-    // Trigger a refresh as a safety net in case realtime is briefly delayed.
-    refresh();
-
-    // 直接踢起 worker pool 跑这批入队的 jobIds，不要等下一轮 3s 轮询。
-    // 之前依赖 jobs state 更新 → 自动 resume effect 重跑 → 启动 worker，
-    // 实测从 enqueue 到 worker 真正发 process 请求中间有 20-30s 空窗（轮询节奏
-    // + setJobs 还没看到新 row 等多重因素叠加），用户体验是"提交后转半天没反应"。
-    // workersByBatch 的 idempotent 保护已经做了，重复 add 不会起两个 worker。
+    // 把刚入队的 job 占位插到本地 state(状态 queued),让 badge/drawer 秒亮。
+    // 下一轮 3s refresh 拉到真实状态(processing/done/error)会按 statusRank 合并覆盖。
     if (res.batchId && Array.isArray(res.jobIds) && res.jobIds.length > 0) {
-      // 同时把新 job 占位插到本地 state，badge / drawer 立刻显示"生成中"，
-      // 而不是要等到下一轮 active 轮询才看到行 → 用户不再以为没响应。
-      // 下一轮真 API 返的行会按 statusRank 合并（processing 优先级最低，
-      // server 给出 succeeded/failed 时会覆盖）。
       const now = new Date().toISOString();
       const placeholderJobs: Job[] = res.jobIds.map((id, idx) => ({
         id,
         batch_id: res.batchId,
-        status: "processing",
+        status: "queued",
         result_image_url: null,
         error: null,
         position: idx,
@@ -325,27 +213,18 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
         created_at: now,
       }));
       setJobs(prev => dedupeJobs([...prev, ...placeholderJobs]));
-
-      if (!workersByBatch.current.has(res.batchId)) {
-        workersByBatch.current.add(res.batchId);
-        runWorkerPool(res.jobIds).finally(() => {
-          workersByBatch.current.delete(res.batchId);
-        });
-      }
     }
+
+    // 立刻拉一遍,缩短"提交→看到 worker 拣起"的窗口(从 3s 降到 ~100ms)
+    refresh();
 
     // Toast: only when appending into an existing live session.
     if (!created) {
-      const nowMs = Date.now();
-      const known = jobsRef.current.filter(j => {
-        if (!session.batchIds.includes(j.batch_id)) return false;
-        if (j.batch_id === res.batchId) return false; // don't double-count new batch
-        const ageMs = nowMs - new Date(j.created_at).getTime();
-        const isStuck = (j.status === "queued" || j.status === "processing") && ageMs > STUCK_MS;
-        return !isStuck;
-      }).length;
+      const known = jobsRef.current.filter(j =>
+        session.batchIds.includes(j.batch_id) && j.batch_id !== res.batchId,
+      ).length;
       const newTotal = known + items.length;
-      toast.success(`已加入本组 · 现共 ${newTotal} 张`);
+      toast.success(`已加入队列 · 当前 ${newTotal} 张`);
     }
 
     return { batchId: res.batchId, sessionId: session.id, appended: !created };
@@ -371,7 +250,11 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     if (!s) return;
     const ids = s.batchIds.slice();
     setJobs(prev => prev.filter(j => !ids.includes(j.batch_id)));
-    endSession("cleared");
+    // clearSession 而非 endSession:后者只标 endedAt,session.batchIds 还在,
+    // 下一轮 refresh 把后端的 canceled 行拉回 jobs,activeSession 又重新渲染出
+    // 全失败状态的浮球。clearSession 直接抹掉 localStorage,
+    // getCurrentSession 返回 null → activeSession 也返回 null,浮球真正消失。
+    clearSession();
     bumpSession();
     for (const bid of ids) {
       try { await dismissBatch({ data: { batchId: bid } }); } catch (e) { console.warn(e); }
@@ -392,7 +275,7 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
       },
     });
 
-    // 如果服务端把失败的原行删了，本地也立刻摘掉，避免汇总页面和悬浮球的失败数还残留。
+    // 如果服务端把失败的原行删了,本地也立刻摘掉
     if (res.sourceDeleted) {
       setJobs(prev => prev.filter(j => j.id !== sourceJob.id));
     }
@@ -402,15 +285,13 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     appendBatchToSession(res.batchId ?? '');
     bumpSession();
 
-    // No optimistic insert — let realtime / refresh deliver the new row,
-    // so we never render a ghost duplicate alongside it.
     refresh();
 
     const s = getCurrentSession();
     const known = s
       ? jobsRef.current.filter(j => s.batchIds.includes(j.batch_id) && j.batch_id !== res.batchId && j.id !== sourceJob.id).length
       : 0;
-    toast.success(`已加入本组 · 现共 ${known + 1} 张`);
+    toast.success(`已加入队列 · 当前 ${known + 1} 张`);
   };
 
   const batches = React.useMemo(() => buildBatches(jobs), [jobs]);
@@ -421,39 +302,12 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     return batches.find(b => b.done > 0 || b.error > 0) ?? null;
   }, [batches]);
 
-  // Track stuck batch_ids we've already dismissed to avoid spamming the API.
-  const dismissedStuckBatches = React.useRef<Set<string>>(new Set());
-
   const activeSession = React.useMemo<SessionView | null>(() => {
     // sessionTick is read implicitly to re-evaluate when localStorage changes.
     void sessionTick;
     const s = getCurrentSession();
     if (!s) return null;
-    const now = Date.now();
-    // Drop stuck queued/processing rows from the user-visible session view.
-    const rawSessionJobs = jobs.filter(j => s.batchIds.includes(j.batch_id));
-    const sessionJobs = rawSessionJobs.filter(j => {
-      const ageMs = now - new Date(j.created_at).getTime();
-      const isStuck = (j.status === "queued" || j.status === "processing") && ageMs > STUCK_MS;
-      return !isStuck;
-    });
-    // Silently dismiss any batch where ALL remaining rows are stuck — they
-    // are leftovers from a previous tab that crashed, and the user has no
-    // way to recover them. Skip batches that have at least one healthy row.
-    const batchHealth = new Map<string, { stuck: number; healthy: number }>();
-    for (const j of rawSessionJobs) {
-      const h = batchHealth.get(j.batch_id) ?? { stuck: 0, healthy: 0 };
-      const ageMs = now - new Date(j.created_at).getTime();
-      const isStuck = (j.status === "queued" || j.status === "processing") && ageMs > STUCK_MS;
-      if (isStuck) h.stuck += 1; else h.healthy += 1;
-      batchHealth.set(j.batch_id, h);
-    }
-    for (const [bid, h] of batchHealth) {
-      if (h.healthy === 0 && h.stuck > 0 && !dismissedStuckBatches.current.has(bid)) {
-        dismissedStuckBatches.current.add(bid);
-        dismissBatch({ data: { batchId: bid } }).catch(() => {});
-      }
-    }
+    const sessionJobs = jobs.filter(j => s.batchIds.includes(j.batch_id) && !hiddenIds.has(j.id));
 
     if (s.endedAt !== null && sessionJobs.length === 0) return null;
     if (sessionJobs.length === 0) return null;
@@ -480,12 +334,13 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
       allFinal: activeN === 0,
       endedAt: s.endedAt,
     };
-  }, [jobs, sessionTick]);
+  }, [jobs, sessionTick, hiddenIds]);
 
   return (
     <JobsCtx.Provider value={{
       batches, active, activeSession,
-      enqueueBatch, requeueJob, dismiss,
+      recentJobs: jobs,
+      enqueueBatch, requeueJob, dismiss, dismissJob,
       endCurrentSession, dismissCurrentSession,
       refresh,
     }}>
