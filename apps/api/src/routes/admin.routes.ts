@@ -48,6 +48,13 @@ import {
   getTopActiveStores,
   getSceneDistribution,
 } from '../services/admin-dashboard.service.js';
+import {
+  listChanges,
+  getChangeDetail,
+  listStoreOptions,
+  listSceneOptions,
+  exportChangesCsv,
+} from '../services/admin-changes.service.js';
 import { createTasks as createPosterTasks } from '../services/posters.service.js';
 
 export const adminRouter = Router();
@@ -308,6 +315,97 @@ adminRouter.get(
   asyncHandler(async (req, res) => {
     const q = dashboardQuerySchema.parse(req.query);
     const scenes = await getSceneDistribution(q.days ?? 30);
+    res.json({ scenes });
+  }),
+);
+
+// 调改记录(admin-web 表格)----------------------------------------------
+
+const changesQuerySchema = z.object({
+  storeId: z.string().uuid().optional(),
+  scene: z.coerce.number().int().optional(),
+  action: z.enum(['add', 'remove']).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  search: z.string().max(64).optional(),
+  page: z.coerce.number().int().min(1).max(1000).optional(),
+  pageSize: z.coerce.number().int().min(1).max(200).optional(),
+  sortBy: z.enum(['created_at', 'effective_date']).optional(),
+  sortDir: z.enum(['asc', 'desc']).optional(),
+});
+
+/** 分页 + 筛选 + 排序拉调改记录 */
+adminRouter.get(
+  '/changes',
+  asyncHandler(async (req, res) => {
+    const q = changesQuerySchema.parse(req.query);
+    const page = q.page ?? 1;
+    const pageSize = q.pageSize ?? 50;
+    const result = await listChanges({
+      storeId: q.storeId,
+      scene: q.scene,
+      action: q.action,
+      from: q.from,
+      to: q.to,
+      search: q.search,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      sortBy: q.sortBy,
+      sortDir: q.sortDir,
+    });
+    res.json({ ...result, page, pageSize });
+  }),
+);
+
+/** 单条详情(行展开拿 ai_diagnosis 完整 JSON 用) */
+adminRouter.get(
+  '/changes/:id',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    const detail = await getChangeDetail(req.params.id);
+    if (!detail) throw new AppError(404, ErrorCodes.NOT_FOUND, '记录不存在');
+    res.json(detail);
+  }),
+);
+
+/** CSV 导出(同一组筛选,不分页) */
+adminRouter.get(
+  '/changes.csv',
+  asyncHandler(async (req, res) => {
+    const q = changesQuerySchema.parse(req.query);
+    const csv = await exportChangesCsv({
+      storeId: q.storeId,
+      scene: q.scene,
+      action: q.action,
+      from: q.from,
+      to: q.to,
+      search: q.search,
+      sortBy: q.sortBy,
+      sortDir: q.sortDir,
+    });
+    const filename = `assortment-changes-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
+  }),
+);
+
+/** 筛选下拉:门店列表 */
+adminRouter.get(
+  '/changes-filters/stores',
+  asyncHandler(async (_req, res) => {
+    const stores = await listStoreOptions();
+    res.json({ stores });
+  }),
+);
+
+/** 筛选下拉:场景列表 */
+adminRouter.get(
+  '/changes-filters/scenes',
+  asyncHandler(async (_req, res) => {
+    const scenes = await listSceneOptions();
     res.json({ scenes });
   }),
 );
