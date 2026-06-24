@@ -67,6 +67,10 @@ import {
   allSpecs,
   type UploadKind,
 } from '../services/admin-uploads/schemas.js';
+import {
+  applyBatch,
+  rollbackBatch,
+} from '../services/admin-uploads/apply.js';
 import { createTasks as createPosterTasks } from '../services/posters.service.js';
 
 export const adminRouter = Router();
@@ -512,6 +516,47 @@ adminRouter.delete(
     await deleteStagedBatch(req.params.id);
     auditAdmin(req, 'app_setting_change', `删除上传批次`, req.params.id, {});
     res.status(204).end();
+  }),
+);
+
+/** 应用 staged 批次到业务表;事务内完成,落库失败整体回滚 */
+adminRouter.post(
+  '/uploads/batches/:id/apply',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    const summary = await applyBatch({
+      batchId: req.params.id,
+      appliedBy: req.user!.id,
+    });
+    auditAdmin(
+      req,
+      'app_setting_change',
+      `应用上传批次 (新增 ${summary.inserted}, 更新 ${summary.updated}, 跳过 ${summary.skipped})`,
+      req.params.id,
+      { ...summary },
+    );
+    res.json(summary);
+  }),
+);
+
+/** 回滚 applied 批次,按 before_snapshot 还原 */
+adminRouter.post(
+  '/uploads/batches/:id/rollback',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    const result = await rollbackBatch(req.params.id);
+    auditAdmin(
+      req,
+      'app_setting_change',
+      `回滚上传批次 (${result.reverted} 条)`,
+      req.params.id,
+      { ...result },
+    );
+    res.json(result);
   }),
 );
 

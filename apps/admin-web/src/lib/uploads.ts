@@ -104,6 +104,32 @@ export async function deleteBatch(id: string): Promise<void> {
   await apiFetch<void>(`/admin/uploads/batches/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+export interface ApplySummary {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  skipReasons: Array<{ row: number; reason: string }>;
+}
+
+export interface RollbackResult {
+  reverted: number;
+  warnings: string[];
+}
+
+export async function applyBatch(id: string): Promise<ApplySummary> {
+  return apiFetch<ApplySummary>(
+    `/admin/uploads/batches/${encodeURIComponent(id)}/apply`,
+    { method: 'POST' },
+  );
+}
+
+export async function rollbackBatchApi(id: string): Promise<RollbackResult> {
+  return apiFetch<RollbackResult>(
+    `/admin/uploads/batches/${encodeURIComponent(id)}/rollback`,
+    { method: 'POST' },
+  );
+}
+
 export const STATUS_LABEL: Record<UploadStatus, string> = {
   staged: '已暂存',
   applied: '已应用',

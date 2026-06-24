@@ -17,12 +17,15 @@ import {
   fetchBatches,
   fetchBatchDetail,
   deleteBatch,
+  applyBatch,
+  rollbackBatchApi,
   templateUrl,
   STATUS_LABEL,
   type UploadKind,
   type UploadBatchSummary,
   type UploadStatus,
   type ColumnSpec,
+  type ApplySummary,
 } from '@/lib/uploads';
 
 export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSpec }) {
@@ -57,6 +60,32 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
     },
     onError: (e: unknown) => {
       const msg = e instanceof ApiError ? e.message : '删除失败';
+      flashToast('error', msg);
+    },
+  });
+
+  const applyM = useMutation({
+    mutationFn: (id: string) => applyBatch(id),
+    onSuccess: (r: ApplySummary) => {
+      qc.invalidateQueries({ queryKey: ['uploads', kind, 'batches'] });
+      qc.invalidateQueries({ queryKey: ['uploads', 'detail'] });
+      flashToast('success', `已应用 · 新增 ${r.inserted} · 更新 ${r.updated} · 跳过 ${r.skipped}`);
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof ApiError ? e.message : '应用失败';
+      flashToast('error', msg);
+    },
+  });
+
+  const rollbackM = useMutation({
+    mutationFn: (id: string) => rollbackBatchApi(id),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['uploads', kind, 'batches'] });
+      qc.invalidateQueries({ queryKey: ['uploads', 'detail'] });
+      flashToast('success', `已回滚 ${r.reverted} 条`);
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof ApiError ? e.message : '回滚失败';
       flashToast('error', msg);
     },
   });
@@ -213,13 +242,26 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
         {(batchesQ.data ?? []).map(b => (
           <BatchCard
             key={b.id}
+            kind={kind}
             batch={b}
             expanded={expanded === b.id}
             onToggle={() => setExpanded(expanded === b.id ? null : b.id)}
             onDelete={() => {
               if (confirm(`删除批次「${b.fileName}」?`)) deleteM.mutate(b.id);
             }}
+            onApply={() => {
+              if (confirm(`将「${b.fileName}」 ${b.validRows} 行有效数据落到业务表?\n应用后可在批次列表里点「回滚」撤销。`)) {
+                applyM.mutate(b.id);
+              }
+            }}
+            onRollback={() => {
+              if (confirm(`回滚「${b.fileName}」?会撤销 apply 时入库 / 修改的所有行。`)) {
+                rollbackM.mutate(b.id);
+              }
+            }}
             deleting={deleteM.isPending && deleteM.variables === b.id}
+            applying={applyM.isPending && applyM.variables === b.id}
+            rollingBack={rollbackM.isPending && rollbackM.variables === b.id}
           />
         ))}
       </Panel>
@@ -245,13 +287,19 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
 }
 
 function BatchCard({
-  batch, expanded, onToggle, onDelete, deleting,
+  kind, batch, expanded, onToggle, onDelete, onApply, onRollback,
+  deleting, applying, rollingBack,
 }: {
+  kind: UploadKind;
   batch: UploadBatchSummary;
   expanded: boolean;
   onToggle: () => void;
   onDelete: () => void;
+  onApply: () => void;
+  onRollback: () => void;
   deleting: boolean;
+  applying: boolean;
+  rollingBack: boolean;
 }) {
   const detailQ = useQuery({
     queryKey: ['uploads', 'detail', batch.id],
@@ -261,6 +309,8 @@ function BatchCard({
   });
 
   const canDelete = batch.status === 'staged' || batch.status === 'failed';
+  const canApply = batch.status === 'staged' && batch.validRows > 0 && kind !== 'promotions';
+  const canRollback = batch.status === 'applied';
 
   return (
     <div style={{
@@ -302,26 +352,28 @@ function BatchCard({
             </span>
           )}
         </div>
+        {canApply && (
+          <ActionBtn
+            label={applying ? '应用中…' : '应用'}
+            disabled={applying}
+            primary
+            onClick={e => { e.stopPropagation(); onApply(); }}
+          />
+        )}
+        {canRollback && (
+          <ActionBtn
+            label={rollingBack ? '回滚中…' : '回滚'}
+            disabled={rollingBack}
+            onClick={e => { e.stopPropagation(); onRollback(); }}
+          />
+        )}
         {canDelete && (
-          <button
-            onClick={e => { e.stopPropagation(); onDelete(); }}
+          <ActionBtn
+            label="删除"
             disabled={deleting}
-            style={{
-              appearance: 'none',
-              border: `1px solid ${TOKENS.line}`,
-              background: TOKENS.card,
-              color: TOKENS.danger,
-              padding: '5px 10px',
-              borderRadius: 6,
-              fontSize: TOKENS.fXs,
-              fontWeight: 600,
-              cursor: deleting ? 'default' : 'pointer',
-              opacity: deleting ? 0.5 : 1,
-              fontFamily: 'inherit',
-            }}
-          >
-            删除
-          </button>
+            danger
+            onClick={e => { e.stopPropagation(); onDelete(); }}
+          />
         )}
         <span style={{ color: TOKENS.inkMuted, fontSize: 10 }}>{expanded ? '▴' : '▾'}</span>
       </div>
@@ -337,6 +389,11 @@ function BatchCard({
           )}
           {detailQ.data && (
             <>
+              {/* applied 批次的应用摘要 */}
+              {detailQ.data.status === 'applied' && (
+                <ApplySummaryBlock summary={detailQ.data.applySummary} />
+              )}
+
               {detailQ.data.parseErrors.length > 0 && (
                 <div style={{ marginTop: 16 }}>
                   <div style={{
@@ -403,22 +460,117 @@ function BatchCard({
                 </div>
               )}
 
-              <div style={{
-                marginTop: 16,
-                padding: '10px 14px',
-                borderRadius: 8,
-                background: '#FFF7E6',
-                border: '1px solid #FCE4A6',
-                fontSize: TOKENS.fXs,
-                color: '#92500A',
-              }}>
-                💡 应用 / 回滚功能即将上线 — 数据已暂存,可在下个版本「应用」到业务表。
-              </div>
             </>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+function ApplySummaryBlock({ summary }: { summary: Record<string, unknown> }) {
+  const inserted = typeof summary.inserted === 'number' ? summary.inserted : 0;
+  const updated  = typeof summary.updated  === 'number' ? summary.updated  : 0;
+  const skipped  = typeof summary.skipped  === 'number' ? summary.skipped  : 0;
+  const skipReasons = Array.isArray(summary.skipReasons)
+    ? summary.skipReasons as Array<{ row: number; reason: string }>
+    : [];
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{
+        fontSize: TOKENS.fXs, fontWeight: 700, color: TOKENS.inkMuted,
+        marginBottom: 6, letterSpacing: 0.3,
+      }}>
+        应用结果
+      </div>
+      <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+        <SummaryStat label="新增" value={inserted} color={TOKENS.success} />
+        <SummaryStat label="更新" value={updated} color={TOKENS.info} />
+        <SummaryStat label="跳过" value={skipped} color={skipped > 0 ? TOKENS.warn : TOKENS.inkMuted} />
+      </div>
+      {skipReasons.length > 0 && (
+        <div style={{
+          maxHeight: 200,
+          overflowY: 'auto',
+          background: TOKENS.bg,
+          border: `1px solid ${TOKENS.lineSoft}`,
+          borderRadius: 6,
+          padding: '8px 12px',
+          fontSize: TOKENS.fXs,
+          color: TOKENS.inkSoft,
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: 4, color: TOKENS.inkMuted }}>
+            跳过原因(前 {skipReasons.length} 条)
+          </div>
+          {skipReasons.map((r, i) => (
+            <div key={i} style={{ padding: '2px 0' }}>
+              <span style={{
+                display: 'inline-block', width: 36,
+                color: TOKENS.inkMuted, fontVariantNumeric: 'tabular-nums',
+              }}>
+                行 {r.row}
+              </span>
+              {r.reason}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SummaryStat({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div style={{
+      flex: 1,
+      background: TOKENS.card,
+      border: `1px solid ${TOKENS.lineSoft}`,
+      borderRadius: 8,
+      padding: '10px 14px',
+    }}>
+      <div style={{ fontSize: TOKENS.fXs, color: TOKENS.inkMuted }}>{label}</div>
+      <div style={{
+        fontSize: TOKENS.fXl, fontWeight: 800, color,
+        fontVariantNumeric: 'tabular-nums', marginTop: 2,
+      }}>
+        {value.toLocaleString()}
+      </div>
+    </div>
+  );
+}
+
+function ActionBtn({
+  label, onClick, disabled, primary, danger,
+}: {
+  label: string;
+  onClick: (e: React.MouseEvent) => void;
+  disabled?: boolean;
+  primary?: boolean;
+  danger?: boolean;
+}) {
+  const color = primary ? '#fff' : danger ? TOKENS.danger : TOKENS.ink;
+  const bg = primary ? TOKENS.red : TOKENS.card;
+  const border = primary ? TOKENS.red : TOKENS.line;
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        appearance: 'none',
+        border: `1px solid ${border}`,
+        background: bg,
+        color,
+        padding: '5px 12px',
+        borderRadius: 6,
+        fontSize: TOKENS.fXs,
+        fontWeight: 600,
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        fontFamily: 'inherit',
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
