@@ -1,25 +1,25 @@
 /**
  * 销量跟踪 Tab —— 历史记录里第三个 tab。
  *
- * 数据来源：sessionHistory（用户在 SessionDrawer 点"保存到历史"才落的 sessions）。
+ * 数据来源:JobsContext 的 recentJobs(近 30 天所有 task,服务端)。
  *
  * 内容：
- *   - 主视图：列出在**当前店**做过海报且被保存的 SKU（按 sku 聚合）；每个 card 显示
+ *   - 主视图：列出在**当前店**做过海报且生成成功的 SKU（按 sku 聚合）；每个 card 显示
  *     最近海报缩略图、商品名（从 useStoreSkus 实时查）、SKU 号、活动次数、最近活动日期
- *   - 详情视图：点击 SKU 进入；柱状图展示过去 90 天 weekly 销量，活动时间立 marker
+ *   - 详情视图：点击 SKU 进入；柱状图展示过去 90 天 weekly 销量,活动时间立 marker
  *
- * 老数据（saveSession 时未落 storeId）在此 tab 不显示——避免数据错配：
- * A 店做的 SKU 用 B 店的销量曲线显然不对。
+ * 跨店保护:仅显示 storeId === currentStoreId 的海报,避免 A 店做的 SKU 用 B 店销量曲线。
  */
 import * as React from 'react';
 import { TOKENS } from './tokens';
-import type { SessionHistory } from './sessionHistory';
+import type { Job } from './JobsContext';
 import { useStoreSkus } from '@/lib/hooks';
 import { SalesTrackingChart } from './SalesTrackingChart';
 
 interface Props {
   accent: string;
-  sessions: SessionHistory[];
+  /** 来自 JobsContext.recentJobs(近 30 天) */
+  jobs: Job[];
   currentStoreId: string | null;
   onPreviewPoster: (url: string) => void;
 }
@@ -35,7 +35,7 @@ interface TrackedSku {
 
 export function SalesTrackingView({
   accent,
-  sessions,
+  jobs,
   currentStoreId,
   onPreviewPoster,
 }: Props) {
@@ -49,33 +49,41 @@ export function SalesTrackingView({
     return m;
   }, [skusQuery.data]);
 
-  // 聚合 sessions → trackedSkus
+  // 聚合 recentJobs → trackedSkus
+  // 过滤条件:
+  //   1) status === 'done'    成功生成才有海报图
+  //   2) 同店(storeId 匹配)   避免 A 店做的 SKU 用 B 店销量曲线
+  //   3) 有 sku                没绑商品的海报无销量可追
+  //   4) 有 result_image_url   缩略图
   const trackedSkus = React.useMemo<TrackedSku[]>(() => {
     if (!currentStoreId) return [];
     const map = new Map<string, TrackedSku>();
-    // sessions 按时间倒序遍历，保证 latestImageUrl 是最新的（首个写入）
-    const sorted = [...sessions].sort((a, b) => b.startedAt - a.startedAt);
-    for (const s of sorted) {
-      if (s.storeId !== currentStoreId) continue;  // 跳过别的店 + 老数据（storeId 空）
-      for (const item of s.items) {
-        if (!item.sku) continue;
-        const existing = map.get(item.sku);
-        if (existing) {
-          existing.posterTimes.push(s.startedAt);
-        } else {
-          map.set(item.sku, {
-            sku: item.sku,
-            posterTimes: [s.startedAt],
-            latestImageUrl: item.imageUrl,
-          });
-        }
+    const sorted = [...jobs].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+    for (const j of sorted) {
+      if (j.status !== 'done') continue;
+      if (j.params?.storeId !== currentStoreId) continue;
+      const sku = j.params?.sku;
+      if (!sku) continue;
+      const imageUrl = j.result_image_url;
+      if (!imageUrl) continue;
+      const ts = new Date(j.created_at).getTime();
+      const existing = map.get(sku);
+      if (existing) {
+        existing.posterTimes.push(ts);
+      } else {
+        map.set(sku, {
+          sku,
+          posterTimes: [ts],
+          latestImageUrl: imageUrl,
+        });
       }
     }
-    // 转数组，按"最近活动日期"倒序
     return Array.from(map.values()).sort(
       (a, b) => Math.max(...b.posterTimes) - Math.max(...a.posterTimes),
     );
-  }, [sessions, currentStoreId]);
+  }, [jobs, currentStoreId]);
 
   if (!currentStoreId) {
     return <EmptyState text="未选择门店" />;
@@ -102,7 +110,7 @@ export function SalesTrackingView({
 
   if (trackedSkus.length === 0) {
     return (
-      <EmptyState text="还没保存过带 SKU 的活动。保存「按组」历史时，带商品的活动会自动出现在这里。" />
+      <EmptyState text="近 30 天没有可追踪的活动。生成带商品 SKU 的海报后,会自动出现在这里。" />
     );
   }
 

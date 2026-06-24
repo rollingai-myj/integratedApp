@@ -1,15 +1,16 @@
 /**
  * Shim：兼容原 poster repo 的 @/lib/poster-jobs.functions
  *
- * Phase 5 数据层切换：
- * 旧的 /posters/queue/* 路径已下线；统一后端走 task/generation 模型。
- * 这里把老 JobRow / batch / enqueue / process / reset / retry 形状映射到新 API：
- *   enqueue   → POST /posters/tasks          （建一批任务，每条返回 task + generation #1=queued）
- *   process   → POST /posters/generations:claim { generationId? }  （精确认领 + 同步执行）
- *   listActive→ GET  /posters/tasks?scope=mine&status=active        （含 latestGeneration）
- *   dismiss   → DELETE /posters/tasks/batch/:batchId
- *   reset     → 反查 task → POST /posters/tasks/:taskId/generations  （新 attempt 替代 reset）
- *   requeue   → 反查 task → POST /posters/tasks                     （新任务，patch 业务字段）
+ * 任务架构（后端 worker 上线后）：
+ *   - 浏览器不再是 worker。enqueue 后由后端 api-worker 容器轮询 + 调 AI + 写结果。
+ *   - 前端只 POST 入队 + 3s 轮询 /posters/tasks?status=recent（近 30 天，全状态）。
+ *   - 任务队列 / 生成记录 都从这个 snapshot 计算 —— 关 tab/换设备/换浏览器都续。
+ *
+ * 映射：
+ *   enqueue        → POST   /posters/tasks
+ *   listRecent     → GET    /posters/tasks?scope=mine&status=recent&days=30
+ *   dismiss(组)    → DELETE /posters/tasks/batch/:batchId
+ *   requeue        → 反查 task → POST /posters/tasks（新任务，patch 业务字段）
  *
  * 状态合并：
  *   claimed/processing → processing
@@ -17,7 +18,8 @@
  *   failed/canceled → error
  *   queued → queued
  *
- * 上层 JobsContext / screens 零修改。
+ * 旧的 processPosterJob / resetStaleJob 已下线 —— 后端 worker 接管，
+ * 卡死走 store_poster_generations.claim_expires_at + 服务端自动 reclaim。
  */
 import type {
   PosterTemplate,
@@ -44,6 +46,9 @@ export interface JobItemInput {
   storeId?: string | null;
   sku?: string | null;
   category?: string | null;
+  /** 活动类型 raw 枚举,worker 用来挑右下角二维码 */
+  baseActivityType?: string | null;
+  addonActivityType?: string | null;
 }
 
 interface ServerFnInput<T> {
@@ -99,6 +104,8 @@ function itemToTaskCreate(it: JobItemInput): CreatePosterTasksRequest['tasks'][n
   const extras: Record<string, unknown> = {};
   if (it.productImageUrls?.length) extras.productImageUrls = it.productImageUrls;
   if (it.brandLabel) extras.brandLabel = it.brandLabel;
+  if (it.baseActivityType) extras.baseActivityType = it.baseActivityType;
+  if (it.addonActivityType) extras.addonActivityType = it.addonActivityType;
   return {
     template: it.styleId satisfies PosterTemplate,
     mode: mapModeToBackend(it.mode),
@@ -135,6 +142,8 @@ function taskToRow(task: PosterTask, position = 0): JobRow {
       template: task.template,
       mode: task.mode,
       categoryName: null,
+      // 销量跟踪需要按门店过滤(避免 A 店做的 SKU 用 B 店销量曲线)
+      storeId: task.storeId,
     },
     created_at: gen?.createdAt ?? task.createdAt,
   };
@@ -179,40 +188,12 @@ export async function enqueuePosterJobs(
 }
 
 /**
- * 触发一个 worker：调后端 claim+process。
- * 后端是同步执行（OpenRouter 调用 ~30s），所以这个 Promise 完成 = 该 job 已 succeeded/failed。
- * 不传 jobId = worker 模式（认领下一条）；带 jobId = 精确认领（shim 同步语义）。
- * 没有可认领的任务时后端 204 → 返回 { jobId: null, status: null }。
+ * 拉近 30 天我的所有任务(全状态):队列常驻 / 生成记录 / 历史回放都用它。
+ * 后端 worker 接管 AI 执行 -> 前端不再调 claim。
  */
-export async function processPosterJob(
-  input?: ServerFnInput<{ jobId?: string }>,
-): Promise<{
-  jobId: string | null;
-  status: JobStatus | null;
-  posterImageUrl: string | null;
-  errorMessage: string | null;
-}> {
-  const body = input?.data?.jobId ? { generationId: input.data.jobId } : {};
-  const res = await jsonFetch<{ generation: PosterGeneration } | undefined>(
-    '/posters/generations:claim',
-    { method: 'POST', body: JSON.stringify(body) },
-  );
-  if (!res?.generation) {
-    return { jobId: null, status: null, posterImageUrl: null, errorMessage: null };
-  }
-  // succeeded 时回 URL,failed 时回 errorMessage —— 不带回来本地状态拿不到,
-  // 因为后续 refresh() 只拉 status=active 集合,done/error 不会再回流。
-  return {
-    jobId: res.generation.id,
-    status: statusToFront(res.generation.status),
-    posterImageUrl: res.generation.posterImageUrl,
-    errorMessage: res.generation.errorMessage,
-  };
-}
-
-export async function listMyActiveJobs(): Promise<{ jobs: JobRow[] }> {
+export async function listMyRecentJobs(days = 30): Promise<{ jobs: JobRow[] }> {
   const res = await jsonFetch<ListPosterTasksResponse>(
-    '/posters/tasks?scope=mine&status=active',
+    `/posters/tasks?scope=mine&status=recent&days=${days}`,
   );
   const jobs = res.tasks.map((t, i) => taskToRow(t, i));
   return { jobs };
@@ -229,36 +210,6 @@ export async function dismissBatch(
     `/posters/tasks/batch/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
   );
-  return { ok: true };
-}
-
-/**
- * 老语义 reset = "卡死的 job 重回 queued"。
- * 新模型用新 attempt 替代（实际比 reset 更彻底）。
- */
-export async function resetStaleJob(
-  input: ServerFnInput<{ jobId: string }>,
-): Promise<{ ok: true }> {
-  const generationId = input.data.jobId;
-  if (!UUID_RE.test(generationId)) return { ok: true };
-  try {
-    const ref = await jsonFetch<{
-      generation: PosterGeneration;
-      taskId: string;
-      batchId: string;
-    }>(`/posters/generations/${encodeURIComponent(generationId)}`);
-    // 只对真卡住的状态做 regenerate；succeeded / queued 直接 noop
-    if (ref.generation.status === 'claimed' || ref.generation.status === 'processing') {
-      await jsonFetch(
-        `/posters/tasks/${encodeURIComponent(ref.taskId)}/generations`,
-        { method: 'POST' },
-      );
-    }
-  } catch (err) {
-    const msg = (err as Error).message;
-    // 404 / 已结束态：静默
-    if (!msg.includes('不在可重置状态') && !msg.includes('不存在')) throw err;
-  }
   return { ok: true };
 }
 

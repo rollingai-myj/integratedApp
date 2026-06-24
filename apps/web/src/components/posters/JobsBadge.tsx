@@ -6,8 +6,7 @@ import { createPortal } from "react-dom";
 import { TOKENS } from "./tokens";
 import { Icon } from "./icons";
 import { useJobs, type SessionView, type Job } from "./JobsContext";
-import { saveSession, isSessionSaved } from "./sessionHistory";
-import { getHostContext } from "./host-bridge";
+import { addFavorite } from "@/lib/poster-favorites.functions";
 import { useIOSDeviceZoom } from "@/components/IOSDevice";
 
 /**
@@ -55,7 +54,7 @@ export function JobsBadge({ accent, bottomOffset = 24 }: { accent: string; botto
 
   return (
     <>
-      <button onClick={() => setOpen(true)} aria-label="本组生成进度" style={{
+      <button onClick={() => setOpen(true)} aria-label="生成进度" style={{
         position: "absolute", right: 16, bottom: bottomOffset, zIndex: 50,
         appearance: "none", border: 0, cursor: "pointer", padding: 0,
         width: 76, height: 76, borderRadius: "50%",
@@ -115,9 +114,13 @@ function formatDuration(ms: number): string {
 }
 
 function SessionDrawer({ accent, session, onClose }: { accent: string; session: SessionView; onClose: () => void }) {
-  const { dismissCurrentSession, endCurrentSession, requeueJob } = useJobs();
+  const { dismissCurrentSession, endCurrentSession, requeueJob, dismissJob } = useJobs();
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
-  const [saved, setSaved] = React.useState(() => isSessionSaved(session.id));
+  // 队列里成功 generation 中已收藏的集合 —— 用本地 state 维护乐观更新,避免每次都拉接口
+  const [favoritedIds, setFavoritedIds] = React.useState<Set<string>>(new Set());
+  const [savingFav, setSavingFav] = React.useState(false);
+  // 单张收藏进行中的 id 集合(避免并发点击)
+  const [pendingFav, setPendingFav] = React.useState<Set<string>>(new Set());
   const [toast, setToast] = React.useState<string | null>(null);
   const [requeueFor, setRequeueFor] = React.useState<Job | null>(null);
   const [longPressUrls, setLongPressUrls] = React.useState<string[] | null>(null);
@@ -140,24 +143,67 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
     setTimeout(() => setToast(null), 1600);
   };
 
-  const handleSave = () => {
-    if (saved || successful.length === 0) return;
-    saveSession({
-      id: session.id,
-      startedAt: session.startedAt,
-      endedAt: Date.now(),
-      total: session.total,
-      // 落 storeId：销量跟踪 tab 据此过滤，确保 A 店做的 SKU 不会在 B 店销量页冒出来
-      storeId: getHostContext()?.storeId ?? null,
-      items: successful.map(j => ({
-        imageUrl: j.result_image_url!,
-        copy: j.params?.copy,
-        sku: j.params?.sku ?? null,
-      })),
-    });
-    setSaved(true);
-    endCurrentSession("saved");
-    flashToast("已保存到历史 ✓");
+  // 把队列里所有"成功且未收藏"的 generation 一次性加入收藏。
+  // 失败的(error)和正在生成的(queued/processing)不入。
+  // 旧的 saveSession(localStorage)已下线 —— 生成记录现在是服务端 30 天自动留痕,
+  // 收藏只为"长期留着这张"语义。
+  const allFavorited = successful.length > 0
+    && successful.every(j => favoritedIds.has(j.id));
+
+  const handleAddToFavorites = async () => {
+    if (allFavorited || savingFav || successful.length === 0) return;
+    setSavingFav(true);
+    try {
+      const toAdd = successful.filter(j => !favoritedIds.has(j.id));
+      const results = await Promise.allSettled(
+        toAdd.map(j => addFavorite(j.id)),
+      );
+      const added = new Set(favoritedIds);
+      let ok = 0;
+      for (let i = 0; i < results.length; i++) {
+        if (results[i]!.status === 'fulfilled') {
+          added.add(toAdd[i]!.id);
+          ok++;
+        }
+      }
+      setFavoritedIds(added);
+      const fail = results.length - ok;
+      if (ok > 0 && fail === 0) flashToast(`已添加到收藏 (${ok} 张) ✓`);
+      else if (ok > 0) flashToast(`收藏 ${ok} 张,${fail} 张失败`);
+      else flashToast('收藏失败,请重试');
+    } finally {
+      setSavingFav(false);
+    }
+  };
+
+  // 单张收藏:已收藏 → 静默 no-op;成功后更新 favoritedIds
+  const handleFavoriteOne = async (jobId: string) => {
+    if (pendingFav.has(jobId) || favoritedIds.has(jobId)) return;
+    setPendingFav(prev => new Set(prev).add(jobId));
+    try {
+      await addFavorite(jobId);
+      setFavoritedIds(prev => {
+        const next = new Set(prev);
+        next.add(jobId);
+        return next;
+      });
+      flashToast('已添加到收藏 ✓');
+    } catch (e: any) {
+      flashToast(e?.message || '收藏失败');
+    } finally {
+      setPendingFav(prev => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+    }
+  };
+
+  // 单张删除:从前端队列视图里隐藏(localStorage 标记)。后端 30 天历史不删,
+  // 用户可以在「生成记录」找回。
+  const handleDeleteOne = (jobId: string) => {
+    dismissJob(jobId);
+    flashToast('已从队列移除');
   };
 
   const runSave = async (urls: string[]) => {
@@ -182,10 +228,8 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
   };
 
   const handleNewBatch = () => {
-    if (!saved && successful.length > 0) {
-      const ok = confirm("还没保存到历史，结束本组后这些海报就找不到了。要继续吗？");
-      if (!ok) return;
-    }
+    // 后端 worker 上线 + 服务端 30 天生成记录 → 关掉队列也不会丢东西
+    // 不再弹「还没保存到历史」的确认框
     endCurrentSession("new-batch");
     onClose();
   };
@@ -220,37 +264,38 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
         }}>×</button>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14, gap: 8, paddingRight: 40 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 18, fontWeight: 800, color: TOKENS.ink }}>本组生成</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: TOKENS.ink }}>生成任务</div>
             <div style={{ fontSize: 11, color: TOKENS.inkMuted, marginTop: 2 }}>
               {startLabel} 开始 · {durationLabel}
             </div>
             <div style={{ fontSize: 11, color: TOKENS.inkMuted, marginTop: 2 }}>
               共 {session.total} 张 · 完成 {session.done} · 失败 {session.error} · 进行中 {session.active}
-              {session.batchIds.length > 1 && (
-                <span style={{ marginLeft: 4 }}>· {session.batchIds.length} 批</span>
-              )}
             </div>
           </div>
-          {session.allFinal && (
+          {successful.length > 0 && (
             <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
               <button
-                onClick={handleSave}
-                disabled={saved || successful.length === 0}
+                onClick={handleAddToFavorites}
+                disabled={allFavorited || savingFav}
                 style={{
                   appearance: "none", border: 0,
-                  background: saved ? "#e5e7eb" : accent,
-                  color: saved ? "#6b7280" : "#fff",
+                  background: allFavorited ? "#e5e7eb" : accent,
+                  color: allFavorited ? "#6b7280" : "#fff",
                   padding: "6px 14px", borderRadius: 14,
                   fontSize: 12, fontWeight: 700,
-                  cursor: saved || successful.length === 0 ? "default" : "pointer",
+                  cursor: allFavorited ? "default" : "pointer",
                   fontFamily: "inherit",
-                  boxShadow: saved ? "none" : `0 4px 12px ${accent}55`,
-                }}>{saved ? "已保存" : "保存到历史"}</button>
-              <button onClick={handleClear} style={{
-                appearance: "none", border: `1px solid ${TOKENS.line}`, background: "#fff",
-                color: TOKENS.inkSoft, padding: "6px 12px", borderRadius: 14,
-                fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-              }}>清除</button>
+                  boxShadow: allFavorited ? "none" : `0 4px 12px ${accent}55`,
+                  opacity: savingFav ? 0.6 : 1,
+                }}>{allFavorited ? "已收藏" : (savingFav ? "收藏中…" : "全部收藏")}</button>
+              {/* 清除整组只有全部完成才允许 —— 正在跑的取消语义不清,用单张删除来处理 */}
+              {session.allFinal && (
+                <button onClick={handleClear} style={{
+                  appearance: "none", border: `1px solid ${TOKENS.line}`, background: "#fff",
+                  color: TOKENS.inkSoft, padding: "6px 12px", borderRadius: 14,
+                  fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}>清除</button>
+              )}
             </div>
           )}
         </div>
@@ -262,15 +307,21 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
                 key={j.id}
                 job={j}
                 accent={accent}
+                isFavorited={favoritedIds.has(j.id)}
+                favoritePending={pendingFav.has(j.id)}
                 onPreview={(url) => setPreviewUrl(url)}
                 onDownload={download}
                 onRequeue={(job) => setRequeueFor(job)}
+                onFavorite={handleFavoriteOne}
+                onDelete={handleDeleteOne}
               />
             ))}
           </div>
         </div>
 
-        {session.allFinal && (
+        {/* 底部按钮组始终展示 — 即便还在生成,已完成的也可一键下载;
+            「继续生成」只在全部完成时显示(否则会让用户以为可以另起一批) */}
+        {successful.length > 0 && (
           <div style={{
             flexShrink: 0,
             padding: "12px 0 20px",
@@ -278,13 +329,12 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
             background: TOKENS.bg,
             display: "flex", gap: 8,
           }}>
-            <button onClick={downloadAll} disabled={successful.length === 0 || downloading} style={{
+            <button onClick={downloadAll} disabled={downloading} style={{
               flex: 1, appearance: "none", border: `1px solid ${TOKENS.line}`,
               background: "#fff", color: TOKENS.ink,
               height: 46, borderRadius: 14,
               fontSize: 13, fontWeight: 700, fontFamily: "inherit",
-              cursor: successful.length === 0 || downloading ? "default" : "pointer",
-              opacity: successful.length === 0 ? 0.5 : 1,
+              cursor: downloading ? "default" : "pointer",
               display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
             }}>
               {downloading ? (
@@ -299,17 +349,19 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
               ) : (
                 <>
                   <Icon.Download size={16} color={TOKENS.ink} />
-                  全部下载
+                  下载已完成({successful.length})
                 </>
               )}
             </button>
-            <button onClick={handleNewBatch} style={{
-              flex: 1.4, appearance: "none", border: 0,
-              background: `linear-gradient(135deg, ${accent}, ${TOKENS.redDark})`,
-              color: "#fff", height: 46, borderRadius: 14,
-              fontSize: 14, fontWeight: 800, fontFamily: "inherit",
-              cursor: "pointer", boxShadow: `0 6px 16px ${accent}55`,
-            }}>再做一组 ↗</button>
+            {session.allFinal && (
+              <button onClick={handleNewBatch} style={{
+                flex: 1.4, appearance: "none", border: 0,
+                background: `linear-gradient(135deg, ${accent}, ${TOKENS.redDark})`,
+                color: "#fff", height: 46, borderRadius: 14,
+                fontSize: 14, fontWeight: 800, fontFamily: "inherit",
+                cursor: "pointer", boxShadow: `0 6px 16px ${accent}55`,
+              }}>继续生成 ↗</button>
+            )}
           </div>
         )}
 
@@ -377,16 +429,21 @@ function SessionDrawer({ accent, session, onClose }: { accent: string; session: 
   );
 }
 
-function SessionThumb({ job, accent, onPreview, onDownload, onRequeue }: {
+function SessionThumb({ job, accent, isFavorited, favoritePending, onPreview, onDownload, onRequeue, onFavorite, onDelete }: {
   job: Job;
   accent: string;
+  isFavorited: boolean;
+  favoritePending: boolean;
   onPreview: (url: string) => void;
   onDownload: (url: string) => void;
   onRequeue: (job: Job) => void;
+  onFavorite: (jobId: string) => void;
+  onDelete: (jobId: string) => void;
 }) {
   const [loaded, setLoaded] = React.useState(false);
   const url = job.result_image_url;
   const canRequeue = job.status === "done" || job.status === "error";
+  const isFinal = job.status === "done" || job.status === "error";
 
   return (
     <div style={{
@@ -465,6 +522,47 @@ function SessionThumb({ job, accent, onPreview, onDownload, onRequeue }: {
         }} aria-label="下载">
           <Icon.Download size={14} color="#fff" />
         </button>
+      )}
+      {/* 右上角:收藏(仅成功生成的图可点) */}
+      {url && loaded && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onFavorite(job.id); }}
+          disabled={isFavorited || favoritePending}
+          aria-label={isFavorited ? "已收藏" : "收藏"}
+          style={{
+            position: "absolute", top: 6, right: 6,
+            appearance: "none", border: 0,
+            background: isFavorited ? "rgba(255,255,255,0.95)" : "rgba(0,0,0,0.55)",
+            color: isFavorited ? accent : "#fff",
+            width: 28, height: 28, borderRadius: "50%",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: isFavorited ? "default" : "pointer",
+            boxShadow: "0 4px 10px rgba(0,0,0,0.3)",
+            backdropFilter: "blur(6px)",
+            fontSize: 14, lineHeight: 1, fontFamily: "inherit",
+            opacity: favoritePending ? 0.6 : 1,
+          }}
+        >
+          {isFavorited ? "♥" : "♡"}
+        </button>
+      )}
+      {/* 左上角:删除(成功 / 失败 都可点;排队中 / 生成中不可点 — 别误删进行中的) */}
+      {isFinal && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(job.id); }}
+          aria-label="从队列移除"
+          style={{
+            position: "absolute", top: 6, left: 6,
+            appearance: "none", border: 0,
+            background: "rgba(0,0,0,0.55)", color: "#fff",
+            width: 28, height: 28, borderRadius: "50%",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer",
+            boxShadow: "0 4px 10px rgba(0,0,0,0.3)",
+            backdropFilter: "blur(6px)",
+            fontSize: 18, lineHeight: 1, paddingBottom: 2, fontFamily: "inherit",
+          }}
+        >×</button>
       )}
       <style>{`
         @keyframes jb-shimmer {

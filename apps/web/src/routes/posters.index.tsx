@@ -10,7 +10,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { PosterApp } from '@/components/posters/App';
-import { BrandHeader } from '@/components/posters/BrandHeader';
 import { setHostContext } from '@/components/posters/host-bridge';
 import { authClient } from '@/components/posters/auth-client';
 import { IOSDevice } from '@/components/IOSDevice';
@@ -77,14 +76,12 @@ function PostersHostPage() {
   // 嵌到统一应用后必须给它一个有明确尺寸的壳，否则 100% × 100% 解析成 0 → 空白。
   // 沿用其它模块的 IOSDevice 容器（390 设计稿 + zoom 等比放大），视觉与首页一致。
   //
-  // BrandHeader 用 absolute 浮在 PosterApp 之上（z-30）而非挤占 layout：PosterApp 是
-  // 黑/红全屏 phone UI，header 是顶部胶囊浮层，红底铺到屏幕最顶不被推下。
+  // 主页键 ⌂ 和返回键由 PosterApp 内部承担:Home 屏 hero 右上挂第三枚圆角按钮 ⌂,
+  // 其他屏的 AppBar 右侧也挂 ⌂(回 /),左侧 ← 走原本屏内 onBack(回上一屏)。
+  // 不再用外层浮动胶囊 —— 它跟 PosterApp 原设计风格不协调,且会和 AppBar 双 ← 重叠。
   return (
     <IOSDevice>
-      <div className="relative h-full">
-        <PosterApp />
-        <BrandHeader backTo="/" />
-      </div>
+      <PosterApp />
     </IOSDevice>
   );
 }

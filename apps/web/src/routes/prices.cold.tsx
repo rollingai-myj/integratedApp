@@ -248,7 +248,7 @@ function ColdPage() {
     return (
       <IOSDevice>
         <div className="min-h-screen bg-background">
-          <BrandHeader backTo="/prices" />
+          <BrandHeader upTo="/prices" />
           <div className="px-6 py-16 text-center text-sm text-muted-foreground">
             请先选择门店再进入价盘
           </div>
@@ -260,7 +260,7 @@ function ColdPage() {
   return (
     <IOSDevice>
     <div className="min-h-screen pb-24">
-      <BrandHeader backTo="/prices" />
+      <BrandHeader upTo="/prices" />
 
       <div className="px-4 pb-1 pt-4">
         <div className="flex items-end justify-between">

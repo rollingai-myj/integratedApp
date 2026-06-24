@@ -98,3 +98,29 @@ export function endSession(_reason: 'saved' | 'cleared' | 'new-batch' | 'timeout
 export function clearSession() {
   write(null);
 }
+
+// ============================================================================
+// 单张「删除」(从队列视图里隐藏)
+// ============================================================================
+// 后端 generation 是 30 天审计留痕,不能让用户随便真删 — 任务列表「删除」语义
+// 退化为「从我面前藏掉」。下次刷新 / 切设备依旧能从 RecentDrawer 找回。
+
+const HIDDEN_KEY = 'poster-app/hidden-job-ids-v1';
+
+export function readHiddenJobIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(HIDDEN_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter((x): x is string => typeof x === 'string'));
+  } catch { return new Set(); }
+}
+
+export function addHiddenJobIds(ids: string[]) {
+  if (typeof window === 'undefined') return;
+  const current = readHiddenJobIds();
+  for (const id of ids) current.add(id);
+  try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...current])); } catch {}
+}

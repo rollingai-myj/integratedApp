@@ -18,6 +18,11 @@ export type SelectedPromotion = {
   groupId?: string | null;
   brandLabel?: string | null;
   groupMembers?: GroupMember[] | null;
+  // 活动类型(后端拿来挑右下角二维码:周二会员日/品牌满减券/常规优惠券 三种)
+  // 取自 CategoryItem.base_activity_type / addon_activity_type,raw 五种枚举:
+  //   member_price / weekend_beer / brand_coupon / tuesday_member / regular_coupon
+  baseActivityType?: string | null;
+  addonActivityType?: string | null;
 };
 
 type Ctx = {

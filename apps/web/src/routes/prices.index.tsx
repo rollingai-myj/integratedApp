@@ -8,8 +8,8 @@
  * 当前只有 "冷藏" 场景接入了真实价盘数据 → 链到 /prices/cold；其它场景灰显，
  * Tooltip "数据准备中"。后续接入新场景时把 ENABLED_LINKS 加一行即可。
  *
- * 适配：左上角 ← 箭头返回门户（BrandHeader backTo="/"），与子页面"返回上一级"
- * 同款交互。
+ * 适配：右上角 ⌂ 主页键回门户(BrandHeader 内置,不传 upTo 时入口无 ← 返回键),
+ * 与子页面「左 ← 返回 + 右 ⌂ 主页」交互一致。
  */
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
@@ -77,7 +77,7 @@ function PricesHomePage() {
     {/* min-h-full（而非 min-h-screen）：IOSDevice 内层 overflow-y-auto 高度 =
         (100/zoom)vh，若用 100vh 会留出 (100/zoom-100)vh 的空白可滚区。 */}
     <div className="min-h-full bg-background">
-      <BrandHeader backTo="/" />
+      <BrandHeader />
       <main className="px-4 py-5 pb-8">
 
         <h1 className="text-lg font-semibold text-foreground">请选择场景</h1>

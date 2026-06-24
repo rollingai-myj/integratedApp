@@ -24,6 +24,11 @@ export const Icon = {
       <path d="M15 5l-7 7 7 7" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   ),
+  Home: ({ size = 24, color = 'currentColor' }: IconProps) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <path d="M3 11.5L12 4l9 7.5M5 10.5V20h14V10.5" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  ),
   Close: ({ size = 24, color = 'currentColor' }: IconProps) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <path d="M6 6l12 12M18 6L6 18" stroke={color} strokeWidth="2.2" strokeLinecap="round"/>

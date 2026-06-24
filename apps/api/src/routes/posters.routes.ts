@@ -32,6 +32,11 @@ import {
   deleteAsset,
   listSalesTracking,
 } from '../services/posters.service.js';
+import {
+  listFavorites,
+  addFavorite,
+  removeFavorite,
+} from '../services/poster-favorites.service.js';
 
 export const postersRouter = Router();
 
@@ -138,7 +143,9 @@ postersRouter.post(
 /** GET /posters/tasks — 任务列表（按 scope） */
 const listTasksQuerySchema = z.object({
   scope: z.enum(['mine', 'current', 'all']).optional(),
-  status: z.enum(['active', 'done', 'failed']).optional(),
+  status: z.enum(['active', 'done', 'failed', 'recent']).optional(),
+  /** status=recent 时回溯天数，默认 30 */
+  days: z.coerce.number().int().min(1).max(90).optional(),
   batchId: z.string().uuid().optional(),
   storeId: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
@@ -171,13 +178,24 @@ postersRouter.get(
       userId = req.user!.id;
       storeId = req.user!.currentStoreId;
     } else {
+      // scope=mine 默认 = 本人 × 当前门店,二者缺一不可,
+      // 防止店长切到 A 店看到他在 B 店的历史(跨店混合)。
+      if (!req.user!.currentStoreId) {
+        throw new AppError(
+          409,
+          ErrorCodes.NO_STORE_SELECTED,
+          '请先选择门店再查记录',
+        );
+      }
       userId = req.user!.id;
+      storeId = req.user!.currentStoreId;
     }
 
     const tasks = await listTasks({
       userId,
       storeId,
       status: q.status,
+      recentDays: q.days,
       batchId: q.batchId,
       limit: q.limit,
     });
@@ -353,7 +371,16 @@ postersRouter.get(
       userId = req.user!.id;
       storeId = req.user!.currentStoreId;
     } else {
+      // scope=mine 默认 = 本人 × 当前门店,与 listTasks 同一隔离规范
+      if (!req.user!.currentStoreId) {
+        throw new AppError(
+          409,
+          ErrorCodes.NO_STORE_SELECTED,
+          '请先选择门店再查成品',
+        );
+      }
       userId = req.user!.id;
+      storeId = req.user!.currentStoreId;
     }
 
     const generations = await listGallery({
@@ -459,5 +486,48 @@ postersRouter.get(
       days: Number.isFinite(days) ? (days as number) : undefined,
     });
     res.json({ items });
+  }),
+);
+
+// ============================================================================
+// 收藏
+// ============================================================================
+
+postersRouter.get(
+  '/posters/favorites',
+  requireAuth,
+  requireStore,
+  asyncHandler(async (req, res) => {
+    const items = await listFavorites(req.user!.id, req.user!.currentStoreId!);
+    res.json({ items });
+  }),
+);
+
+const addFavoriteSchema = z.object({
+  generationId: z.string().uuid(),
+});
+
+postersRouter.post(
+  '/posters/favorites',
+  requireAuth,
+  requireStore,
+  asyncHandler(async (req, res) => {
+    const body = addFavoriteSchema.parse(req.body ?? {});
+    const favorite = await addFavorite(
+      req.user!.id,
+      body.generationId,
+      req.user!.currentStoreId!,
+    );
+    res.status(201).json({ favorite });
+  }),
+);
+
+postersRouter.delete(
+  '/posters/favorites/:generationId',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const generationId = requireUuid(req.params.generationId, 'generationId');
+    await removeFavorite(req.user!.id, generationId);
+    res.status(204).end();
   }),
 );

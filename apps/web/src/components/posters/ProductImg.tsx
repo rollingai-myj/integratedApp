@@ -63,9 +63,17 @@ export function ProductImg({
       )}
       <img
         key={current}
+        // ref 兜底:src 在浏览器 cache 里时 load 事件可能在 React 挂 onLoad 之前
+        // 就已经触发(尤其是组件卸载后再重挂时),onLoad 永远等不到 → status 卡
+        // 在 'loading' 显示空白。挂 ref 时同步查 img.complete + naturalWidth,
+        // 有内容就直接切 'ok',不依赖事件。
+        ref={(el) => {
+          if (el && el.complete && el.naturalWidth > 0 && status !== 'ok') {
+            setStatus('ok');
+          }
+        }}
         src={productImageUrl(current, size)}
         alt=""
-        loading="lazy"
         decoding="async"
         onLoad={() => setStatus('ok')}
         onError={() => {

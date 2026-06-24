@@ -59,7 +59,8 @@ export interface PosterTaskCreate {
 }
 
 export interface PosterTaskProduct {
-  productId: string;
+  /** null = 未入库 hq_products 的 SKU，仍可出图但无销量追踪 */
+  productId: string | null;
   skuCode: string;
   displayOrder: number;
 }
@@ -113,7 +114,8 @@ export interface PosterAsset {
 export interface PosterSalesItem {
   taskId: string;
   generationId: string;
-  productId: string;
+  /** null = 未入库 SKU；该 generation 仍出现在列表里但 before/after 销量都会是 null */
+  productId: string | null;
   skuCode: string;
   adoptedAt: string;
   beforeSnapshotDate: string | null;
@@ -236,7 +238,7 @@ export async function createTasks(
         return t.skuCode ? [t.skuCode] : [];
       })();
 
-      // 查 product_id（task_products 表强引用 hq_products.id）
+      // 查 product_id（命中 hq_products 才能后续关联销量追踪；未入库 SKU 允许 NULL）
       const productLookup = skuCodes.length
         ? await client.query<{ id: string; sku_code: string }>(
             `SELECT id, sku_code FROM hq_products WHERE sku_code = ANY($1)`,
@@ -247,15 +249,6 @@ export async function createTasks(
       const productIdBySkuCode = new Map(
         productLookup.rows.map((r) => [r.sku_code, r.id]),
       );
-      for (const code of skuCodes) {
-        if (!productIdBySkuCode.has(code)) {
-          throw new AppError(
-            404,
-            ErrorCodes.NOT_FOUND,
-            `SKU ${code} 不存在，无法建任务`,
-          );
-        }
-      }
 
       // 插 task（inputs 存 worker 重放所需完整入参）
       const inputs: Record<string, unknown> = {
@@ -293,12 +286,12 @@ export async function createTasks(
       );
       const taskRow = taskRes.rows[0]!;
 
-      // 插 task_products
+      // 插 task_products（未入库 SKU productId = null，丢失销量追踪但允许出图）
       const products: PosterTaskProduct[] = [];
       let orderCounter = 0;
       if (t.mode === 'multi_product') {
         for (const p of t.products ?? []) {
-          const productId = productIdBySkuCode.get(p.skuCode)!;
+          const productId = productIdBySkuCode.get(p.skuCode) ?? null;
           const order = p.displayOrder ?? orderCounter++;
           await client.query(
             `INSERT INTO store_poster_task_products
@@ -309,7 +302,7 @@ export async function createTasks(
           products.push({ productId, skuCode: p.skuCode, displayOrder: order });
         }
       } else if (t.skuCode) {
-        const productId = productIdBySkuCode.get(t.skuCode)!;
+        const productId = productIdBySkuCode.get(t.skuCode) ?? null;
         await client.query(
           `INSERT INTO store_poster_task_products
              (task_id, product_id, sku_code, display_order)
@@ -342,7 +335,13 @@ export async function createTasks(
 export async function listTasks(filter: {
   userId?: string;
   storeId?: string;
-  status?: 'active' | 'done' | 'failed';
+  /**
+   * recent = 全状态 + 时间窗口（默认 30 天），用于「生成记录」/ 队列常驻；
+   * 其他三个保留旧语义。
+   */
+  status?: 'active' | 'done' | 'failed' | 'recent';
+  /** status=recent 时的回溯天数，默认 30。其他 status 忽略。 */
+  recentDays?: number;
   batchId?: string;
   limit?: number;
 }): Promise<PosterTask[]> {
@@ -367,9 +366,17 @@ export async function listTasks(filter: {
     where.push(`latest.status = 'succeeded'`);
   } else if (filter.status === 'failed') {
     where.push(`latest.status IN ('failed','canceled')`);
+  } else if (filter.status === 'recent') {
+    // 全状态 + 时间窗口：给「生成记录」面板 / 队列常驻吃。
+    const days = filter.recentDays ?? 30;
+    params.push(days);
+    where.push(
+      `t.created_at >= now() - ($${params.length}::int || ' days')::interval`,
+    );
   }
 
-  const limit = filter.limit ?? 100;
+  // recent 默认拉满 30 天上限（500 条），其他 status 仍是 100
+  const limit = filter.limit ?? (filter.status === 'recent' ? 500 : 100);
   params.push(limit);
 
   const sql = `
@@ -469,7 +476,7 @@ async function loadProducts(
   if (!taskIds.length) return new Map();
   const res = await query<{
     task_id: string;
-    product_id: string;
+    product_id: string | null;
     sku_code: string;
     display_order: number;
   }>(
@@ -645,6 +652,16 @@ export async function claimAndProcess(
     skuCode: typeof inputs.skuCode === 'string' ? inputs.skuCode : undefined,
     categoryName:
       typeof inputs.categoryName === 'string' ? inputs.categoryName : undefined,
+    // 活动类型 → coco-image.service 用它挑右下角二维码
+    // 五种 raw 枚举:member_price / weekend_beer / brand_coupon / tuesday_member / regular_coupon
+    baseActivityType:
+      typeof inputs.baseActivityType === 'string'
+        ? inputs.baseActivityType
+        : undefined,
+    addonActivityType:
+      typeof inputs.addonActivityType === 'string'
+        ? inputs.addonActivityType
+        : undefined,
   };
 
   // 标记 processing
@@ -943,7 +960,7 @@ export async function listSalesTracking(args: {
   const res = await query<{
     task_id: string;
     generation_id: string;
-    product_id: string;
+    product_id: string | null;
     sku_code: string;
     adopted_at: string;
     before_snapshot_date: string | null;

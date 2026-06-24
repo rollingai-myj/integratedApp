@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { Toast } from './ui';
 import { ScreenWelcome } from './screens/Welcome';
 import { ScreenHome } from './screens/Home';
@@ -12,7 +13,6 @@ import { ScreenBatch } from './screens/Batch';
 import { ScreenRetry } from './screens/Retry';
 import { generatePoster, type PosterResult, type PosterStyleId } from './ai';
 import { StorePrompt } from './StorePrompt';
-import { addRecent } from './recent';
 import { authClient } from './auth-client';
 import { getHostContext } from './host-bridge';
 import { recordLogin } from '@/lib/auth.functions';
@@ -147,6 +147,11 @@ function PosterAppInner() {
   };
 
   const go = (next: ScreenId) => setScreen(next);
+  // 主页键 ⌂ 退出整个 PosterApp,跳回门户功能选择(规则:所有模块右上 ⌂ 都跳 /)。
+  // ScreenHome 用 hero 上的圆角按钮,内部其他屏由 AppBar 自己处理(它从 router 直接跳),
+  // 这里只需要传给没有 AppBar 的 ScreenHome。
+  const posterNavigate = useNavigate();
+  const goHome = () => void posterNavigate({ to: '/' });
 
   React.useEffect(() => {
     if (screen !== 'loading') return;
@@ -158,11 +163,14 @@ function PosterAppInner() {
       photo, copy, styleId: styleIdSel, customStyle, storeId,
       sku: selectedPromo?.sku ?? null,
       category: selectedPromo?.category ?? null,
+      baseActivityType: selectedPromo?.baseActivityType ?? null,
+      addonActivityType: selectedPromo?.addonActivityType ?? null,
     })
       .then((res) => {
         if (cancelled) return;
         setPoster(res);
-        if (res?.imageUrl) addRecent({ imageUrl: res.imageUrl, copy });
+        // 生成记录已经由服务端 store_poster_tasks/generations 自动留痕(近 30 天),
+        // 这里不再写 localStorage recent。
       })
       .catch((err: unknown) => {
         console.error('[poster] generate failed', err);
@@ -208,6 +216,7 @@ function PosterAppInner() {
         }}
         onStartBatch={(list) => { setBatchFree(false); setBatchList(list); go('batch'); }}
         onShowGuide={() => guide.start()}
+        onGoHome={goHome}
         onToast={(text) => showToast({ text })}
       />)}
       {screen === 'batch' && (<ScreenBatch accent={ACCENT} list={batchList} storeId={storeId}
@@ -246,8 +255,8 @@ function PosterAppInner() {
           }} />)}
       {screen === 'result' && (<ScreenResult accent={ACCENT} poster={poster} copy={copy}
           onBack={() => go('style')}
-          onNew={() => { if (poster?.imageUrl) addRecent({ imageUrl: poster.imageUrl, copy }); setSelectedPromo(null); reset(); go('home'); }}
-          onReselectStyle={() => { if (poster?.imageUrl) addRecent({ imageUrl: poster.imageUrl, copy }); go('retry'); }}
+          onNew={() => { setSelectedPromo(null); reset(); go('home'); }}
+          onReselectStyle={() => { go('retry'); }}
           onToast={showToast} />)}
       <Toast visible={toast.visible} text={toast.text} icon={toast.icon} />
       <GuideOverlay />
