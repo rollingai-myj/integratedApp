@@ -401,3 +401,79 @@ admin 模块 SPA 在 [routes/admin.index.tsx](../apps/web/src/routes/admin.index
 1. **追字段时反向走**：从前端用到的字段名开始 → grep service 层有没有；再 grep 迁移文件确认 DB 列名；不一致就是漂移。
 2. **shared 类型是契约**：如果 [packages/shared/src/index.ts](../packages/shared/src/index.ts) 没覆盖到的端点（如 shelves / competitors 用了局部类型），漂移风险翻倍。
 3. **新加列时**：迁移、service interface、service 投影、shared 类型、前端消费 —— **5 处必须一起改**（项目惯例 in CLAUDE memory）。
+
+---
+
+## 13 · admin-web 体系（PC 超管控制台）
+
+> mobile web 共用 `/api/v1/*` 的同一组路由,这里只列 admin-web 独有的转换链路。
+
+### admin-web 的"无 shared 类型"约定
+
+mobile web 走 `packages/shared/src/index.ts` 的强类型契约;**admin-web 没有走 shared**,所有 API 响应类型直接定义在 admin-web 自己的 `src/lib/*.ts` 里(`lib/stores.ts` / `lib/uploads.ts` / `lib/changes.ts`)。设计意图:admin 受众小、字段不跨端,**不引入共享类型层避免移动端被牵连**。
+
+代价:如果改了 admin 接口的字段,**必须同时改后端 service + admin-web lib**,grep 不到 shared 类型做提醒。
+
+### 1 · Dashboard(/admin/dashboard/*)
+
+**DB → service** 在 [admin-dashboard.service.ts](../apps/api/src/services/admin-dashboard.service.ts):
+
+```
+store_assortment_changes (按日 GROUP BY)        → getAdjustmentTrend
+store_assortment_changes (按 store GROUP BY)    → getTopActiveStores
+store_assortment_changes ⨝ hq_categories(L0)    → getSceneDistribution
+4 个独立 COUNT (active stores / adjusted SKUs /
+poster tasks / price changes) + 上一窗口环比     → getDashboardKpis
+```
+
+**Route → admin-web** 在 [_app.index.tsx](../apps/admin-web/src/routes/_app.index.tsx),每张卡 独立 query,任一失败不阻塞其他;loading 期间用 skeleton。
+
+### 2 · 调改记录(/admin/changes)
+
+**DB → service**:`store_assortment_changes` 联 `hq_products`(SKU 名)、`stores`(店名)、`hq_categories`(场景名)、`store_scene_adjustments`(批次摘要)、`ai_diagnosis JSONB`(智能体分析)。
+
+**Route 形态**:
+- 列表 `GET /admin/changes` 含分页 + 排序 + 筛选(7 个查询参数)
+- 详情 `GET /admin/changes/:id` 含完整 `aiDiagnosis JSON`(行展开拉)
+- CSV 导出 `GET /admin/changes.csv` 走 `Content-Disposition: attachment`
+
+**前端消费**:`_app.changes.tsx` 用 URL search params 同步筛选状态(`validateSearch` + `useNavigate replace`),可分享 / 收藏 / 后退;行展开通过递归 `AiDiagnosisView` 把 `aiDiagnosis JSON` 渲染成可读 key-value 视图(不裸 `JSON.stringify`)。
+
+### 3 · 数据上传(/admin/uploads/*)
+
+**两套独立子系统:**
+
+| 子系统 | kind | 入口 | 后端 |
+|---|---|---|---|
+| **简化 CSV staging** | `products` / `snapshots` / `stores` | `_app.uploads.products.tsx` / `.snapshots.tsx` / `_app.stores.tsx` 内嵌 | `admin-uploads/` 目录(schema.ts / service.ts / apply.ts) |
+| **xlsx 工作流** | `promotions` | `_app.uploads.promotions.tsx` | 沿用旧 `promotions.service.ts`(`POST /promotions/batches:upload`) |
+
+**简化 CSV 流转**(`upload_batches` 表):
+
+```
+file (multipart) → 后端 parseCsv + parseRow (类型转换 + 行级校验)
+                  ↓ 落 jsonb staging_data + parse_errors
+                upload_batches (status='staged')
+                  ↓ 前端可看冲突预览(GET /conflicts)
+                  ↓ 用户点「让它生效」(POST /apply, mode=upsert | insert_only)
+                applyBatch → 业务表(hq_products / store_sku_snapshots / stores)
+                  ↓ before_snapshot jsonb 记录被覆盖前的字段值
+                upload_batches (status='applied')
+                  ↓ 可撤销(POST /rollback)
+                按 before_snapshot 逐条还原 → status='rolled_back'
+```
+
+**关键字段转换**:
+- CSV `'是' / '否' / 'Y' / 'N' / ...` → DB `boolean`(`parseBool()` in [schemas.ts](../apps/api/src/services/admin-uploads/schemas.ts))
+- CSV `'在售' / '已下架'` → DB `'active' / 'disabled'`(`enumDbMap`)
+- CSV 留空 → DB **保留原值**(UPDATE 走 `COALESCE($new, old)`,NOT NULL 字段走 PG DEFAULT)
+- 单店编辑 PATCH 语义相反:`null = 清空`,`undefined = 不动`(`admin-stores.service.ts`)
+
+### 4 · 门店档案(/admin/stores)
+
+**DB → service** 在 [admin-stores.service.ts](../apps/api/src/services/admin-stores.service.ts):`stores` 表 12 个业务字段 + 软删 `deleted_at IS NULL` 过滤。`NUMERIC` 字段在 `rowToDetail()` 用 `Number()` 强转;`opened_at DATE` 用 `::text` 投影成 `'YYYY-MM-DD'` 字符串。
+
+**Route** = list + get + create + patch + delete(软删:`UPDATE SET deleted_at = now()`,不物理 DELETE,保留 FK 不受影响)。
+
+冲突识别:`createStore` / `updateStore` catch PG `23505` 错误码 → 抛 `409 CONFLICT`,前端弹应用内提示。
+

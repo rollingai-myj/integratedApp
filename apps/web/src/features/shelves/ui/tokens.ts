@@ -1,5 +1,5 @@
 /**
- * 选品模块的设计 tokens（与设计稿 docs/design-ref/myjadviser 一致）
+ * 选品模块的设计 tokens。
  *
  * 颜色沿用海报模块的红色系，避免品牌断层；新 token 集独立维护避免与
  * components/shelves 旧版混淆。

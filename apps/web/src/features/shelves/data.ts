@@ -1,11 +1,9 @@
 /**
  * 选品模块 mock 数据（仅 UI 演示用）
  *
- * 设计稿写死了 13 场景的 demo SKU + 诊断 + 方案 + 问题单品框等。生产环境这些
- * 应由 AI 工作流生成，但 Dify key 在 dev/CI 不一定有，先用 mock 保流程跑通，
- * 后端切到真 SSE 后只换 fetcher，不动 UI。
- *
- * 数据来源：docs/design-ref/myjadviser/shelves-app/data.jsx
+ * 13 场景的 demo SKU + 诊断 + 方案 + 问题单品框等。生产环境这些应由 AI 工作流
+ * 生成，但 Dify key 在 dev/CI 不一定有，先用 mock 保流程跑通，后端切到真 SSE
+ * 后只换 fetcher，不动 UI。
  */
 
 export interface DemoSku {

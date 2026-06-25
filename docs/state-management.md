@@ -445,6 +445,74 @@ JobsContext 用它把"多次入队的多个 batch"聚成一个用户可见的 se
 
 ---
 
+## 8.5 · admin-web 状态(PC 超管控制台)
+
+> mobile web 跟 admin-web 是两个独立前端,跑在不同 vite dev / 不同 React 树。**状态不互通**(连 Query cache 都不共享)。这里只列 admin-web 独有的状态;共享后端 cookie 见 §1。
+
+### Current Admin User
+
+**Query** `['me']`(注意:**不是** mobile 的 `['auth', 'me']`,key 都不一样)
+**fetch** `lib/auth.ts:fetchMe()` → `GET /auth/me`
+**guard** `AppShell.tsx` 里 `meQ.isLoading` → 全屏 loader;`!meQ.data || !isSuperAdmin(meQ.data)` → 跳 `/login`
+**写它** `useLogin()`(POST `/auth/login`)成功后 `qc.invalidateQueries(['me'])`;登出 `qc.removeQueries(['me'])` + 跳 `/login`
+**生命周期** 启动时 fetch,登录 / 登出后 invalidate / remove
+
+### Dashboard 各卡
+
+| Query key | fetch | 写它 | stale |
+|---|---|---|---|
+| `['dashboard', 'kpis', days]` | `GET /admin/dashboard/kpis` | 切窗口期(days) | 跟着 days 重 fetch |
+| `['dashboard', 'trend', days]` | `GET /admin/dashboard/trend` | 同上 | 同上 |
+| `['dashboard', 'top-stores', days, limit]` | `GET /admin/dashboard/top-stores` | 同上 | 同上 |
+| `['dashboard', 'scenes', days]` | `GET /admin/dashboard/scenes` | 同上 | 同上 |
+
+**4 个独立 query 故意不合并**:任一失败不阻塞其他、各自 skeleton。
+
+### 调改记录(/changes)
+
+| 状态 | 住在哪 | 写它 |
+|---|---|---|
+| 筛选 + 分页 | **URL search params**(`validateSearch` + `useNavigate replace`) | 用户改筛选 → `patchSearch()` |
+| 列表数据 | Query `['changes', search, status, action, from, to, page]`(完整 filters 进 key) | 自动跟 URL 同步 |
+| 行展开拿详情 | Query `['changes', 'detail', id]`,`enabled: expanded` | 行点击切 `expanded` state |
+| 下拉门店 / 场景 | Query `['changes', 'filters', 'stores' / 'scenes']`,`staleTime: 5min` | 长缓存,不主动 invalidate |
+
+**URL search 同步**是这里的关键模式 — 筛选状态写 URL 不写 useState,用户分享 / 收藏 / 浏览器后退都对。
+
+### 数据上传 + 门店档案(/stores)
+
+| 状态 | 住在哪 | 写它 |
+|---|---|---|
+| 上传 spec(列定义,各 kind 共用) | Query `['uploads', 'specs']`,`staleTime: 5min` | 长缓存 |
+| 历史批次列表 | Query `['uploads', kind, 'batches']` | upload / delete / apply / rollback `onSuccess` invalidate |
+| 批次详情(行展开) | Query `['uploads', 'detail', batchId]`,`staleTime: 60s` | apply / rollback `onSuccess` invalidate |
+| 冲突预览(apply 前) | `fetchConflicts()` 临时调用,**不入 Query 缓存** | 点「让它生效」时一次性拉 → 决定弹不弹冲突窗 |
+| 门店列表 | Query `['stores', search, status, page]` | create / patch / delete `onSuccess` invalidate `['stores']` |
+| 单店编辑展开 | 组件本地 useState(`expanded: string \| null`) | 行点击切 |
+| 新增门店展开 | 组件本地 useState(`creating: boolean`) | 「+ 新增门店」按钮切 |
+| CSV section 展开 | 组件本地 useState(`csvOpen: boolean`) | 「⇪ 批量导入」按钮切;`enabled: csvOpen` 控制 specs 懒加载 |
+
+### 应用内确认弹窗(useConfirmDialog)
+
+| 状态 | 住在哪 | 写它 |
+|---|---|---|
+| 当前是否有 pending confirm | `useConfirmDialog()` 组件本地 useState | `confirm({title, description, danger})` 返回 Promise<boolean>,Escape / 点遮罩 → resolve(false),Enter / 点主按钮 → resolve(true) |
+
+每个用 confirm 的组件**自己持有 hook 实例**(`const { confirm, dialog } = useConfirmDialog()`),不共享 Provider。需要把 `{dialog}` 渲染到组件树里(form 内 / panel 内都行,因为是 `position: fixed`)。
+
+### toast
+
+每个页面自己写一个 ephemeral `toast: { type, msg } | null` useState + `flashToast()` helper(2.4s 后自动消)。没抽公共 Provider — admin-web 跟 mobile 不同,故意保持简单。
+
+### 缺什么(对比 mobile web)
+
+- 没有 React Context(没有 IOSDevice / Guide / Promotion 等概念)
+- 没有 localStorage 持久(每次刷新重 fetch)
+- 没有 Server Functions / SSR(纯 SPA,所有渲染都在客户端)
+- 没有 JobsProvider / 海报队列(超管不生成海报)
+
+---
+
 ## 9 · 新加东西时的检查表
 
 加新业务路由 →

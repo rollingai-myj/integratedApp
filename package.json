@@ -14,8 +14,9 @@
   "scripts": {
     "dev:api": "npm run -w apps/api dev",
     "dev:web": "npm run -w apps/web dev",
-    "build": "npm run -w apps/api build && npm run -w apps/web build",
-    "typecheck": "npm run -w apps/api typecheck && npm run -w apps/web typecheck",
+    "dev:admin-web": "npm run -w apps/admin-web dev",
+    "build": "npm run -w apps/api build && npm run -w apps/web build && npm run -w apps/admin-web build",
+    "typecheck": "npm run -w apps/api typecheck && npm run -w apps/web typecheck && npm run -w apps/admin-web typecheck",
     "migrate": "npm run -w apps/api migrate",
     "migrate:status": "npm run -w apps/api migrate:status",
     "db:up": "docker-compose up -d postgres",

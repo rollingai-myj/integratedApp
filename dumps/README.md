@@ -2,11 +2,15 @@
 
 > 本目录被 `.gitignore` 排除(`dumps/` + `*.dump`)—— 含 `user_feishu_identities.open_id` 等敏感字段,不入仓库。
 
-## 当前 dump
+> ⚠️ **下面列的 dump 是 V001-V031 的快照,已经滞后于当前 schema(V038)**。
+> 灌库后需要再跑增量 migration:`docker exec myj-api npx tsx src/db/migrate.ts up` 把 V032-V038 补上。
+> 想要"刚出炉的对齐 dump",按下方"重新 dump"流程生成一份新的。
+
+## 当前 dump(历史快照)
 
 时间戳:**2026-06-23T042758Z**
 PostgreSQL 版本:**16.14** (Alpine, aarch64)
-迁移版本:**V001 → V031**(全部已应用)
+迁移版本:**V001 → V031**(灌库后需再补 V032-V038 共 7 个 migration)
 源容器:`myj-postgres` (database: `myj_dev`, user: `myj`)
 
 > 本次 dump 前已清空所有店的:调改状态(`store_scene_state` / `store_scene_adjustments` / `store_scene_remakes` / `store_scene_virtual_history`、级联清掉 `store_assortment_changes`)、货架登记(`store_scene_shelves`)、问答(`store_survey_questions` / `store_survey_answers`)。其他业务数据保持原状。

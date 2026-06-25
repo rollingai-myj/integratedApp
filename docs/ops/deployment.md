@@ -4,13 +4,27 @@
 
 ```
 互联网 → 边缘 Caddy (TLS + 域名路由)
-       → 宿主机 127.0.0.1:${WEB_PORT}  (默认 8088)
+       ├── 移动端域名 → 127.0.0.1:${WEB_PORT}   (默认 8088,nginx 容器 :80)
+       └── PC 控制台域名 → 127.0.0.1:${ADMIN_PORT} (默认 8089,nginx 容器 :81)
        → docker network myj_network
-           ├── nginx 容器  (反代 /api → api,/ → web)
-           ├── api   容器  (Express,端口 8787,仅集群内可见)
-           └── web   容器  (TanStack Start SSR + srvx,端口 3000,仅集群内可见)
+           ├── nginx     容器  (双 listen :80/:81;:80→/api+web,:81→/api+admin-web)
+           ├── api       容器  (Express,端口 8787,仅集群内可见)
+           ├── api-worker 容器 (海报后台 worker,不暴露端口)
+           ├── web       容器  (TanStack Start SSR + srvx,端口 3000,仅集群内可见)
+           └── admin-web 容器  (nginx + dist SPA,端口 80,仅集群内可见)
          ↓
        阿里云 RDS  (Postgres,外部托管,不在 compose 内)
+```
+
+**两个域名同后端**:店长走移动端域名,总部走 PC 控制台域名,API 都打到同一个 api 容器,session cookie 通用(角色 gate 在后端拦)。Caddy 各自终止 TLS、回源到对应宿主机端口即可,例:
+
+```caddyfile
+shop.myj.example.com {
+  reverse_proxy 127.0.0.1:8088
+}
+admin.myj.example.com {
+  reverse_proxy 127.0.0.1:8089
+}
 ```
 
 ## 一次性 RDS 初始化(首次部署前)
@@ -77,7 +91,22 @@ SSH_HOST=staging.example.com REMOTE_DIR=/srv/myj bash deploy.sh
 
 ```bash
 ssh myj-prod 'cd /opt/myj-integrated-app && docker compose -f docker-compose.yml -f docker-compose.prod.yml ps'
-ssh myj-prod 'cd /opt/myj-integrated-app && docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=200 api web nginx'
+ssh myj-prod 'cd /opt/myj-integrated-app && docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=200 api web admin-web nginx'
+```
+
+**PC 控制台域名访问 502 / 看不到页面**
+
+最常见原因:`.env.production` 没设 `ADMIN_PORT`、或者边缘 Caddy 没配 PC 控制台域名回源:
+
+```bash
+# 1. 容器层面 admin-web 起来了吗?
+ssh myj-prod 'docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "admin-web|nginx"'
+
+# 2. nginx 容器内部能否打到 admin-web?
+ssh myj-prod 'docker exec myj-nginx wget -qO- http://admin-web/ -S 2>&1 | head -10'
+
+# 3. 宿主机暴露端口对吗?(应有 ADMIN_PORT:81 映射)
+ssh myj-prod 'curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:${ADMIN_PORT:-8089}/'
 ```
 
 **zod env 校验失败**
