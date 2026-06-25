@@ -70,7 +70,15 @@ import {
 import {
   applyBatch,
   rollbackBatch,
+  previewBatchConflicts,
 } from '../services/admin-uploads/apply.js';
+import {
+  listStores,
+  getStore,
+  updateStore,
+  createStore,
+  deleteStore,
+} from '../services/admin-stores.service.js';
 import { createTasks as createPosterTasks } from '../services/posters.service.js';
 
 export const adminRouter = Router();
@@ -428,7 +436,7 @@ adminRouter.get(
 
 // 数据上传(admin-web 上传页)-------------------------------------------
 
-const uploadKindSchema = z.enum(['products', 'snapshots']);
+const uploadKindSchema = z.enum(['products', 'snapshots', 'stores']);
 const csvUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
@@ -519,6 +527,22 @@ adminRouter.delete(
   }),
 );
 
+/** 冲突预览:让前端在 apply 之前知道有多少行会覆盖现有数据,以便弹窗确认 */
+adminRouter.get(
+  '/uploads/batches/:id/conflicts',
+  asyncHandler(async (req, res) => {
+    if (!req.params.id) {
+      throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
+    }
+    const preview = await previewBatchConflicts(req.params.id);
+    res.json(preview);
+  }),
+);
+
+const applyBodySchema = z.object({
+  mode: z.enum(['upsert', 'insert_only']).optional(),
+});
+
 /** 应用 staged 批次到业务表;事务内完成,落库失败整体回滚 */
 adminRouter.post(
   '/uploads/batches/:id/apply',
@@ -526,16 +550,18 @@ adminRouter.post(
     if (!req.params.id) {
       throw new AppError(400, ErrorCodes.BAD_REQUEST, 'id 缺失');
     }
+    const body = applyBodySchema.parse(req.body ?? {});
     const summary = await applyBatch({
       batchId: req.params.id,
       appliedBy: req.user!.id,
+      mode: body.mode,
     });
     auditAdmin(
       req,
       'app_setting_change',
-      `应用上传批次 (新增 ${summary.inserted}, 更新 ${summary.updated}, 跳过 ${summary.skipped})`,
+      `应用上传批次 (新增 ${summary.inserted}, 更新 ${summary.updated}, 跳过 ${summary.skipped}, mode=${body.mode ?? 'upsert'})`,
       req.params.id,
-      { ...summary },
+      { ...summary, mode: body.mode ?? 'upsert' },
     );
     res.json(summary);
   }),
@@ -581,6 +607,126 @@ adminRouter.put(
       value: setting.value,
     });
     res.json(setting);
+  }),
+);
+
+// 门店档案管理(admin-web /stores 页)------------------------------------
+
+const storesListQuerySchema = z.object({
+  search: z.string().max(64).optional(),
+  status: z.enum(['active', 'disabled']).optional(),
+  page: z.coerce.number().int().min(1).max(1000).optional(),
+  pageSize: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+/** 门店列表(支持搜索 + 分页 + 状态过滤) */
+adminRouter.get(
+  '/stores',
+  asyncHandler(async (req, res) => {
+    const q = storesListQuerySchema.parse(req.query);
+    const page = q.page ?? 1;
+    const pageSize = q.pageSize ?? 50;
+    const result = await listStores({
+      search: q.search,
+      status: q.status,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    });
+    res.json({ ...result, page, pageSize });
+  }),
+);
+
+/** 单门店详情 */
+adminRouter.get(
+  '/stores/:id',
+  asyncHandler(async (req, res) => {
+    const id = parseUuidParam(req, 'id');
+    const detail = await getStore(id);
+    if (!detail) throw new AppError(404, ErrorCodes.NOT_FOUND, '该门店不存在');
+    res.json(detail);
+  }),
+);
+
+const storeCreateSchema = z.object({
+  storeCode: z.string().min(1).max(32),
+  storeName: z.string().min(1).max(256),
+  province: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
+  openedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  status: z.enum(['active', 'disabled']).optional(),
+  isProjectStore: z.boolean().optional(),
+  storeAreaSqm: z.number().nullable().optional(),
+  poiCategory: z.string().nullable().optional(),
+});
+
+/** 新增门店 */
+adminRouter.post(
+  '/stores',
+  asyncHandler(async (req, res) => {
+    const body = parseBody(storeCreateSchema, req);
+    const detail = await createStore(body);
+    auditAdmin(
+      req,
+      'app_setting_change',
+      `新增门店 ${detail.storeCode} ${detail.storeName}`,
+      detail.id,
+      { storeCode: detail.storeCode },
+    );
+    res.status(201).json(detail);
+  }),
+);
+
+/** 删除门店(软删,deleted_at=now) */
+adminRouter.delete(
+  '/stores/:id',
+  asyncHandler(async (req, res) => {
+    const id = parseUuidParam(req, 'id');
+    const before = await getStore(id);
+    await deleteStore(id);
+    auditAdmin(
+      req,
+      'app_setting_change',
+      `删除门店 ${before?.storeCode ?? id}`,
+      id,
+      { storeCode: before?.storeCode, storeName: before?.storeName },
+    );
+    res.status(204).end();
+  }),
+);
+
+const storePatchSchema = z.object({
+  storeCode: z.string().min(1).max(32).optional(),
+  storeName: z.string().min(1).max(256).optional(),
+  province: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
+  openedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  status: z.enum(['active', 'disabled']).optional(),
+  isProjectStore: z.boolean().optional(),
+  storeAreaSqm: z.number().nullable().optional(),
+  poiCategory: z.string().nullable().optional(),
+});
+
+/** 单店编辑(PATCH,只更新传入字段) */
+adminRouter.patch(
+  '/stores/:id',
+  asyncHandler(async (req, res) => {
+    const id = parseUuidParam(req, 'id');
+    const patch = parseBody(storePatchSchema, req);
+    const detail = await updateStore(id, patch);
+    auditAdmin(
+      req,
+      'app_setting_change',
+      `编辑门店 ${detail.storeCode} ${detail.storeName}`,
+      id,
+      { fields: Object.keys(patch) },
+    );
+    res.json(detail);
   }),
 );
 

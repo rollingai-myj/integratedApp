@@ -10,6 +10,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { TOKENS } from '@/tokens';
 import { ApiError } from '@/lib/api';
+import { useConfirmDialog } from '@/components/ConfirmDialog';
 import {
   uploadPromoXlsx,
   fetchPromoBatches,
@@ -23,7 +24,7 @@ export const Route = createFileRoute('/_app/uploads/promotions')({
   component: PromotionsUploadPage,
 });
 
-// 字段说明从用户给的实际 xlsx 提取(每个 sheet 第一行表头)
+// 字段说明从用户给的实际 xlsx 提取(每个工作表第一行表头)
 const SHEET_FIELDS: Array<{ label: string; key: string; columns: string[]; note?: string }> = [
   {
     label: '周末啤酒日', key: 'weekend_beer',
@@ -36,7 +37,7 @@ const SHEET_FIELDS: Array<{ label: string; key: string; columns: string[]; note?
   {
     label: '品牌满减券', key: 'brand_coupon',
     columns: ['商品代码', '品名及规格', '单位', '原零售价', '具体促销方式', '开始时间', '结束时间'],
-    note: '「具体促销方式」首行写「<池名>\\n满 X 减 Y 元」,池子下方各 SKU 行可留空(后端 fill-down)',
+    note: '「具体促销方式」第一行写「<池子名>↵满 X 减 Y 元」,该池子下方各商品行的「具体促销方式」可以留空,系统会自动归入同一池子。',
   },
   {
     label: '周二会员日', key: 'tuesday_member',
@@ -50,6 +51,7 @@ const SHEET_FIELDS: Array<{ label: string; key: string; columns: string[]; note?
 
 function PromotionsUploadPage() {
   const qc = useQueryClient();
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = React.useState(false);
   const [toast, setToast] = React.useState<{ type: 'success' | 'error'; msg: string } | null>(null);
@@ -64,7 +66,7 @@ function PromotionsUploadPage() {
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['promo', 'batches'] });
       const total = Object.values(r.batch.parsedTotal).reduce((s, n) => s + n, 0);
-      flashToast('success', `已上传 · ${total} 条 offer · ${r.warnings.length} 条 warning`);
+      flashToast('success', `已上传 · 共解析出 ${total} 条活动 · ${r.warnings.length} 条提示`);
     },
     onError: (e: unknown) => {
       const msg = e instanceof ApiError ? e.message : '上传失败';
@@ -76,16 +78,16 @@ function PromotionsUploadPage() {
     mutationFn: voidPromoBatch,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['promo', 'batches'] });
-      flashToast('success', '已作废');
+      flashToast('success', '已停用');
     },
-    onError: (e: unknown) => flashToast('error', e instanceof ApiError ? e.message : '作废失败'),
+    onError: (e: unknown) => flashToast('error', e instanceof ApiError ? e.message : '停用失败'),
   });
 
   const unvoidM = useMutation({
     mutationFn: unvoidPromoBatch,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['promo', 'batches'] });
-      flashToast('success', '已启用(其他批次自动作废)');
+      flashToast('success', '已启用(其他批次自动停用)');
     },
     onError: (e: unknown) => flashToast('error', e instanceof ApiError ? e.message : '启用失败'),
   });
@@ -107,11 +109,11 @@ function PromotionsUploadPage() {
   const handleFile = (f: File) => {
     const lower = f.name.toLowerCase();
     if (!lower.endsWith('.xlsx') && !lower.endsWith('.xls')) {
-      flashToast('error', '只支持 .xlsx / .xls 文件');
+      flashToast('error', '只支持 Excel 文件(后缀 .xlsx / .xls)');
       return;
     }
     if (f.size > 20 * 1024 * 1024) {
-      flashToast('error', '文件超过 20 MB 上限');
+      flashToast('error', '文件不能超过 20 MB');
       return;
     }
     uploadM.mutate(f);
@@ -123,11 +125,11 @@ function PromotionsUploadPage() {
         活动数据
       </h1>
       <div style={{ fontSize: TOKENS.fSm, color: TOKENS.inkMuted, marginBottom: 20, maxWidth: 760 }}>
-        上传 5-sheet xlsx 文件,后端解析为活动池子(会员价 / 周末啤酒日 / 凑单券 等)。
-        每次上传 = 全量替换:旧批次自动作废,需要恢复时点「启用」即可。
+        上传一份 Excel 文件,里面包含 5 个工作表(会员价 / 周末啤酒日 / 品牌满减券 / 周二会员日 / 常规优惠券)。
+        每次上传都会自动停用此前的活动批次,如需恢复旧批次,在下方记录中点「启用」即可。
       </div>
 
-      {/* 模板 + sheet 字段说明 */}
+      {/* 模板 + 工作表字段说明 */}
       <Panel>
         <div style={{
           display: 'flex', justifyContent: 'space-between',
@@ -135,10 +137,10 @@ function PromotionsUploadPage() {
         }}>
           <div>
             <div style={{ fontSize: TOKENS.fBase, fontWeight: 700, color: TOKENS.ink }}>
-              xlsx 模板 · 5 个 sheet
+              填写说明 · 共 5 个工作表
             </div>
             <div style={{ fontSize: TOKENS.fXs, color: TOKENS.inkMuted, marginTop: 2 }}>
-              每个 sheet 第一行为表头,sheet 名必须是下方 5 个之一(会员价 / 周末啤酒日 / 品牌满减券 / 周二会员日 / 常规优惠券)
+              工作表名称必须是下方 5 个之一,每个工作表的第一行是列名,请勿删除或改名。
             </div>
           </div>
           <a
@@ -157,7 +159,7 @@ function PromotionsUploadPage() {
               boxShadow: `0 4px 12px ${TOKENS.red}55`,
             }}
           >
-            📄 下载 xlsx 模板
+            📄 下载模板
           </a>
         </div>
 
@@ -173,7 +175,7 @@ function PromotionsUploadPage() {
                 fontSize: TOKENS.fSm, fontWeight: 700, color: TOKENS.ink,
                 marginBottom: 6,
               }}>
-                Sheet「{sheet.label}」
+                工作表「{sheet.label}」
               </div>
               <div style={{
                 fontSize: TOKENS.fXs, color: TOKENS.inkSoft, lineHeight: 1.6,
@@ -219,9 +221,9 @@ function PromotionsUploadPage() {
       >
         <div style={{ fontSize: 36, marginBottom: 8 }}>{uploadM.isPending ? '⌛' : '↓'}</div>
         <div style={{ fontSize: TOKENS.fBase, color: TOKENS.inkSoft, marginBottom: 4 }}>
-          {uploadM.isPending ? '正在解析…' : '拖拽 xlsx 到此 或 点击选择'}
+          {uploadM.isPending ? '正在读取文件…' : '把文件拖到这里,或点击选择文件'}
         </div>
-        <div style={{ fontSize: TOKENS.fXs }}>支持 .xlsx / .xls · 最大 20 MB · 上传后旧批次自动作废</div>
+        <div style={{ fontSize: TOKENS.fXs }}>仅支持 Excel 格式(.xlsx / .xls) · 单个文件最大 20 MB · 上传后,旧的活动批次会自动停用</div>
         <input
           ref={fileInputRef}
           type="file"
@@ -238,7 +240,7 @@ function PromotionsUploadPage() {
       {/* 历史批次 */}
       <Panel>
         <div style={{ fontSize: TOKENS.fBase, fontWeight: 700, color: TOKENS.ink, marginBottom: 12 }}>
-          历史批次
+          上传记录
         </div>
 
         {batchesQ.isLoading && (
@@ -248,7 +250,7 @@ function PromotionsUploadPage() {
         )}
         {!batchesQ.isLoading && (batchesQ.data?.length ?? 0) === 0 && (
           <div style={{ padding: '24px 0', textAlign: 'center', color: TOKENS.inkMuted, fontSize: TOKENS.fSm }}>
-            暂无批次。首次上传后会出现在这里。
+            还没有上传记录。完成第一次上传后,会出现在这里。
           </div>
         )}
 
@@ -256,14 +258,31 @@ function PromotionsUploadPage() {
           <BatchCard
             key={b.id}
             batch={b}
-            onVoid={() => {
-              if (confirm(`作废批次「${b.fileName}」?作废后此批次的活动不再生效。`)) voidM.mutate(b.id);
+            onVoid={async () => {
+              const ok = await confirm({
+                title: `停用「${b.fileName}」?`,
+                description: '停用后,本批次包含的活动不再生效。',
+                confirmLabel: '停用',
+                danger: true,
+              });
+              if (ok) voidM.mutate(b.id);
             }}
-            onUnvoid={() => {
-              if (confirm(`启用「${b.fileName}」?其他未作废批次会自动作废。`)) unvoidM.mutate(b.id);
+            onUnvoid={async () => {
+              const ok = await confirm({
+                title: `启用「${b.fileName}」?`,
+                description: '启用后,其他正在生效的批次会自动停用,只有这一份会生效。',
+                confirmLabel: '启用',
+              });
+              if (ok) unvoidM.mutate(b.id);
             }}
-            onDelete={() => {
-              if (confirm(`删除「${b.fileName}」?无法恢复。`)) deleteM.mutate(b.id);
+            onDelete={async () => {
+              const ok = await confirm({
+                title: `删除「${b.fileName}」?`,
+                description: '删除后无法恢复。',
+                confirmLabel: '🗑 删除',
+                danger: true,
+              });
+              if (ok) deleteM.mutate(b.id);
             }}
             voiding={voidM.isPending && voidM.variables === b.id}
             unvoiding={unvoidM.isPending && unvoidM.variables === b.id}
@@ -287,6 +306,8 @@ function PromotionsUploadPage() {
           {toast.msg}
         </div>
       )}
+
+      {confirmDialog}
     </div>
   );
 }
@@ -336,12 +357,12 @@ function BatchCard({
           fontVariantNumeric: 'tabular-nums',
         }}>
           <span style={{ color: TOKENS.success, fontWeight: 700 }}>{totalOffers}</span>
-          {' offer / '}
+          <span style={{ color: TOKENS.inkMuted }}> 条活动 / 共 </span>
           <span>{totalRaw}</span>
-          {' raw'}
+          <span style={{ color: TOKENS.inkMuted }}> 行原始数据</span>
           {batch.parseWarnings.length > 0 && (
             <span style={{ color: TOKENS.warn, marginLeft: 6 }}>
-              · {batch.parseWarnings.length} 警告
+              · {batch.parseWarnings.length} 条提示
             </span>
           )}
         </div>
@@ -349,7 +370,7 @@ function BatchCard({
           <ActionBtn label={unvoiding ? '启用中…' : '启用'} disabled={unvoiding} primary
             onClick={e => { e.stopPropagation(); onUnvoid(); }} />
         ) : (
-          <ActionBtn label={voiding ? '作废中…' : '作废'} disabled={voiding}
+          <ActionBtn label={voiding ? '停用中…' : '停用'} disabled={voiding}
             onClick={e => { e.stopPropagation(); onVoid(); }} />
         )}
         <ActionBtn label="删除" disabled={deleting} danger
@@ -392,7 +413,7 @@ function BatchCard({
                 fontSize: TOKENS.fXs, fontWeight: 700, color: TOKENS.inkMuted,
                 marginBottom: 6, letterSpacing: 0.3,
               }}>
-                解析警告({batch.parseWarnings.length} 条)
+                需要注意的行(共 {batch.parseWarnings.length} 条)
               </div>
               <div style={{
                 maxHeight: 200, overflowY: 'auto',
@@ -403,10 +424,10 @@ function BatchCard({
                 {batch.parseWarnings.map((w, i) => (
                   <div key={i} style={{ padding: '2px 0' }}>
                     <span style={{
-                      display: 'inline-block', width: 110,
+                      display: 'inline-block', width: 150,
                       color: TOKENS.inkMuted, fontVariantNumeric: 'tabular-nums',
                     }}>
-                      {w.sheet} 行 {w.row}
+                      工作表「{w.sheet}」第 {w.row} 行
                     </span>
                     {w.reason}
                   </div>
@@ -457,7 +478,7 @@ function ActionBtn({
 
 function StatusPill({ voided }: { voided: boolean }) {
   const s = voided
-    ? { bg: '#F3F4F6', fg: '#374151', label: '已作废' }
+    ? { bg: '#F3F4F6', fg: '#374151', label: '已停用' }
     : { bg: '#D1FAE5', fg: '#065F46', label: '生效中' };
   return (
     <span style={{

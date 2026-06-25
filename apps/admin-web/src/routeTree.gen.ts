@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
+import { Route as AppStoresRouteImport } from './routes/_app.stores'
 import { Route as AppChangesRouteImport } from './routes/_app.changes'
 import { Route as AppUploadsSnapshotsRouteImport } from './routes/_app.uploads.snapshots'
 import { Route as AppUploadsPromotionsRouteImport } from './routes/_app.uploads.promotions'
@@ -29,6 +30,11 @@ const AppRoute = AppRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppStoresRoute = AppStoresRouteImport.update({
+  id: '/stores',
+  path: '/stores',
   getParentRoute: () => AppRoute,
 } as any)
 const AppChangesRoute = AppChangesRouteImport.update({
@@ -56,6 +62,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/changes': typeof AppChangesRoute
+  '/stores': typeof AppStoresRoute
   '/uploads/products': typeof AppUploadsProductsRoute
   '/uploads/promotions': typeof AppUploadsPromotionsRoute
   '/uploads/snapshots': typeof AppUploadsSnapshotsRoute
@@ -63,6 +70,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/changes': typeof AppChangesRoute
+  '/stores': typeof AppStoresRoute
   '/': typeof AppIndexRoute
   '/uploads/products': typeof AppUploadsProductsRoute
   '/uploads/promotions': typeof AppUploadsPromotionsRoute
@@ -73,6 +81,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/changes': typeof AppChangesRoute
+  '/_app/stores': typeof AppStoresRoute
   '/_app/': typeof AppIndexRoute
   '/_app/uploads/products': typeof AppUploadsProductsRoute
   '/_app/uploads/promotions': typeof AppUploadsPromotionsRoute
@@ -84,6 +93,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/changes'
+    | '/stores'
     | '/uploads/products'
     | '/uploads/promotions'
     | '/uploads/snapshots'
@@ -91,6 +101,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/changes'
+    | '/stores'
     | '/'
     | '/uploads/products'
     | '/uploads/promotions'
@@ -100,6 +111,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/_app/changes'
+    | '/_app/stores'
     | '/_app/'
     | '/_app/uploads/products'
     | '/_app/uploads/promotions'
@@ -132,6 +144,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/stores': {
+      id: '/_app/stores'
+      path: '/stores'
+      fullPath: '/stores'
+      preLoaderRoute: typeof AppStoresRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/changes': {
@@ -167,6 +186,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppChangesRoute: typeof AppChangesRoute
+  AppStoresRoute: typeof AppStoresRoute
   AppIndexRoute: typeof AppIndexRoute
   AppUploadsProductsRoute: typeof AppUploadsProductsRoute
   AppUploadsPromotionsRoute: typeof AppUploadsPromotionsRoute
@@ -175,6 +195,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppChangesRoute: AppChangesRoute,
+  AppStoresRoute: AppStoresRoute,
   AppIndexRoute: AppIndexRoute,
   AppUploadsProductsRoute: AppUploadsProductsRoute,
   AppUploadsPromotionsRoute: AppUploadsPromotionsRoute,
