@@ -377,27 +377,23 @@ function ExpandedDetail({
           </div>
         )}
       </div>
-      {/* AI 诊断 JSON */}
+      {/* 智能体分析结果(可读视图) */}
       <div>
-        <DetailField label="AI 诊断">
+        <DetailField label="智能体分析">
           {detail.hasAiDiagnosis ? (
-            <pre style={{
-              margin: 0,
+            <div style={{
               padding: '10px 12px',
               background: TOKENS.bg,
               border: `1px solid ${TOKENS.lineSoft}`,
               borderRadius: 6,
-              fontSize: 11,
-              lineHeight: 1.5,
-              color: TOKENS.inkSoft,
+              fontSize: TOKENS.fSm,
+              lineHeight: 1.6,
+              color: TOKENS.ink,
               maxHeight: 280,
               overflow: 'auto',
-              fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
             }}>
-              {JSON.stringify(detail.aiDiagnosis, null, 2)}
-            </pre>
+              <AiDiagnosisView value={detail.aiDiagnosis} />
+            </div>
           ) : (
             <span style={{ color: TOKENS.inkMuted }}>无</span>
           )}
@@ -405,6 +401,55 @@ function ExpandedDetail({
       </div>
     </div>
   );
+}
+
+/**
+ * 把 ai_diagnosis 这种"形状未知"的 JSON 渲染成可读的列表/字段,
+ * 替代之前直接 JSON.stringify 给用户看的做法。
+ */
+function AiDiagnosisView({ value, level = 0 }: { value: unknown; level?: number }) {
+  if (value === null || value === undefined) {
+    return <span style={{ color: TOKENS.inkMuted }}>—</span>;
+  }
+  if (typeof value === 'string') {
+    return <span>{value}</span>;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return <span>{String(value)}</span>;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span style={{ color: TOKENS.inkMuted }}>(空)</span>;
+    return (
+      <ul style={{ margin: 0, paddingLeft: 18 }}>
+        {value.map((item, i) => (
+          <li key={i} style={{ marginBottom: 4 }}>
+            <AiDiagnosisView value={item} level={level + 1} />
+          </li>
+        ))}
+      </ul>
+    );
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return <span style={{ color: TOKENS.inkMuted }}>(空)</span>;
+    return (
+      <div style={level === 0 ? undefined : { marginTop: 2 }}>
+        {entries.map(([k, v]) => (
+          <div key={k} style={{ marginBottom: 6 }}>
+            <span style={{ fontWeight: 700, color: TOKENS.inkSoft, marginRight: 6 }}>
+              {humanizeKey(k)}:
+            </span>
+            <AiDiagnosisView value={v} level={level + 1} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <span>{String(value)}</span>;
+}
+
+function humanizeKey(k: string): string {
+  return k.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
 }
 
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {

@@ -34,6 +34,7 @@ const NAV: NavGroup[] = [
       { to: '/uploads/promotions', label: '活动数据' },
       { to: '/uploads/products', label: '产品主数据' },
       { to: '/uploads/snapshots', label: '门店销售快照' },
+      { to: '/stores', label: '门店信息' },
     ],
   },
 ];
@@ -317,6 +318,7 @@ function FullPageLoader() {
 function pageTitleForPath(path: string): string {
   if (path === '/' || path === '') return '仪表盘';
   if (path.startsWith('/changes')) return '调改记录';
+  if (path.startsWith('/stores')) return '门店信息';
   if (path.startsWith('/uploads/promotions')) return '活动数据上传';
   if (path.startsWith('/uploads/products')) return '产品主数据上传';
   if (path.startsWith('/uploads/snapshots')) return '门店销售快照上传';

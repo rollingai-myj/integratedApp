@@ -12,6 +12,7 @@ import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { TOKENS } from '@/tokens';
 import { ApiError } from '@/lib/api';
+import { useConfirmDialog } from '@/components/ConfirmDialog';
 import {
   uploadCsv,
   fetchBatches,
@@ -20,16 +21,20 @@ import {
   applyBatch,
   rollbackBatchApi,
   templateUrl,
+  fetchConflicts,
   STATUS_LABEL,
   type UploadKind,
   type UploadBatchSummary,
   type UploadStatus,
   type ColumnSpec,
   type ApplySummary,
+  type ApplyMode,
+  type ConflictPreview,
 } from '@/lib/uploads';
 
-export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSpec }) {
+export function CsvUploadPage({ kind, spec, hideHeading }: { kind: UploadKind; spec: ColumnSpec; hideHeading?: boolean }) {
   const qc = useQueryClient();
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = React.useState(false);
   const [toast, setToast] = React.useState<{ type: 'success' | 'error'; msg: string } | null>(null);
@@ -44,7 +49,7 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
     mutationFn: (file: File) => uploadCsv(kind, file),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['uploads', kind, 'batches'] });
-      flashToast('success', `已上传 · 有效 ${r.validRows} / 总 ${r.totalRows} 行`);
+      flashToast('success', `已读取 ${r.totalRows} 行,其中 ${r.validRows} 行可生效`);
     },
     onError: (e: unknown) => {
       const msg = e instanceof ApiError ? e.message : '上传失败';
@@ -64,15 +69,23 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
     },
   });
 
+  // 冲突弹窗状态:点「让它生效」后,如果有重复主键,会先弹窗让用户选 mode
+  const [conflictDialog, setConflictDialog] = React.useState<{
+    batchId: string;
+    fileName: string;
+    preview: ConflictPreview;
+  } | null>(null);
+
   const applyM = useMutation({
-    mutationFn: (id: string) => applyBatch(id),
+    mutationFn: ({ id, mode }: { id: string; mode?: ApplyMode }) => applyBatch(id, mode),
     onSuccess: (r: ApplySummary) => {
       qc.invalidateQueries({ queryKey: ['uploads', kind, 'batches'] });
       qc.invalidateQueries({ queryKey: ['uploads', 'detail'] });
-      flashToast('success', `已应用 · 新增 ${r.inserted} · 更新 ${r.updated} · 跳过 ${r.skipped}`);
+      setConflictDialog(null);
+      flashToast('success', `已生效 · 新增 ${r.inserted} · 更新 ${r.updated} · 跳过 ${r.skipped}`);
     },
     onError: (e: unknown) => {
-      const msg = e instanceof ApiError ? e.message : '应用失败';
+      const msg = e instanceof ApiError ? e.message : '生效失败';
       flashToast('error', msg);
     },
   });
@@ -82,10 +95,10 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['uploads', kind, 'batches'] });
       qc.invalidateQueries({ queryKey: ['uploads', 'detail'] });
-      flashToast('success', `已回滚 ${r.reverted} 条`);
+      flashToast('success', `已撤销 ${r.reverted} 条`);
     },
     onError: (e: unknown) => {
-      const msg = e instanceof ApiError ? e.message : '回滚失败';
+      const msg = e instanceof ApiError ? e.message : '撤销失败';
       flashToast('error', msg);
     },
   });
@@ -97,11 +110,11 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
 
   const handleFile = (f: File) => {
     if (!f.name.toLowerCase().endsWith('.csv')) {
-      flashToast('error', '只支持 .csv 文件');
+      flashToast('error', '只支持 CSV 文件(后缀 .csv)');
       return;
     }
     if (f.size > 20 * 1024 * 1024) {
-      flashToast('error', '文件超过 20 MB 上限');
+      flashToast('error', '文件不能超过 20 MB');
       return;
     }
     uploadM.mutate(f);
@@ -109,22 +122,26 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
 
   return (
     <div style={{ maxWidth: 1080 }}>
-      <h1 style={{ fontSize: TOKENS.f2xl, fontWeight: 700, color: TOKENS.ink, margin: '0 0 6px' }}>
-        {spec.label}
-      </h1>
-      <div style={{ fontSize: TOKENS.fSm, color: TOKENS.inkMuted, marginBottom: 20, maxWidth: 760 }}>
-        {spec.description}
-      </div>
+      {!hideHeading && (
+        <>
+          <h1 style={{ fontSize: TOKENS.f2xl, fontWeight: 700, color: TOKENS.ink, margin: '0 0 6px' }}>
+            {spec.label}
+          </h1>
+          <div style={{ fontSize: TOKENS.fSm, color: TOKENS.inkMuted, marginBottom: 20, maxWidth: 760 }}>
+            {spec.description}
+          </div>
+        </>
+      )}
 
       {/* 模板 + 字段说明 */}
       <Panel>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 24, marginBottom: 16 }}>
           <div>
             <div style={{ fontSize: TOKENS.fBase, fontWeight: 700, color: TOKENS.ink }}>
-              CSV 模板字段
+              填写说明
             </div>
             <div style={{ fontSize: TOKENS.fXs, color: TOKENS.inkMuted, marginTop: 2 }}>
-              第 1 行为表头,模板里带一行示例数据
+              下载模板后,按下方说明在 Excel 中填写,保存为 CSV 文件再上传。第一行是列名,请勿删除或改名。
             </div>
           </div>
           <a
@@ -143,7 +160,7 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
               boxShadow: `0 4px 12px ${TOKENS.red}55`,
             }}
           >
-            📄 下载 CSV 模板
+            📄 下载模板
           </a>
         </div>
 
@@ -151,9 +168,8 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
           <thead>
             <tr style={{ background: TOKENS.bgWarm, color: TOKENS.inkSoft }}>
               <Th width={200}>列名</Th>
-              <Th width={80}>类型</Th>
-              <Th width={70}>必填</Th>
-              <Th>说明</Th>
+              <Th width={70}>是否必填</Th>
+              <Th>这一列填什么</Th>
               <Th width={200}>示例</Th>
             </tr>
           </thead>
@@ -161,16 +177,14 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
             {spec.columns.map(col => (
               <tr key={col.name} style={{ borderTop: `1px solid ${TOKENS.lineSoft}` }}>
                 <Td mono><code style={{ color: TOKENS.ink }}>{col.name}</code></Td>
-                <Td>{col.type === 'enum' ? `枚举` : col.type}</Td>
-                <Td>{col.required ? <span style={{ color: TOKENS.red, fontWeight: 700 }}>必填</span> : '—'}</Td>
+                <Td>{col.required ? <span style={{ color: TOKENS.red, fontWeight: 700 }}>必填</span> : '选填'}</Td>
                 <Td>
                   {col.description}
                   {col.enumValues && (
                     <div style={{
                       marginTop: 4, fontSize: TOKENS.fXs, color: TOKENS.inkMuted,
-                      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
                     }}>
-                      {col.enumValues.join(' / ')}
+                      可选值:{col.enumValues.join(' / ')}
                     </div>
                   )}
                 </Td>
@@ -206,9 +220,9 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
       >
         <div style={{ fontSize: 36, marginBottom: 8 }}>{uploadM.isPending ? '⌛' : '↓'}</div>
         <div style={{ fontSize: TOKENS.fBase, color: TOKENS.inkSoft, marginBottom: 4 }}>
-          {uploadM.isPending ? '正在解析…' : '拖拽 CSV 到此 或 点击选择'}
+          {uploadM.isPending ? '正在读取文件…' : '把文件拖到这里,或点击选择文件'}
         </div>
-        <div style={{ fontSize: TOKENS.fXs }}>支持 .csv · 最大 20 MB · 最多 50,000 行</div>
+        <div style={{ fontSize: TOKENS.fXs }}>仅支持 CSV 格式 · 单个文件最大 20 MB · 一次最多 50,000 行</div>
         <input
           ref={fileInputRef}
           type="file"
@@ -225,7 +239,7 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
       {/* 历史批次 */}
       <Panel>
         <div style={{ fontSize: TOKENS.fBase, fontWeight: 700, color: TOKENS.ink, marginBottom: 12 }}>
-          历史批次
+          上传记录
         </div>
 
         {batchesQ.isLoading && (
@@ -235,7 +249,7 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
         )}
         {!batchesQ.isLoading && (batchesQ.data?.length ?? 0) === 0 && (
           <div style={{ padding: '24px 0', textAlign: 'center', color: TOKENS.inkMuted, fontSize: TOKENS.fSm }}>
-            暂无批次。首次上传后会出现在这里。
+            还没有上传记录。完成第一次上传后,会出现在这里。
           </div>
         )}
 
@@ -246,21 +260,44 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
             batch={b}
             expanded={expanded === b.id}
             onToggle={() => setExpanded(expanded === b.id ? null : b.id)}
-            onDelete={() => {
-              if (confirm(`删除批次「${b.fileName}」?`)) deleteM.mutate(b.id);
+            onDelete={async () => {
+              const ok = await confirm({
+                title: `确认删除「${b.fileName}」?`,
+                description: '删除后无法恢复(仅对未生效的批次可删除)。',
+                confirmLabel: '🗑 删除',
+                danger: true,
+              });
+              if (ok) deleteM.mutate(b.id);
             }}
-            onApply={() => {
-              if (confirm(`将「${b.fileName}」 ${b.validRows} 行有效数据落到业务表?\n应用后可在批次列表里点「回滚」撤销。`)) {
-                applyM.mutate(b.id);
+            onApply={async () => {
+              // 先看冲突:有重复 → 弹冲突确认窗;没冲突 → 弹自定义确认窗
+              try {
+                const preview = await fetchConflicts(b.id);
+                if (preview.toUpdateCount > 0) {
+                  setConflictDialog({ batchId: b.id, fileName: b.fileName, preview });
+                  return;
+                }
+                const ok = await confirm({
+                  title: `让「${b.fileName}」生效?`,
+                  description: `本批 ${b.validRows} 行数据会写入系统,生效后可在列表里点「撤销」恢复。`,
+                  confirmLabel: '让它生效',
+                });
+                if (ok) applyM.mutate({ id: b.id });
+              } catch (e) {
+                flashToast('error', e instanceof ApiError ? e.message : '查询冲突失败');
               }
             }}
-            onRollback={() => {
-              if (confirm(`回滚「${b.fileName}」?会撤销 apply 时入库 / 修改的所有行。`)) {
-                rollbackM.mutate(b.id);
-              }
+            onRollback={async () => {
+              const ok = await confirm({
+                title: `撤销「${b.fileName}」?`,
+                description: '本批次写入的数据会被还原到上传前的状态。',
+                confirmLabel: '撤销',
+                danger: true,
+              });
+              if (ok) rollbackM.mutate(b.id);
             }}
             deleting={deleteM.isPending && deleteM.variables === b.id}
-            applying={applyM.isPending && applyM.variables === b.id}
+            applying={applyM.isPending && applyM.variables?.id === b.id}
             rollingBack={rollbackM.isPending && rollbackM.variables === b.id}
           />
         ))}
@@ -282,8 +319,169 @@ export function CsvUploadPage({ kind, spec }: { kind: UploadKind; spec: ColumnSp
           {toast.msg}
         </div>
       )}
+
+      {conflictDialog && (
+        <ConflictDialog
+          kind={kind}
+          fileName={conflictDialog.fileName}
+          preview={conflictDialog.preview}
+          applying={applyM.isPending}
+          onCancel={() => setConflictDialog(null)}
+          onConfirm={(mode) => applyM.mutate({ id: conflictDialog.batchId, mode })}
+        />
+      )}
+
+      {confirmDialog}
     </div>
   );
+}
+
+// =============================================================================
+// 冲突确认弹窗
+// =============================================================================
+
+function ConflictDialog({
+  kind, fileName, preview, applying, onCancel, onConfirm,
+}: {
+  kind: UploadKind;
+  fileName: string;
+  preview: ConflictPreview;
+  applying: boolean;
+  onCancel: () => void;
+  onConfirm: (mode: ApplyMode) => void;
+}) {
+  const entityName = kind === 'products' ? '商品' : kind === 'stores' ? '门店' : '记录';
+  const keyName = kind === 'products' ? '商品编码' : kind === 'stores' ? '门店编号' : '主键';
+
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: 'fixed', inset: 0,
+        background: 'rgba(15, 12, 8, 0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 2000,
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: 560, maxHeight: '85vh',
+          background: TOKENS.card,
+          borderRadius: 12,
+          boxShadow: TOKENS.shadow2,
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          padding: '18px 24px',
+          borderBottom: `1px solid ${TOKENS.lineSoft}`,
+        }}>
+          <div style={{ fontSize: TOKENS.fLg, fontWeight: 700, color: TOKENS.ink }}>
+            发现重复{entityName},请确认是否覆盖
+          </div>
+          <div style={{ fontSize: TOKENS.fXs, color: TOKENS.inkMuted, marginTop: 4 }}>
+            「{fileName}」
+          </div>
+        </div>
+
+        <div style={{ padding: '16px 24px', overflow: 'auto', flex: 1 }}>
+          <div style={{ fontSize: TOKENS.fSm, color: TOKENS.ink, lineHeight: 1.7 }}>
+            本批共 <b>{preview.totalRows}</b> 行可生效,其中:
+            <ul style={{ margin: '6px 0 0', paddingLeft: 22 }}>
+              <li>
+                <b style={{ color: TOKENS.success }}>{preview.toInsertCount}</b> 行是<b>新{entityName}</b>(系统中没有这个{keyName})
+              </li>
+              <li>
+                <b style={{ color: TOKENS.warn }}>{preview.toUpdateCount}</b> 行的{keyName}<b>已经存在</b>,如继续生效会用本次上传的数据<b>覆盖现有信息</b>
+              </li>
+            </ul>
+          </div>
+
+          <div style={{
+            marginTop: 14,
+            fontSize: TOKENS.fXs, fontWeight: 700, color: TOKENS.inkMuted,
+            letterSpacing: 0.3,
+          }}>
+            将被覆盖的{entityName}{preview.conflicts.length < preview.toUpdateCount ? `(只列前 ${preview.conflicts.length} 条,共 ${preview.toUpdateCount} 条)` : ''}
+          </div>
+          <div style={{
+            marginTop: 6,
+            maxHeight: 220, overflow: 'auto',
+            border: `1px solid ${TOKENS.lineSoft}`,
+            borderRadius: 6,
+            background: TOKENS.bg,
+            padding: '8px 12px',
+            fontSize: TOKENS.fXs,
+            color: TOKENS.inkSoft,
+          }}>
+            {preview.conflicts.map((c, i) => (
+              <div key={i} style={{ padding: '2px 0', display: 'flex', gap: 10 }}>
+                <code style={{ color: TOKENS.ink, minWidth: 100, fontFamily: 'Menlo, monospace' }}>
+                  {c.key}
+                </code>
+                <span>{c.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{
+          padding: '14px 24px',
+          borderTop: `1px solid ${TOKENS.lineSoft}`,
+          display: 'flex', gap: 10, justifyContent: 'flex-end',
+          flexWrap: 'wrap',
+        }}>
+          <button
+            onClick={onCancel}
+            disabled={applying}
+            style={dialogBtnStyle('ghost', applying)}
+          >
+            取消
+          </button>
+          <button
+            onClick={() => onConfirm('insert_only')}
+            disabled={applying || preview.toInsertCount === 0}
+            style={dialogBtnStyle('secondary', applying || preview.toInsertCount === 0)}
+            title={preview.toInsertCount === 0 ? '本批没有新增项' : ''}
+          >
+            只新增 {preview.toInsertCount} 行,跳过已有
+          </button>
+          <button
+            onClick={() => onConfirm('upsert')}
+            disabled={applying}
+            style={dialogBtnStyle('primary', applying)}
+          >
+            {applying ? '生效中…' : `全部生效(含覆盖 ${preview.toUpdateCount} 行)`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function dialogBtnStyle(
+  variant: 'primary' | 'secondary' | 'ghost',
+  disabled: boolean,
+): React.CSSProperties {
+  const base: React.CSSProperties = {
+    appearance: 'none',
+    padding: '8px 16px',
+    borderRadius: 6,
+    fontSize: TOKENS.fSm,
+    fontWeight: 600,
+    cursor: disabled ? 'default' : 'pointer',
+    opacity: disabled ? 0.5 : 1,
+    fontFamily: 'inherit',
+  };
+  if (variant === 'primary') {
+    return { ...base, border: `1px solid ${TOKENS.red}`, background: TOKENS.red, color: '#fff' };
+  }
+  if (variant === 'secondary') {
+    return { ...base, border: `1px solid ${TOKENS.line}`, background: TOKENS.card, color: TOKENS.ink };
+  }
+  return { ...base, border: 0, background: 'transparent', color: TOKENS.inkMuted };
 }
 
 function BatchCard({
@@ -344,17 +542,18 @@ function BatchCard({
         </div>
         <div style={{ fontSize: TOKENS.fXs, color: TOKENS.inkSoft, fontVariantNumeric: 'tabular-nums' }}>
           <span style={{ color: TOKENS.success, fontWeight: 700 }}>{batch.validRows}</span>
-          {' / '}
+          <span style={{ color: TOKENS.inkMuted }}> 可生效 / 共 </span>
           <span>{batch.totalRows}</span>
+          <span style={{ color: TOKENS.inkMuted }}> 行</span>
           {batch.errorRows > 0 && (
             <span style={{ color: TOKENS.danger, marginLeft: 6 }}>
-              · {batch.errorRows} 错
+              · {batch.errorRows} 行有问题
             </span>
           )}
         </div>
         {canApply && (
           <ActionBtn
-            label={applying ? '应用中…' : '应用'}
+            label={applying ? '生效中…' : '让它生效'}
             disabled={applying}
             primary
             onClick={e => { e.stopPropagation(); onApply(); }}
@@ -362,7 +561,7 @@ function BatchCard({
         )}
         {canRollback && (
           <ActionBtn
-            label={rollingBack ? '回滚中…' : '回滚'}
+            label={rollingBack ? '撤销中…' : '撤销'}
             disabled={rollingBack}
             onClick={e => { e.stopPropagation(); onRollback(); }}
           />
@@ -400,7 +599,7 @@ function BatchCard({
                     fontSize: TOKENS.fXs, fontWeight: 700, color: TOKENS.inkMuted,
                     marginBottom: 6, letterSpacing: 0.3,
                   }}>
-                    错误清单(最多前 200 条)
+                    无法生效的行(最多展示前 200 条)
                   </div>
                   <div style={{
                     maxHeight: 240,
@@ -413,9 +612,9 @@ function BatchCard({
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
                         <tr style={{ background: TOKENS.bgWarm }}>
-                          <th style={errHeaderTd}>行</th>
-                          <th style={errHeaderTd}>列</th>
-                          <th style={errHeaderTd}>原因</th>
+                          <th style={errHeaderTd}>第几行</th>
+                          <th style={errHeaderTd}>哪一列</th>
+                          <th style={errHeaderTd}>问题</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -435,29 +634,7 @@ function BatchCard({
               )}
 
               {detailQ.data.preview.length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <div style={{
-                    fontSize: TOKENS.fXs, fontWeight: 700, color: TOKENS.inkMuted,
-                    marginBottom: 6, letterSpacing: 0.3,
-                  }}>
-                    解析后预览(前 {detailQ.data.preview.length} 条)
-                  </div>
-                  <pre style={{
-                    margin: 0,
-                    padding: '10px 12px',
-                    background: TOKENS.bg,
-                    border: `1px solid ${TOKENS.lineSoft}`,
-                    borderRadius: 6,
-                    fontSize: 11,
-                    lineHeight: 1.5,
-                    color: TOKENS.inkSoft,
-                    maxHeight: 280,
-                    overflow: 'auto',
-                    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-                  }}>
-                    {JSON.stringify(detailQ.data.preview, null, 2)}
-                  </pre>
-                </div>
+                <PreviewTable rows={detailQ.data.preview} />
               )}
 
             </>
@@ -481,7 +658,7 @@ function ApplySummaryBlock({ summary }: { summary: Record<string, unknown> }) {
         fontSize: TOKENS.fXs, fontWeight: 700, color: TOKENS.inkMuted,
         marginBottom: 6, letterSpacing: 0.3,
       }}>
-        应用结果
+        生效结果
       </div>
       <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
         <SummaryStat label="新增" value={inserted} color={TOKENS.success} />
@@ -500,21 +677,82 @@ function ApplySummaryBlock({ summary }: { summary: Record<string, unknown> }) {
           color: TOKENS.inkSoft,
         }}>
           <div style={{ fontWeight: 700, marginBottom: 4, color: TOKENS.inkMuted }}>
-            跳过原因(前 {skipReasons.length} 条)
+            跳过原因(共 {skipReasons.length} 条)
           </div>
           {skipReasons.map((r, i) => (
             <div key={i} style={{ padding: '2px 0' }}>
               <span style={{
-                display: 'inline-block', width: 36,
+                display: 'inline-block', width: 52,
                 color: TOKENS.inkMuted, fontVariantNumeric: 'tabular-nums',
               }}>
-                行 {r.row}
+                第 {r.row} 行
               </span>
               {r.reason}
             </div>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function PreviewTable({ rows }: { rows: Record<string, unknown>[] }) {
+  if (rows.length === 0) return null;
+  const columns = Array.from(
+    rows.reduce<Set<string>>((acc, row) => {
+      Object.keys(row).forEach(k => acc.add(k));
+      return acc;
+    }, new Set<string>())
+  );
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{
+        fontSize: TOKENS.fXs, fontWeight: 700, color: TOKENS.inkMuted,
+        marginBottom: 6, letterSpacing: 0.3,
+      }}>
+        数据预览(前 {rows.length} 行)
+      </div>
+      <div style={{
+        maxHeight: 320, overflow: 'auto',
+        background: TOKENS.bg,
+        border: `1px solid ${TOKENS.lineSoft}`,
+        borderRadius: 6,
+      }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: TOKENS.fXs }}>
+          <thead style={{ position: 'sticky', top: 0, background: TOKENS.bgWarm }}>
+            <tr>
+              {columns.map(col => (
+                <th key={col} style={{
+                  padding: '6px 10px', textAlign: 'left', fontWeight: 700,
+                  color: TOKENS.inkSoft, whiteSpace: 'nowrap',
+                  borderBottom: `1px solid ${TOKENS.lineSoft}`,
+                }}>
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} style={{ borderTop: `1px solid ${TOKENS.lineSoft}` }}>
+                {columns.map(col => {
+                  const v = row[col];
+                  const text = v === null || v === undefined || v === '' ? '—' : String(v);
+                  return (
+                    <td key={col} style={{
+                      padding: '6px 10px', color: TOKENS.ink,
+                      whiteSpace: 'nowrap',
+                      fontVariantNumeric: typeof v === 'number' ? 'tabular-nums' : undefined,
+                    }}>
+                      {text}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

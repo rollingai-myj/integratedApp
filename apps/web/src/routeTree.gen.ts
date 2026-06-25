@@ -15,10 +15,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ShelvesIndexRouteImport } from './routes/shelves.index'
 import { Route as PricesIndexRouteImport } from './routes/prices.index'
 import { Route as PostersIndexRouteImport } from './routes/posters.index'
-import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as ShelvesSceneRouteImport } from './routes/shelves.scene'
 import { Route as PricesColdRouteImport } from './routes/prices.cold'
-import { Route as AdminPromotionsRouteImport } from './routes/admin.promotions'
 import { Route as ShelvesSceneSceneIndexRouteImport } from './routes/shelves.scene.$scene.index'
 import { Route as ShelvesSceneSceneSetupRouteImport } from './routes/shelves.scene.$scene.setup'
 import { Route as ShelvesSceneSceneRecordsRouteImport } from './routes/shelves.scene.$scene.records'
@@ -57,11 +55,6 @@ const PostersIndexRoute = PostersIndexRouteImport.update({
   path: '/posters/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminIndexRoute = AdminIndexRouteImport.update({
-  id: '/admin/',
-  path: '/admin/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ShelvesSceneRoute = ShelvesSceneRouteImport.update({
   id: '/shelves/scene',
   path: '/shelves/scene',
@@ -70,11 +63,6 @@ const ShelvesSceneRoute = ShelvesSceneRouteImport.update({
 const PricesColdRoute = PricesColdRouteImport.update({
   id: '/prices/cold',
   path: '/prices/cold',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdminPromotionsRoute = AdminPromotionsRouteImport.update({
-  id: '/admin/promotions',
-  path: '/admin/promotions',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShelvesSceneSceneIndexRoute = ShelvesSceneSceneIndexRouteImport.update({
@@ -118,10 +106,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
-  '/admin/promotions': typeof AdminPromotionsRoute
   '/prices/cold': typeof PricesColdRoute
   '/shelves/scene': typeof ShelvesSceneRouteWithChildren
-  '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
@@ -137,10 +123,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
-  '/admin/promotions': typeof AdminPromotionsRoute
   '/prices/cold': typeof PricesColdRoute
   '/shelves/scene': typeof ShelvesSceneRouteWithChildren
-  '/admin': typeof AdminIndexRoute
   '/posters': typeof PostersIndexRoute
   '/prices': typeof PricesIndexRoute
   '/shelves': typeof ShelvesIndexRoute
@@ -157,10 +141,8 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/select-store': typeof SelectStoreRoute
-  '/admin/promotions': typeof AdminPromotionsRoute
   '/prices/cold': typeof PricesColdRoute
   '/shelves/scene': typeof ShelvesSceneRouteWithChildren
-  '/admin/': typeof AdminIndexRoute
   '/posters/': typeof PostersIndexRoute
   '/prices/': typeof PricesIndexRoute
   '/shelves/': typeof ShelvesIndexRoute
@@ -178,10 +160,8 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/select-store'
-    | '/admin/promotions'
     | '/prices/cold'
     | '/shelves/scene'
-    | '/admin/'
     | '/posters/'
     | '/prices/'
     | '/shelves/'
@@ -197,10 +177,8 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/select-store'
-    | '/admin/promotions'
     | '/prices/cold'
     | '/shelves/scene'
-    | '/admin'
     | '/posters'
     | '/prices'
     | '/shelves'
@@ -216,10 +194,8 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/select-store'
-    | '/admin/promotions'
     | '/prices/cold'
     | '/shelves/scene'
-    | '/admin/'
     | '/posters/'
     | '/prices/'
     | '/shelves/'
@@ -236,10 +212,8 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
   SelectStoreRoute: typeof SelectStoreRoute
-  AdminPromotionsRoute: typeof AdminPromotionsRoute
   PricesColdRoute: typeof PricesColdRoute
   ShelvesSceneRoute: typeof ShelvesSceneRouteWithChildren
-  AdminIndexRoute: typeof AdminIndexRoute
   PostersIndexRoute: typeof PostersIndexRoute
   PricesIndexRoute: typeof PricesIndexRoute
   ShelvesIndexRoute: typeof ShelvesIndexRoute
@@ -289,13 +263,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PostersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/': {
-      id: '/admin/'
-      path: '/admin'
-      fullPath: '/admin/'
-      preLoaderRoute: typeof AdminIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/shelves/scene': {
       id: '/shelves/scene'
       path: '/shelves/scene'
@@ -308,13 +275,6 @@ declare module '@tanstack/react-router' {
       path: '/prices/cold'
       fullPath: '/prices/cold'
       preLoaderRoute: typeof PricesColdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/admin/promotions': {
-      id: '/admin/promotions'
-      path: '/admin/promotions'
-      fullPath: '/admin/promotions'
-      preLoaderRoute: typeof AdminPromotionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/shelves/scene/$scene/': {
@@ -397,10 +357,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
   SelectStoreRoute: SelectStoreRoute,
-  AdminPromotionsRoute: AdminPromotionsRoute,
   PricesColdRoute: PricesColdRoute,
   ShelvesSceneRoute: ShelvesSceneRouteWithChildren,
-  AdminIndexRoute: AdminIndexRoute,
   PostersIndexRoute: PostersIndexRoute,
   PricesIndexRoute: PricesIndexRoute,
   ShelvesIndexRoute: ShelvesIndexRoute,

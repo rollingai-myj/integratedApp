@@ -3,7 +3,7 @@
  */
 import { ApiError, apiFetch } from './api';
 
-export type UploadKind = 'promotions' | 'products' | 'snapshots';
+export type UploadKind = 'promotions' | 'products' | 'snapshots' | 'stores';
 
 export type UploadStatus = 'staged' | 'applied' | 'failed' | 'rolled_back';
 
@@ -116,10 +116,25 @@ export interface RollbackResult {
   warnings: string[];
 }
 
-export async function applyBatch(id: string): Promise<ApplySummary> {
+export type ApplyMode = 'upsert' | 'insert_only';
+
+export interface ConflictPreview {
+  totalRows: number;
+  toInsertCount: number;
+  toUpdateCount: number;
+  conflicts: Array<{ key: string; label: string }>;
+}
+
+export async function fetchConflicts(id: string): Promise<ConflictPreview> {
+  return apiFetch<ConflictPreview>(
+    `/admin/uploads/batches/${encodeURIComponent(id)}/conflicts`,
+  );
+}
+
+export async function applyBatch(id: string, mode?: ApplyMode): Promise<ApplySummary> {
   return apiFetch<ApplySummary>(
     `/admin/uploads/batches/${encodeURIComponent(id)}/apply`,
-    { method: 'POST' },
+    { method: 'POST', body: JSON.stringify(mode ? { mode } : {}) },
   );
 }
 
@@ -131,8 +146,8 @@ export async function rollbackBatchApi(id: string): Promise<RollbackResult> {
 }
 
 export const STATUS_LABEL: Record<UploadStatus, string> = {
-  staged: '已暂存',
-  applied: '已应用',
-  failed: '校验失败',
-  rolled_back: '已回滚',
+  staged: '待生效',
+  applied: '已生效',
+  failed: '格式错误',
+  rolled_back: '已撤销',
 };

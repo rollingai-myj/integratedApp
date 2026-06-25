@@ -99,7 +99,6 @@ function HomePage() {
   const user = me.user;
   const store = me.currentStore;
   const enabledModules = new Set<string>(me.modules);
-  const isSuperAdmin = user.roles.includes('super_admin');
 
   return (
     <IOSDevice>
@@ -182,27 +181,6 @@ function HomePage() {
               <div key={m.id}>{card}</div>
             );
           })}
-          {isSuperAdmin && (
-            <Link to="/admin" className="block">
-              <button
-                className="relative text-left bg-surface border border-hairline rounded-2xl p-4 active:scale-[0.97] transition-transform overflow-hidden flex flex-col gap-1.5 w-full"
-                style={{ boxShadow: '0 1px 0 rgba(31,26,23,0.02)', aspectRatio: '1 / 1.08' }}
-              >
-                <div
-                  className="w-11 h-11 rounded-[14px] flex items-center justify-center mb-1"
-                  style={{ background: 'var(--primary-soft)' }}
-                >
-                  <AdminIcon />
-                </div>
-                <div className="text-[17px] font-semibold text-ink mt-1.5 tracking-wide">
-                  后台
-                </div>
-                <div className="text-[12px] text-ink-muted leading-snug tracking-wide">
-                  促销上传 · 仅超管可见
-                </div>
-              </button>
-            </Link>
-          )}
         </section>
 
         {/* Illustration */}
@@ -334,14 +312,6 @@ function PosterIcon() {
       <rect x="8" y="6" width="32" height="36" rx="3" stroke="var(--primary)" strokeWidth="2" fill="var(--primary)" fillOpacity="0.1" />
       <circle cx="17" cy="16" r="3" fill="var(--primary)" />
       <path d="M8 32l9-9 8 8 6-5 9 9" stroke="var(--primary)" strokeWidth="2" strokeLinejoin="round" fill="none" />
-    </svg>
-  );
-}
-function AdminIcon() {
-  return (
-    <svg viewBox="0 0 48 48" width="30" height="30" fill="none">
-      <circle cx="24" cy="24" r="6" stroke="var(--primary)" strokeWidth="2" fill="var(--primary)" fillOpacity="0.15" />
-      <path d="M24 4v6M24 38v6M4 24h6M38 24h6M10 10l4.2 4.2M33.8 33.8l4.2 4.2M10 38l4.2-4.2M33.8 14.2l4.2-4.2" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }

@@ -88,13 +88,13 @@ export async function uploadAndStage(args: {
   const rows = parseCsv(text);
 
   if (rows.length === 0) {
-    throw new AppError(400, ErrorCodes.BAD_REQUEST, 'CSV 文件为空');
+    throw new AppError(400, ErrorCodes.BAD_REQUEST, '文件是空的,请检查后重新上传');
   }
   if (rows.length > MAX_ROWS + 1) {
     throw new AppError(
       400,
       ErrorCodes.BAD_REQUEST,
-      `行数超出上限(最多 ${MAX_ROWS} 行)`,
+      `文件行数过多,单次最多 ${MAX_ROWS.toLocaleString()} 行,请拆分后再上传`,
     );
   }
 
@@ -109,7 +109,7 @@ export async function uploadAndStage(args: {
       throw new AppError(
         400,
         ErrorCodes.VALIDATION_ERROR,
-        `CSV 表头缺少必填列:${col.name}`,
+        `文件第一行缺少必填的列「${col.name}」,请下载模板对照后再上传`,
       );
     }
   }
@@ -262,14 +262,14 @@ export async function deleteStagedBatch(id: string): Promise<void> {
       [id],
     );
     if (r.rows.length === 0) {
-      throw new AppError(404, ErrorCodes.NOT_FOUND, '批次不存在');
+      throw new AppError(404, ErrorCodes.NOT_FOUND, '该批次不存在');
     }
     const status = r.rows[0]!.status;
     if (status !== 'staged' && status !== 'failed') {
       throw new AppError(
         409,
         ErrorCodes.CONFLICT,
-        '已应用的批次不能删除',
+        '已生效的批次不能直接删除,如需撤销请先点「撤销」',
       );
     }
     await client.query(`DELETE FROM upload_batches WHERE id = $1`, [id]);
