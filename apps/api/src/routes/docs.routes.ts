@@ -6,11 +6,12 @@
  *   - GET /docs.json      OpenAPI spec（JSON 格式）
  *   - GET /docs.yaml      OpenAPI spec（YAML 原文）
  *
- * spec 优先读 docs/api-to-be.openapi.yaml（refactor 完成后的实现版 source of truth）；
- * 旧的 apps/api/openapi.yaml 仅作 fallback，后续可删。
+ * ⚠️ **以 docs/api-contracts.md 为准**:apps/api/openapi.yaml 由于人工维护成本高，
+ * 已经滞后于真实路由(admin-web 20+ 个新接口、stores CRUD、conflicts 预览等都没补进 yaml)。
+ * 把 Swagger UI 当作"探索老接口"的工具用即可；以 docs/api-contracts.md 为最新契约。
  */
 import { Router, type Request, type Response } from 'express';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yamljs';
@@ -19,13 +20,26 @@ import swaggerUi from 'swagger-ui-express';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// src/routes → apps/api/src/routes → ... → repo root → docs/
-const PRIMARY = join(__dirname, '..', '..', '..', '..', 'docs', 'api-to-be.openapi.yaml');
-const FALLBACK = join(__dirname, '..', '..', 'openapi.yaml');
-const YAML_PATH = existsSync(PRIMARY) ? PRIMARY : FALLBACK;
+// src/routes → apps/api/src → apps/api → openapi.yaml
+const YAML_PATH = join(__dirname, '..', '..', 'openapi.yaml');
 
-const spec = YAML.load(YAML_PATH);
+interface OpenApiSpec {
+  info?: { description?: string; [k: string]: unknown };
+  [k: string]: unknown;
+}
+
+const spec = YAML.load(YAML_PATH) as OpenApiSpec;
 const yamlRaw = readFileSync(YAML_PATH, 'utf-8');
+
+// 在 spec.info.description 顶部注入"本 spec 滞后"警告,Swagger UI 顶端会渲染 markdown
+const STALE_WARNING_MD =
+  '> ⚠️ **本 Swagger spec 部分滞后**:admin-web 体系的 20+ 个新接口' +
+  '(`/admin/dashboard/*`、`/admin/changes*`、`/admin/uploads/*`、`/admin/stores*`)未补进 yaml。' +
+  '以 [`docs/api-contracts.md`](https://github.com/rollingai-myj/integratedApp/blob/main/docs/api-contracts.md) 为最新接口契约。\n\n---\n\n';
+
+if (spec.info) {
+  spec.info.description = STALE_WARNING_MD + (spec.info.description ?? '');
+}
 
 export const docsRouter: Router = Router();
 

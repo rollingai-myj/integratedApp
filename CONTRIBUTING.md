@@ -62,7 +62,7 @@ gh api -X PUT repos/rollingai-myj/integratedApp/branches/main/protection \
 
 #### 1. 认领一个任务
 
-从 [Issues](https://github.com/rollingai-myj/integratedApp/issues) 或 [milestones.md](docs/milestones.md) 里挑一个你想做的任务。在 issue 上评论"我来做这个"，避免和别人撞车。
+从 [Issues](https://github.com/rollingai-myj/integratedApp/issues) 里挑一个你想做的任务。在 issue 上评论"我来做这个"，避免和别人撞车。
 
 #### 2. 从 main 拉一个分支
 
@@ -138,7 +138,7 @@ review 通过后点 "Squash and merge"（推荐）：把分支上所有提交压
 ✅ **聚焦一件事**：不要在一个 PR 里同时改登录 + 修海报 bug + 升级依赖
 ✅ **测试方式清晰**：reviewer 能 5 分钟内验证你的改动是对的
 ✅ **不破坏现有功能**：合并前确认本地启动、关键流程跑通
-✅ **遵守规划**：和 [unified-api-spec.md](docs/planning/unified-api-spec.md)、[unified-database-spec.md](docs/planning/unified-database-spec.md) 一致；如果要偏离规划，先在 PR 描述里说明理由
+✅ **遵守现有契约**：跟 [docs/api-contracts.md](docs/api-contracts.md)（HTTP 接口）和 [docs/database-schema.md](docs/database-schema.md)（数据库）一致；如果要偏离现状，先在 PR 描述里说明理由
 
 ❌ 一个 PR 几千行
 ❌ 标题写 "更新"、"修改"、"优化代码"
@@ -156,7 +156,7 @@ review 通过后点 "Squash and merge"（推荐）：把分支上所有提交压
 2. **要新增字段或表**：写一个新的 migration 文件 `V0XX__描述.sql`
 3. **要修改已有字段类型**：在新 migration 里用 `ALTER TABLE`，不要回去改老文件
 4. **要删字段或表**：写新 migration 用 `DROP COLUMN` / `DROP TABLE`，并在 PR 描述里**明确写出**这会丢失什么数据
-5. **改了 schema 必须同步更新** [docs/planning/unified-database-spec.md](docs/planning/unified-database-spec.md)
+5. **改了 schema 必须同步更新** [docs/database-schema.md](docs/database-schema.md)（顶部"schema 演进记录"加一段 + 影响章节追加表/字段说明）
 
 > 12 个决策点的默认实现，将来如果要改（比如从 D7 选项 C 改成选项 B），按上面步骤新增 migration + 更新规划文档即可。
 
@@ -168,7 +168,7 @@ review 通过后点 "Squash and merge"（推荐）：把分支上所有提交压
 2. **改已有接口**：
    - 如果是新增字段（不影响已有调用方）→ 直接改
    - 如果是改字段含义、删字段、改路径 → 这是破坏性改动，必须先在 issue 里讨论
-3. **改了接口必须同步更新** [docs/planning/unified-api-spec.md](docs/planning/unified-api-spec.md)
+3. **改了接口必须同步更新** [docs/api-contracts.md](docs/api-contracts.md)（对应模块章节里加 / 改一行）
 
 ---
 

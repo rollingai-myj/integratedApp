@@ -3,7 +3,7 @@
 > 给新加入项目的开发：每张表 / 每个字段是什么、什么时候被读、什么时候被写。优先用业务语言（不照搬 SQL 注释）。
 >
 > 数据源：
-> - 迁移文件：[apps/api/src/db/migrations/](../apps/api/src/db/migrations/) — V001 到 **V031**（最新：[V031__snapshot_rename_amt_add_psd_hb.sql](../apps/api/src/db/migrations/V031__snapshot_rename_amt_add_psd_hb.sql)）
+> - 迁移文件：[apps/api/src/db/migrations/](../apps/api/src/db/migrations/) — V001 到 **V038**（最新：[V038__upload_kind_stores.sql](../apps/api/src/db/migrations/V038__upload_kind_stores.sql)）
 > - 视图：[V010__views.sql](../apps/api/src/db/migrations/V010__views.sql)（V029 把促销视图 `v_promotion_active` 删掉，换成新视图 `v_active_offers`）
 > - SQL 函数：[V012__category_functions.sql](../apps/api/src/db/migrations/V012__category_functions.sql) + [V023 `fn_category_ancestor_name`](../apps/api/src/db/migrations/V023__category_ancestor_name_fn.sql)
 > - V013 后的 prune：[V013__prune_unused_columns.sql](../apps/api/src/db/migrations/V013__prune_unused_columns.sql)
@@ -12,6 +12,10 @@
 > - 字段 → 前端状态：见 [state-management.md](./state-management.md)
 >
 > **schema 演进记录（V014+）**：V014 删 `store_ownership` / 砍 `stores.district`；V015 缩瘦 `store_insights` + 加 POI 缓存列；V016 加 `stores.store_area_sqm` / `poi_category`；V017 加 `hq_products.barcode` / `is_returnable` / `allocation_unit`；V018 物理尺寸 mm → cm；V019 锁 `hq_products.category_id` 必须 L3 + 触发器；V020 `hq_promo_mix_groups` 表 → VIEW（V029 起整体作废）；V021 删 `hq_promo_sku_texts`；V022 烘焙 unit + L3 修正；V023 加 `fn_category_ancestor_name`；V024 `hq_benchmark_skus` → `hq_whitelist`（中间态）；V025 白名单合并为 `hq_products.is_whitelisted` 列 + 拆表；V026 加 `tags` / `market_min_price` / `market_min_price_source`；**V027** `store_sku_snapshots` 删 `original_price` / `wholesale_price`（只保留实际售价 `retail_price`）+ 价盘曲线改 snapshot 单源 + `store_price_changes` 读写路径废弃（表保留）+ 前端"调价"语义改为"模拟调价"；**V028** `store_scene_state` 加 4 个字段，让"诊断 / 选品"两个 AI 工作流也走后端常驻、关 tab 不丢；**V029 促销数据整体重构** —— 老促销表 / 视图全删，重建为「批次 + 档案行 + 标准化优惠」三层（含 5 个 sheet 的活动类别、4 类优惠机制），上传语义改为"新文件入库即把所有旧批次自动作废，同一时刻只有一份生效"；**V030** 把"今天是否在生效星期内"这一步从数据库视图里摘掉，交给前端按"今明"开关自己决定；**V031** `store_sku_snapshots` 销售指标对齐 ERP 真实口径 —— `sales_amount_*` → `sales_realamt_*`、新增 `psd_hb_30d/90d`(销售环比 %, ERP 直接灌入)、删 `gross_margin_30d`(不再导毛利率;UI"月毛利" KPI 一并下线)；传给智能体的 `psdChangetb` 改名为 `psdChange`(值来自 `psd_hb_30d`);`store_competitor_products` 加 `tags TEXT`(店主自由标签)。
+>
+> **V032+ 演进**：
+>
+> **V032** 海报生图模型 setting 切到 Corelays(`/proxy/openai/v1`, `gemini-3.1-pro-preview`)，从 OpenRouter `google/gemini-2.5-flash-image` 迁出；只改 `sys_settings` 的 `poster_image_model` 行，无 schema 变更。**V033** 紧接着改回 `gemini-3.1-flash-image`(`pro-preview` 在 Corelays 订阅里不存在 → 切到实际可用的 flash 走 Gemini 原生 generateContent)。**V034** `store_poster_task_products` 锚点放宽：PK 从 `(task_id, product_id)` 改为 `(task_id, sku_code)`，`product_id` `DROP NOT NULL`，未入库 `hq_products` 的 SKU 也能建任务出图(仅丢失销量追踪;`v_poster_product_sales` 视图 LATERAL JOIN 用 `product_id IS NULL` 时空匹配,等价兼容)。**V035 海报收藏** —— 新增 `store_poster_favorites` 表(`user_id` + `generation_id` UNIQUE),用户主动收藏 generation;区别于「生成记录」=  `store_poster_tasks` 全量(自动 30 天)。同时下线旧 `sessionHistory` / `recent` 两套 localStorage 持久(关 tab/换设备会丢)。**V036 admin-web 数据上传批次表** —— 新增 `upload_batches` 表 + 两个 enum `upload_kind('promotions','products','snapshots')` / `upload_status('staged','applied','failed','rolled_back')`,三类上传共用一张表;`staging_data jsonb` 存解析成功的行,`parse_errors jsonb` 存前 200 条行级错误,`apply_summary jsonb` 在 apply 后记录 `{inserted, updated, skipped}`。**V037** 给 `upload_batches` 加 `before_snapshot jsonb DEFAULT '[]'` —— apply 阶段把会被覆盖的字段值快照下来,rollback 时逐条还原;数组元素分两种 `{kind:'inserted'|'updated', table, key, before?}`。**V038** `upload_kind` enum 增加 `'stores'`,配合 admin-web「数据维护 / 门店信息」综合页:既能 CSV 批量上传新增/覆盖门店,也能逐家在 UI 上增/改/删(走 `admin-stores.service.ts`,跟 batch apply 写同一张 `stores` 表)。
 
 ---
 

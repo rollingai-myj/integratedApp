@@ -2,14 +2,16 @@
 
 > 重构后的后端 HTTP 端点完整目录。**目的**：把"前端可能还在按旧数据结构调"这个最容易出问题的地方一次盘清。
 >
+> ✅ **本文档是接口的当前真理源**(以代码 routes/ 为最终事实)。`apps/api/openapi.yaml` 由于人工维护成本高已经滞后,Swagger UI 顶部也有黄色横幅提示;改了接口请**优先更新本文档**,yaml 暂时不强求同步。
+>
 > **基础约定**：全部端点挂在 `/api/v1` 前缀下；认证靠 HttpOnly cookie `sso_token`；业务接口的 `storeId` 一律从 session 取（**路径里看不到 `:storeId`** 的就是这种）；资源 CRUD 例外接口（如 `PUT /master/stores/:id`）才显式带 `:id`。
 >
 > **数据源**：
-> - 路由实现：[apps/api/src/routes/](../apps/api/src/routes/)
-> - OpenAPI（声明性）：[apps/api/openapi.yaml](../apps/api/openapi.yaml)
-> - 服务层：[apps/api/src/services/](../apps/api/src/services/)
+> - 路由实现:[apps/api/src/routes/](../apps/api/src/routes/) — 真理源
+> - 服务层:[apps/api/src/services/](../apps/api/src/services/)
+> - OpenAPI(声明性,**部分滞后**):[apps/api/openapi.yaml](../apps/api/openapi.yaml)
 >
-> 端点总数约 85 个，分 12 个模块。
+> 端点总数约 85 + admin-web 体系 20+,分 12 个模块。
 
 ---
 
@@ -288,9 +290,9 @@
 
 ## 11. 管理 (Admin)
 
-[routes/admin.routes.ts](../apps/api/src/routes/admin.routes.ts) · [services/admin-stats.service.ts](../apps/api/src/services/admin-stats.service.ts) · [services/admin-accounts.service.ts](../apps/api/src/services/admin-accounts.service.ts)
+[routes/admin.routes.ts](../apps/api/src/routes/admin.routes.ts) · [services/admin-stats.service.ts](../apps/api/src/services/admin-stats.service.ts) · [services/admin-accounts.service.ts](../apps/api/src/services/admin-accounts.service.ts) · [services/admin-dashboard.service.ts](../apps/api/src/services/admin-dashboard.service.ts) · [services/admin-changes.service.ts](../apps/api/src/services/admin-changes.service.ts) · [services/admin-uploads/](../apps/api/src/services/admin-uploads/) · [services/admin-stores.service.ts](../apps/api/src/services/admin-stores.service.ts)
 
-> 全部要 `super_admin` 角色。
+> 全部要 `super_admin` 角色。**`/admin/dashboard/*`、`/admin/changes*`、`/admin/uploads/*`、`/admin/stores*` 是 PC 端 admin-web 控制台用的新接口**（[http://localhost:8090](http://localhost:8090)，nginx 81 端口），跟原有的账号 / 审计 / 统计 等在同一组 `super_admin` 鉴权门后。
 
 ### 账号
 
@@ -317,6 +319,53 @@
 | **GET** `/admin/usage-stats` | `{ today: { activeUsers, sessionMinutes }, thisWeek, thisMonth, total, onlineCount }` |
 | **GET** `/admin/store-stats` | `{ stores: [...] }` |
 | **GET** `/admin/realtime-stats` | `{ last5min, lastHour, today, onlineUsers: [...] }` |
+
+### Dashboard(admin-web 仪表盘聚合)
+
+| Method + Path | Inputs | Outputs (200) | 备注 |
+|---|---|---|---|
+| **GET** `/admin/dashboard/kpis` | `days?` (1-180, 默认 30) | `{ activeStores, adjustedSkus, posterTasks, priceChanges }`,每个值 `{ value, prevValue, delta }` | 4 张 KPI 卡 + 上一窗口环比 |
+| **GET** `/admin/dashboard/trend` | `days?` | `{ points: [{ date, added, removed }] }` | 调改趋势按天,空天补 0 |
+| **GET** `/admin/dashboard/top-stores` | `days?`, `limit?` (1-20, 默认 5) | `{ stores: [{ storeId, storeCode, storeName, totalChanges }] }` | 按窗口内调改总数排序 |
+| **GET** `/admin/dashboard/scenes` | `days?` | `{ scenes: [{ scene, sceneName, count, ratio }] }` | 调改 SKU 在各场景下的分布 |
+
+### 调改记录(admin-web 调改记录表格)
+
+| Method + Path | Inputs | Outputs (200) | 备注 |
+|---|---|---|---|
+| **GET** `/admin/changes` | `storeId?` (UUID), `scene?` (0-12), `action?` (`add`/`remove`), `from?`, `to?` (YYYY-MM-DD), `search?` (≤64), `page?` (1-1000), `pageSize?` (1-200), `sortBy?` (`created_at`/`effective_date`), `sortDir?` (`asc`/`desc`) | `{ rows: [...], total, page, pageSize }` | 分页 + 筛选 + 排序 |
+| **GET** `/admin/changes/:id` | — | `ChangeDetail`(含 `aiDiagnosis` 完整 JSON + 关联调整批次摘要) | 行展开拉详情用 |
+| **GET** `/admin/changes.csv` | 同列表的筛选,无分页 | `text/csv; charset=utf-8` 文件 | 浏览器下载;Content-Disposition attachment |
+| **GET** `/admin/changes-filters/stores` | — | `{ stores: [{ id, code, name }] }` | 筛选下拉用,前端 long staleTime cache |
+| **GET** `/admin/changes-filters/scenes` | — | `{ scenes: [{ id, name }] }` | 筛选下拉用 |
+
+### 数据上传(admin-web 数据维护体系)
+
+> 三类上传(产品主数据 / 销售快照 / 门店信息)共用一组 `/uploads/*` 接口。活动数据(promotions)是单独的 xlsx 工作流,见模块 8。
+
+| Method + Path | Inputs | Outputs (200) | 备注 |
+|---|---|---|---|
+| **GET** `/admin/uploads/specs` | — | `{ specs: ColumnSpec[] }`,每个含 `kind, label, description, columns: [{ name, required, type, enumValues?, description, sample }]` | 列定义清单,前端"填写说明"表 |
+| **GET** `/admin/uploads/:kind/template` | `:kind` ∈ `products` / `snapshots` / `stores` | `text/csv; charset=utf-8` 模板(BOM + 表头 + 一行示例) | 点「下载模板」 |
+| **POST** `/admin/uploads/:kind` | multipart/form-data, field `file`,≤ 20 MB | 201 `{ batchId, totalRows, validRows, errorRows }` | 解析 + 校验 + 落 staged 批次 |
+| **GET** `/admin/uploads/:kind/batches` | `limit?` | `{ batches: UploadBatchSummary[] }` | 历史批次列表 |
+| **GET** `/admin/uploads/batches/:id` | — | `UploadBatchDetail`(含 parseErrors / preview 前 20 行 / applySummary) | 行展开拿详情 |
+| **DELETE** `/admin/uploads/batches/:id` | — | 204 | 只能删 `staged` / `failed` 状态;已生效的不能删 |
+| **GET** `/admin/uploads/batches/:id/conflicts` | — | `{ totalRows, toInsertCount, toUpdateCount, conflicts: [{ key, label }] }` | 应用前的冲突预览,有重复主键时前端弹窗确认 |
+| **POST** `/admin/uploads/batches/:id/apply` | `{ mode?: 'upsert'\|'insert_only' }`(默认 `upsert`) | `ApplySummary { inserted, updated, skipped, skipReasons: [{ row, reason }] }` | 事务内整体落业务表;`insert_only` 时重复主键归入 `skipped` |
+| **POST** `/admin/uploads/batches/:id/rollback` | — | `{ reverted, warnings: [...] }` | 按 `before_snapshot` 还原 |
+
+### 门店档案(admin-web /stores 综合页)
+
+| Method + Path | Inputs | Outputs (200) | 备注 |
+|---|---|---|---|
+| **GET** `/admin/stores` | `search?` (≤64), `status?` (`active`/`disabled`), `page?`, `pageSize?` (默认 50) | `{ rows: StoreDetail[], total, page, pageSize }` | 列表,支持搜索 + 状态过滤 + 分页 |
+| **GET** `/admin/stores/:id` | — | `StoreDetail` | 单店详情 |
+| **POST** `/admin/stores` | `{ storeCode, storeName, province?, city?, address?, latitude?, longitude?, openedAt?, status?, isProjectStore?, storeAreaSqm?, poiCategory? }` | 201 `StoreDetail` | 新增门店,重复 `storeCode` 返 409 |
+| **PATCH** `/admin/stores/:id` | 上面 12 个字段的子集(只传要改的) | `StoreDetail` | 单店编辑,PATCH 语义:`null` = 清空,`undefined` = 不动 |
+| **DELETE** `/admin/stores/:id` | — | 204 | 软删:`UPDATE stores SET deleted_at = now()`;关联表(snapshots / changes)的 FK 不受影响 |
+
+`StoreDetail` = `{ id, storeCode, storeName, province, city, address, latitude, longitude, openedAt, status, isProjectStore, storeAreaSqm, poiCategory, createdAt, updatedAt }`,经纬度 / 面积是 `number`(NUMERIC 被 service 层 `Number()` 转过)。
 
 ### 设置 + 压测
 

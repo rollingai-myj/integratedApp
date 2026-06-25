@@ -88,10 +88,32 @@ services:
       - --host
       - 0.0.0.0
 
+  # ---- PC 超管控制台(纯客户端 SPA,生产由 nginx 直接服务静态产物) ----------
+  # apps/admin-web/Dockerfile 的 runtime target 是 nginx:alpine + dist/ + SPA fallback,
+  # 监听容器内 80。外层 nginx 容器把 :81 反代到 admin-web:80。
+  admin-web:
+    build:
+      target: runtime
+      args:
+        # 同 web:空字符串 → 前端走相对路径,经外层 nginx 反代到 api
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    env_file:
+      - path: .env.production
+        required: false
+    volumes: !reset []
+    ports: !reset []
+    environment:
+      NODE_ENV: production
+    depends_on: !reset {}
+    # runtime stage 的 CMD 已经是 ['nginx','-g','daemon off;'],这里不需要覆盖
+
   nginx:
     environment:
       # 生产 web 跑在 srvx 的 3000 端口(dev 是 vite dev 的 5173)
       WEB_UPSTREAM_PORT: '3000'
-    # 端口不由这里覆盖,改由 base compose 的 WEB_PORT 环境变量控制:
-    #   dev .env 无 WEB_PORT → 默认 8080
-    #   生产 .env.production WEB_PORT=8085 → 监听 8085
+      # admin-web 生产容器是 nginx 自服务静态产物,监听容器内 80
+      # (dev 是 vite dev 的 5174)
+      ADMIN_UPSTREAM_PORT: '80'
+    # 端口不由这里覆盖,改由 base compose 的 WEB_PORT / ADMIN_PORT 环境变量控制:
+    #   dev .env 无 WEB_PORT → 默认 8080;无 ADMIN_PORT → 默认 8090
+    #   生产 .env.production WEB_PORT=8085 / ADMIN_PORT=8095 → 监听对应端口

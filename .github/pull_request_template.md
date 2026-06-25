@@ -34,8 +34,8 @@
 ## 检查清单
 
 - [ ] 本地启动没问题（`npm run dev` 跑通）
-- [ ] 改了接口同步更新了 [docs/planning/unified-api-spec.md](../docs/planning/unified-api-spec.md)
-- [ ] 改了数据库同步更新了 [docs/planning/unified-database-spec.md](../docs/planning/unified-database-spec.md)，且用新的 migration 文件而不是改老文件
+- [ ] 改了接口同步更新了 [docs/api-contracts.md](../docs/api-contracts.md)
+- [ ] 改了数据库同步更新了 [docs/database-schema.md](../docs/database-schema.md)，且用新的 migration 文件而不是改老文件
 - [ ] PR 标题符合 [Conventional Commits](https://www.conventionalcommits.org/) 格式
 - [ ] PR 不是巨型 PR（如果超过 500 行，考虑拆开）
 
