@@ -392,15 +392,34 @@ export class CocoImageService {
 
     const start = Date.now();
     let res: Response;
-    try {
-      res = await this.callGenerateContent(model, prompt, inlineParts);
-    } catch (err) {
-      logger.error({ err }, 'coco-image fetch failed');
-      throw new AppError(
-        502,
-        ErrorCodes.UPSTREAM_ERROR,
-        `Corelays 调用失败:${(err as Error).message}`,
-      );
+    // Corelays 上游网关有 ~60s idle timeout,长生成会以 'fetch failed: other side
+    // closed' 形式被断开。这种 socket 层瞬时错误重试通常成功;明确的 client abort
+    // (signal 触发的 timeout)不重试,避免叠加 3 倍超时。
+    const MAX_ATTEMPTS = 3;
+    let attempt = 0;
+    while (true) {
+      attempt++;
+      try {
+        res = await this.callGenerateContent(model, prompt, inlineParts);
+        break;
+      } catch (err) {
+        const msg = (err as Error).message ?? '';
+        const retryable =
+          msg.includes('fetch failed') && !msg.includes('aborted');
+        if (!retryable || attempt >= MAX_ATTEMPTS) {
+          logger.error({ err, attempt }, 'coco-image fetch failed');
+          throw new AppError(
+            502,
+            ErrorCodes.UPSTREAM_ERROR,
+            `Corelays 调用失败:${msg}`,
+          );
+        }
+        logger.warn(
+          { err: msg, attempt, nextDelayMs: 3000 },
+          'coco-image fetch failed, retrying',
+        );
+        await new Promise((r) => setTimeout(r, 3000));
+      }
     }
 
     if (!res.ok) {

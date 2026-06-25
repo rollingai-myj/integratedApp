@@ -35,7 +35,7 @@ import type {
 | 总部主数据 | `CategoryNode`, `ProductRow` |
 | 货盘 / 场景 | `SceneRuntime` 系列 |
 | 价盘 | `PriceCurvePoint`, `PriceChangeRow` |
-| 海报 | `PosterTaskRow`, `PosterGenerationRow`, `PosterAsset` |
+| 海报 | `PosterTask`, `PosterGeneration`, `CreatePosterTasksRequest`, `ListPosterTasksResponse`, `GetPosterTaskResponse` |
 | 促销 | `PromoOfferRow`, `ActivePromosResponse` |
 | 竞品 / 洞察 / 问卷 | `Competitor`, `StoreInsight`, `SurveyQuestion` |
 

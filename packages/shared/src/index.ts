@@ -217,11 +217,6 @@ export interface StoreSkuRow extends ProductRow {
   lastPriceChangeAt: string | null;
 }
 
-export interface ListStoresResponse {
-  stores: StoreDetail[];
-  total: number;
-}
-
 export interface ListStoreSkusResponse {
   skus: StoreSkuRow[];
   total: number;
@@ -257,34 +252,6 @@ export interface PriceCurveSku {
 
 export interface PriceCurveResponse {
   curves: PriceCurveSku[];
-}
-
-export interface PriceChangeRecord {
-  id: string;
-  storeId: string;
-  productId: string;
-  skuCode: string;
-  oldPrice: number | null;
-  newPrice: number;
-  source: 'manual' | 'rule_engine';
-  effectiveDate: string;
-  createdAt: string;
-}
-
-export interface SubmitPriceChangeRequest {
-  skuCode: string;
-  newPrice: number;
-  oldPrice?: number;
-  source?: 'manual' | 'rule_engine';
-  note?: string;
-}
-
-export interface SubmitPriceChangeResponse {
-  record: PriceChangeRecord;
-}
-
-export interface ListPriceChangesResponse {
-  changes: PriceChangeRecord[];
 }
 
 // ============================================================================
@@ -346,28 +313,6 @@ export interface PosterGeneration {
   finishedAt: string | null;
 }
 
-export interface PosterAsset {
-  id: string;
-  storeId: string;
-  kind: 'background' | 'product_photo';
-  imageUrl: string;
-  uploadedBy: string | null;
-  createdAt: string;
-}
-
-export interface PosterSalesTrackingItem {
-  taskId: string;
-  generationId: string;
-  productId: string;
-  skuCode: string;
-  adoptedAt: string;
-  beforeSnapshotDate: string | null;
-  beforeSalesQty30d: number | null;
-  afterSnapshotDate: string | null;
-  afterSalesQty30d: number | null;
-  qtyDeltaPercent: number | null;
-}
-
 export interface PosterTaskCreate {
   mode: PosterMode;
   template: PosterTemplate;
@@ -397,35 +342,6 @@ export interface ListPosterTasksResponse {
 export interface GetPosterTaskResponse {
   task: PosterTask;
   generations: PosterGeneration[];
-}
-
-export interface AdoptPosterGenerationResponse {
-  generation: PosterGeneration;
-}
-
-export interface PosterDownloadResponse {
-  url: string;
-  count: number;
-}
-
-export interface PosterGalleryResponse {
-  generations: PosterGeneration[];
-}
-
-export interface PosterTodayCountResponse {
-  count: number;
-}
-
-export interface PosterAssetUploadResponse {
-  asset: PosterAsset;
-}
-
-export interface ListPosterAssetsResponse {
-  assets: PosterAsset[];
-}
-
-export interface PosterSalesTrackingResponse {
-  items: PosterSalesTrackingItem[];
 }
 
 // 模块 8 · 促销 (Promotions)
@@ -561,10 +477,6 @@ export interface ShelfConfig {
   attributes: Record<string, unknown>;
 }
 
-export interface ListShelfConfigsResponse {
-  configs: ShelfConfig[];
-}
-
 export interface SceneDefinition {
   scene: number;
   name: string;
@@ -603,8 +515,4 @@ export interface SceneAdjustment {
 
 export interface ListScenesResponse {
   scenes: SceneDefinition[];
-}
-
-export interface ListSceneAdjustmentCountsResponse {
-  counts: SceneAdjustmentCount[];
 }

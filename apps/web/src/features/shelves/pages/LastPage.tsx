@@ -6,13 +6,13 @@
  *  - store_scene_adjustments 最新一条：作为兼容兜底（旧批次无 last_snapshot 数据）
  *  - rt.virtualStatus + rt.virtualRawOutputs：虚拟货架图状态
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { AppBar, Card, GhostBtn, ScreenWrap, Spin } from '../ui/primitives';
 import { TOKENS } from '../ui/tokens';
 import { I } from '../ui/icons';
-import { scenesApi } from '../api';
+import { scenesApi, storeApi } from '../api';
 import { emojiForScene, fmtDate } from '../data';
 import { SkuThumb } from '../components/SkuThumb';
 import { SkuDetailDialog, type SkuDetailLike } from '../components/SkuDetailDialog';
@@ -70,6 +70,8 @@ export function LastPage() {
   const adjQ = useQuery({ queryKey: ['scenes', scene, 'adjustments'], queryFn: () => scenesApi.listAdjustments(scene, 1) });
   const scenesQ = useQuery({ queryKey: ['scenes', 'list'], queryFn: scenesApi.list });
   const def = scenesQ.data?.scenes.find((s) => s.scene === scene);
+  // 面包架/烘焙类 → 木质货架外观 + 用 length(深度)当视觉高度(商品平放陈列)
+  const isBakery = /面包|烘焙/.test(def?.name ?? '');
 
   const [detail, setDetail] = useState<SkuDetailLike | null>(null);
 
@@ -78,6 +80,22 @@ export function LastPage() {
   const snap = (rt?.lastSnapshot ?? null) as SnapshotShape | null;
   const virtualReady = rt?.virtualStatus === 'completed';
   const virtualFailed = rt?.virtualStatus === 'failed';
+
+  // 拉本店 SKU 维度,陈列图按 length_cm / height_cm 真实比例绘制商品。
+  const storeSkusQ = useQuery({
+    queryKey: ['store', 'skus', 'scene', scene],
+    queryFn: () => storeApi.skus(scene),
+    enabled: virtualReady,
+    staleTime: 5 * 60_000,
+  });
+  const skuDims = useMemo(
+    () => (storeSkusQ.data?.skus ?? []).map((s) => ({
+      skuCode: s.skuCode,
+      depth: s.lengthCm,
+      height: s.heightCm,
+    })),
+    [storeSkusQ.data],
+  );
 
   // V028: virtualRawOutputs 现在被后端包成 { raw: <Dify outputs>, parsed: <extracted> }。
   // 兼容老格式(直接是 Dify outputs)做 unwrap。
@@ -318,7 +336,10 @@ export function LastPage() {
                   shelfWidths,
                   // 把本次"上架"的 SKU codes 喂给 parser，让 isNewListing 真能被点亮
                   newListedCodes: up.map((i) => i.skuCode),
+                  useLengthAsHeight: isBakery,
                 }}
+                skus={skuDims}
+                variant={isBakery ? 'wooden' : 'fridge'}
               />
             </Card>
           )}

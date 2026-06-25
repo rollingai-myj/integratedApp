@@ -280,12 +280,83 @@ d('Phase 5 · posters (integration)', () => {
     expect(d1.json.count).toBe(1);
     expect(d1.json.url).toBe('https://example.com/x.jpg');
 
+    // 首次下载触发采纳 —— is_adopted=true + adopted_at 落时间戳
+    const after1 = await query<{ is_adopted: boolean; adopted_at: string | null }>(
+      `SELECT is_adopted, adopted_at FROM store_poster_generations WHERE id = $1`,
+      [genId],
+    );
+    expect(after1.rows[0]!.is_adopted).toBe(true);
+    expect(after1.rows[0]!.adopted_at).not.toBeNull();
+    const firstAdoptedAt = after1.rows[0]!.adopted_at;
+
     const d2 = await call(
       'POST',
       `/api/v1/posters/generations/${genId}/download`,
       { ctx: opsCtx },
     );
     expect(d2.json.count).toBe(2);
+
+    // 二次下载不更新 adopted_at —— 销量追踪起点是首次下载时刻，不应被覆盖
+    const after2 = await query<{ adopted_at: string | null }>(
+      `SELECT adopted_at FROM store_poster_generations WHERE id = $1`,
+      [genId],
+    );
+    expect(after2.rows[0]!.adopted_at).toBe(firstAdoptedAt);
+  });
+
+  it('同 task 下载第二张 generation：第一张已采纳，第二张静默不采纳', async () => {
+    await switchStore(opsCtx, opsStoreA);
+    const create = await call('POST', '/api/v1/posters/tasks', {
+      ctx: opsCtx,
+      body: {
+        tasks: [
+          {
+            mode: 'official_bg_only',
+            template: 'premium',
+            copyText: 'download-second-gen-silent',
+            skuCode: sampleSkuCode,
+          },
+        ],
+      },
+    });
+    const taskId = create.json.tasks[0].id as string;
+    const gen1Id = create.json.tasks[0].latestGeneration.id as string;
+    await query(
+      `UPDATE store_poster_generations
+          SET status = 'succeeded',
+              poster_image_url = 'https://example.com/gen1.jpg',
+              finished_at = now()
+        WHERE id = $1`,
+      [gen1Id],
+    );
+
+    // 下载第一张 → 自动采纳
+    await call('POST', `/api/v1/posters/generations/${gen1Id}/download`, { ctx: opsCtx });
+
+    // 重新生成出第二张
+    const regen = await call('POST', `/api/v1/posters/tasks/${taskId}/generations`, {
+      ctx: opsCtx,
+    });
+    const gen2Id = regen.json.generation.id as string;
+    await query(
+      `UPDATE store_poster_generations
+          SET status = 'succeeded',
+              poster_image_url = 'https://example.com/gen2.jpg',
+              finished_at = now()
+        WHERE id = $1`,
+      [gen2Id],
+    );
+
+    // 下载第二张：count +1，但 is_adopted 仍是 false（起点已经被第一张占了）
+    const d2 = await call('POST', `/api/v1/posters/generations/${gen2Id}/download`, {
+      ctx: opsCtx,
+    });
+    expect(d2.status).toBe(200);
+    const gen2State = await query<{ is_adopted: boolean }>(
+      `SELECT is_adopted FROM store_poster_generations WHERE id = $1`,
+      [gen2Id],
+    );
+    expect(gen2State.rows[0]!.is_adopted).toBe(false);
   });
 
   // ---------- 素材库 + 跨店隔离 ----------

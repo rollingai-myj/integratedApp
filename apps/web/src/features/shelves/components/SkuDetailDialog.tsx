@@ -15,8 +15,15 @@ export interface SkuDetailLike {
 }
 
 export function SkuDetailDialog({
-  sku, onClose,
-}: { sku: SkuDetailLike | null; onClose: () => void }) {
+  sku, onClose, actionLabel, onAction,
+}: {
+  sku: SkuDetailLike | null;
+  onClose: () => void;
+  /** 可选底部动作按钮文案（如「取消上架」/「取消停供」）。仅 confirm 阶段清单复用本弹窗时传入。 */
+  actionLabel?: string;
+  /** 点击底部动作按钮 → 父组件弹原因 sheet。本弹窗只负责关掉自己 + 通知父组件。 */
+  onAction?: () => void;
+}) {
   const [imgErr, setImgErr] = useState(false);
   const [codeErr, setCodeErr] = useState(false);
   useEffect(() => { setImgErr(false); setCodeErr(false); }, [sku?.skuCode]);
@@ -92,6 +99,19 @@ export function SkuDetailDialog({
             )}
           </div>
         </div>
+
+        {actionLabel && onAction && (
+          <button
+            onClick={() => { onAction(); onClose(); }}
+            style={{
+              appearance: 'none', fontFamily: 'inherit', cursor: 'pointer',
+              width: '100%', height: 44, borderRadius: 22,
+              border: `1.5px solid ${TOKENS.red}`, background: '#fff',
+              color: TOKENS.red, fontSize: 14.5, fontWeight: 700,
+              marginTop: 2,
+            }}
+          >{actionLabel}</button>
+        )}
       </div>
     </div>
   );

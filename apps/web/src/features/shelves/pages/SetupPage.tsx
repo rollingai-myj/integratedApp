@@ -69,17 +69,25 @@ export function SetupPage() {
     },
   });
 
+  const exitSetup = () => {
+    const target = firstTime
+      ? { to: '/shelves' as const }
+      : { to: '/shelves/scene/$scene' as const, params: { scene: sceneStr } };
+    void navigate(target);
+  };
+
   const back = () => {
-    if (step === 0 && groups.length === 0) {
-      // 还没建过任何一组：货架未登记 → 工作台会自动转回这里，直接回场景列表更顺
-      const target = firstTime
-        ? { to: '/shelves' as const }
-        : { to: '/shelves/scene/$scene' as const, params: { scene: sceneStr } };
-      void navigate(target);
+    // step=2 是汇总页（顶层）→ 直接退出，避免被 step=0 分支绕回造成循环
+    if (step === 2) { exitSetup(); return; }
+    // step=0 选类型页：有已登记的组 → 是"再添加一组"流程，取消回汇总；
+    //                  无任何组 → 还没开始登记，退出回上级
+    if (step === 0) {
+      if (groups.length > 0) { setStep(2); return; }
+      exitSetup();
       return;
     }
-    if (step === 0) { setStep(2); return; }
-    setStep((step - 1) as 0 | 1);
+    // step=1 宽高页 → 退回 step=0 选类型
+    setStep(0);
   };
 
   const finishGroup = () => {

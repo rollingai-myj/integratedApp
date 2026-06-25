@@ -785,28 +785,47 @@ export async function recordDownload(
   userId: string,
   storeId: string,
 ): Promise<{ url: string; count: number }> {
-  const res = await query<{
-    id: string;
-    poster_image_url: string | null;
-    download_count: number;
-    task_store_id: string;
-  }>(
-    `UPDATE store_poster_generations g
-        SET download_count = g.download_count + 1, updated_at = now()
-       FROM store_poster_tasks t
-      WHERE g.id = $1 AND g.task_id = t.id
-        AND t.store_id = $2 AND t.user_id = $3
-      RETURNING g.id, g.poster_image_url, g.download_count, t.store_id AS task_store_id`,
-    [generationId, storeId, userId],
-  );
-  if (!res.rows.length) {
-    throw new AppError(404, ErrorCodes.NOT_FOUND, '生成记录不存在或无权访问');
-  }
-  const r = res.rows[0]!;
-  if (!r.poster_image_url) {
-    throw new AppError(409, ErrorCodes.CONFLICT, '海报尚未生成完成');
-  }
-  return { url: r.poster_image_url, count: r.download_count };
+  return withTransaction(async (client) => {
+    const res = await client.query<{
+      id: string;
+      task_id: string;
+      poster_image_url: string | null;
+      download_count: number;
+      is_adopted: boolean;
+    }>(
+      `UPDATE store_poster_generations g
+          SET download_count = g.download_count + 1, updated_at = now()
+         FROM store_poster_tasks t
+        WHERE g.id = $1 AND g.task_id = t.id
+          AND t.store_id = $2 AND t.user_id = $3
+        RETURNING g.id, g.task_id, g.poster_image_url, g.download_count, g.is_adopted`,
+      [generationId, storeId, userId],
+    );
+    if (!res.rows.length) {
+      throw new AppError(404, ErrorCodes.NOT_FOUND, '生成记录不存在或无权访问');
+    }
+    const r = res.rows[0]!;
+    if (!r.poster_image_url) {
+      throw new AppError(409, ErrorCodes.CONFLICT, '海报尚未生成完成');
+    }
+
+    // 首次下载即采纳：销量追踪起点 = 本店本任务下任意 generation 被首次下载的时刻。
+    // 同 task 已存在已采纳的 generation 时静默跳过（NOT EXISTS 保证起点不被覆盖）。
+    if (!r.is_adopted) {
+      await client.query(
+        `UPDATE store_poster_generations
+            SET is_adopted = true, adopted_at = now(), updated_at = now()
+          WHERE id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM store_poster_generations
+              WHERE task_id = $2 AND is_adopted
+            )`,
+        [generationId, r.task_id],
+      );
+    }
+
+    return { url: r.poster_image_url, count: r.download_count };
+  });
 }
 
 // ============================================================================

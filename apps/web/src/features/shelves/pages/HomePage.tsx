@@ -1,7 +1,9 @@
 /**
  * 选品 · 场景列表
  *
- * 视觉对齐 prices/index：双列、emoji + 场景名 + "X 个商品"小字、未启用灰显「敬请期待」。
+ * 视觉对齐 prices/index：双列、emoji + 场景名 + "X 个商品"小字。
+ * 是否可选 = 本店在该场景下是否有 SKU 数据(store_sku_snapshots 经 storeApi.skus
+ * 一次性全量拉,前端按 scene 分组算 count)。count > 0 → 可点;count = 0 → 灰显"暂无数据"。
  * 上方"继续调改"高亮卡保留作为快速入口。
  */
 import { useMemo } from 'react';
@@ -13,13 +15,6 @@ import { TOKENS } from '../ui/tokens';
 import { I } from '../ui/icons';
 import { scenesApi, storeApi } from '../api';
 import { emojiForScene } from '../data';
-
-/**
- * 当前阶段仅"面包架【烘焙】"(scene=2) 与 "冷藏"(scene=12) 有完整商品主数据；
- * 其余 11 个场景待总部主数据补齐后再逐个开放。
- * 与后端 ai-shelves.service.ts 的 ENABLED_SCENES 保持一致。
- */
-const ENABLED_SCENES = new Set<number>([2, 12]);
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -38,6 +33,16 @@ export function HomePage() {
     }
     return m;
   }, [skusQ.data]);
+
+  // 可选(有数据)的场景置顶,组内保持原顺序。JS sort 稳定,加载中阶段所有场景
+  // hasData 都为 false → 排序结果跟原顺序一致,不会出现"先按一种顺序闪一下再重排"。
+  const sortedScenes = useMemo(() => {
+    return scenes.slice().sort((a, b) => {
+      const ea = (sceneSkuCount.get(a.scene) ?? 0) > 0 ? 1 : 0;
+      const eb = (sceneSkuCount.get(b.scene) ?? 0) > 0 ? 1 : 0;
+      return eb - ea;
+    });
+  }, [scenes, sceneSkuCount]);
 
   // 选 draft 最新的那一条；没 draftUpdatedAt 的兜底排到最后
   const draft = (ovQ.data?.scenes ?? [])
@@ -91,10 +96,11 @@ export function HomePage() {
         <div style={{ fontSize: 17, fontWeight: 800, color: TOKENS.ink, marginBottom: 14 }}>请选择场景</div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          {scenes.map((s) => {
-            const enabled = ENABLED_SCENES.has(s.scene);
-            const ov = enabled ? ovMap.get(s.scene) : undefined;
+          {sortedScenes.map((s) => {
             const skuN = sceneSkuCount.get(s.scene) ?? 0;
+            const loading = !skusQ.isSuccess;
+            const enabled = !loading && skuN > 0;
+            const ov = enabled ? ovMap.get(s.scene) : undefined;
             return (
               <Card
                 key={s.scene}
@@ -115,9 +121,11 @@ export function HomePage() {
                   fontSize: 11.5, color: TOKENS.inkMuted, marginTop: 2,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
-                  {enabled
-                    ? <><span style={{ color: TOKENS.red, fontWeight: 700 }}>{skuN}</span> 个商品</>
-                    : '敬请期待'}
+                  {loading
+                    ? '加载中…'
+                    : enabled
+                      ? <><span style={{ color: TOKENS.red, fontWeight: 700 }}>{skuN}</span> 个商品</>
+                      : '暂无数据'}
                 </div>
               </Card>
             );

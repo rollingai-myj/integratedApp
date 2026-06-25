@@ -756,7 +756,7 @@ const FridgeDoorRender = ({
 };
 
 /** Render a single product block on the shelf */
-const ShelfBlockRender = ({
+export const ShelfBlockRender = ({
   block, layerH, pxPerCm, containerWidth, isHovered, isDimmed, onHover, highlightNewOnly,
 }: {
   block: VirtualShelfBlock;

@@ -468,7 +468,7 @@ async function loadSurveyAnswers(
  *   current_date        Asia/Shanghai 时区今日 YYYY-MM-DD
  *   major_category      本场景所属 L1 大类标签集（hq_categories 中 scene 直属 L1 子节点 name），
  *                       多个用英文逗号连接;让 Dify prompt 可以点名"当前场景的大类"
- *   align 多一个 photo
+ *   align 多一个 photos(Files 数组,远程 URL 形式)
  *
  * 已删除的旧字段：sku_data / mid_category / whitelist / new_product_skus
  *   - 白名单信息现在以每 SKU 的 is_whitelisted 标记表达（Dify 端自己 filter）
@@ -515,13 +515,18 @@ async function buildCommonInputs(ctx: BuildContext): Promise<Record<string, unkn
 
 export async function buildAlignInputs(
   ctx: BuildContext,
-  photoUrl: string,
+  photoUrls: string[],
 ): Promise<Record<string, unknown>> {
   const common = await buildCommonInputs(ctx);
   // 前端拿到的 photoUrl 是反代 URL（/api/v1/storage/oss-image?key=...）
   // Dify 在外网拉不到反代，必须把它转回 OSS 直链。
+  // photos 走 Dify "Files" 数组,允许一次诊断多张照片。
   return {
-    photo: { transfer_method: 'remote_url', url: ossService.toExternalUrl(photoUrl), type: 'image' },
+    photos: photoUrls.map((u) => ({
+      transfer_method: 'remote_url',
+      url: ossService.toExternalUrl(u),
+      type: 'image',
+    })),
     ...common,
   };
 }
@@ -651,10 +656,23 @@ export async function buildQuestionsInputs(args: {
 // ---- 登录触发：确保 store_insights + 各场景问卷 完整 -----------------------
 
 /**
- * 已开放给用户使用的场景。与前端 HomePage ENABLED_SCENES 保持一致。
- * 登录时只对这些场景预生成问卷题目，未开放场景不调 Dify 浪费 token。
+ * 列出该 store 在 store_sku_snapshots 里**实际有数据**的场景集合。
+ * 跟前端"有数据就能进"对齐:登录时给这些场景预生成问卷,没数据的场景跳过,
+ * 不浪费 Dify token 去给空场景拉问题。
+ *
+ * 场景归属来自 fn_category_scene(category_id),与 listStoreSkus 同口径。
  */
-export const ENABLED_SCENES: ReadonlyArray<number> = [2, 12];
+async function listScenesWithData(storeId: string): Promise<number[]> {
+  const res = await query<{ scene: number }>(
+    `SELECT DISTINCT fn_category_scene(p.category_id)::int AS scene
+       FROM store_sku_snapshots s
+       JOIN hq_products p ON p.id = s.product_id
+      WHERE s.store_id = $1
+        AND fn_category_scene(p.category_id) IS NOT NULL`,
+    [storeId],
+  );
+  return res.rows.map((r) => r.scene).filter((n) => Number.isFinite(n));
+}
 
 /** Dify questions workflow outputs.text 兼容字符串 / 对象，再剥 ```json 围栏 / <think> 等 */
 function tryParseDifyValue(raw: unknown): unknown {
@@ -895,13 +913,23 @@ export async function ensureStoreInsight(storeId: string): Promise<void> {
 }
 
 /**
- * 登录到该门店的统一引导任务：洞察（POI + 4 字段）+ 已开放场景的问卷题目。
+ * 登录到该门店的统一引导任务：洞察（POI + 4 字段）+ 该门店有数据场景的问卷题目。
  * 由 portal.switchActiveStore / auth.loginWith* fire-and-forget 调用；
  * 串行执行避免 Dify 并发挤兑，整体失败也不抛（内部函数都已自吞）。
+ *
+ * 哪些场景"开放" 早期是 hard-code [2, 12],现已改成动态查 store_sku_snapshots,
+ * 跟前端 HomePage/prices.index 的"有数据就能进"对齐。
  */
 export async function runStoreLoginBootstrap(storeId: string): Promise<void> {
   await ensureStoreInsight(storeId);
-  for (const scene of ENABLED_SCENES) {
+  let scenes: number[] = [];
+  try {
+    scenes = await listScenesWithData(storeId);
+  } catch (err) {
+    logger.warn({ err, storeId }, 'runStoreLoginBootstrap: listScenesWithData 失败,跳过问卷预生成');
+    return;
+  }
+  for (const scene of scenes) {
     await ensureSceneQuestions(storeId, scene);
   }
 }
@@ -1150,7 +1178,7 @@ const virtualShelfInFlight = new Set<string>();
  * 失败:status='failed' + raw_outputs={error: msg}
  */
 export async function ensureDiagnose(
-  storeId: string, scene: number, photoUrl: string, difyUser: string,
+  storeId: string, scene: number, photoUrls: string[], difyUser: string,
 ): Promise<void> {
   const key = `${storeId}:${scene}`;
   if (diagnoseInFlight.has(key)) return;
@@ -1162,7 +1190,7 @@ export async function ensureDiagnose(
     if (status === 'completed') return;
 
     await setAiStatus(storeId, scene, 'diagnose', 'processing', null);
-    const inputs = await buildAlignInputs({ storeId, scene }, photoUrl);
+    const inputs = await buildAlignInputs({ storeId, scene }, photoUrls);
 
     let outputs: Record<string, unknown>;
     try {

@@ -274,13 +274,15 @@ export function FlowPage() {
 
   const startDiagnosis = async () => {
     if (photos.length === 0 || photos.every((p) => !p.url)) return;
-    const rawUrl = photos.find((p) => p.url)?.url ?? '';
-    if (!rawUrl) return;
-    // 给 Dify 喂的必须是完整 http(s) URL。OSS 上传成功时已是 https；
-    // dev 走本地 fallback 时是相对路径，前端补上 origin（Dify 在公网时拿不到，但端点不再因 schema 报 400）
-    const firstPhotoUrl = rawUrl.startsWith('http')
-      ? rawUrl
-      : `${window.location.origin}${rawUrl}`;
+    // 给 Dify 喂的必须是完整 http(s) URL。OSS 上传成功时已是 https;
+    // dev 走本地 fallback 时是相对路径,前端补上 origin(Dify 在公网时拿不到,但端点不再因 schema 报 400)
+    const photoUrls = photos
+      .map((p) => p.url)
+      .filter((u): u is string => !!u)
+      .map((u) => (u.startsWith('http') ? u : `${window.location.origin}${u}`));
+    if (photoUrls.length === 0) return;
+    // detect 只看第一张原图(单图识别),Dify align 收全部
+    const firstPhotoUrl = photoUrls[0]!;
     setStage('diagnosing');
     setAiError(null);
     setDetectBoxes(null);
@@ -319,7 +321,7 @@ export function FlowPage() {
 
     // V028: Dify align / selection 触发后台任务,不读 SSE。后端 ensureXxx 落
     // runtime.{diagnose,strategy}_status / _raw_outputs;轮询自动拉。
-    void scenesApi.triggerDiagnose(scene, firstPhotoUrl).catch((e) => {
+    void scenesApi.triggerDiagnose(scene, photoUrls).catch((e) => {
       setAiError(`诊断触发失败:${(e as Error).message}`);
     });
     void scenesApi.triggerStrategy(scene).catch((e) => {
@@ -383,13 +385,13 @@ export function FlowPage() {
     // 拿到旧的 'failed' 覆盖乐观更新 → 用户看见"点了一下没反应,还得再点一次"。
     const tasks: Array<Promise<unknown>> = [];
     if (kind === 'diagnose' || kind === 'both') {
-      const rawUrl = photos.find((p) => p.url)?.url ?? '';
-      const photoUrl = rawUrl
-        ? (rawUrl.startsWith('http') ? rawUrl : `${window.location.origin}${rawUrl}`)
-        : '';
-      if (photoUrl) {
+      const photoUrls = photos
+        .map((p) => p.url)
+        .filter((u): u is string => !!u)
+        .map((u) => (u.startsWith('http') ? u : `${window.location.origin}${u}`));
+      if (photoUrls.length > 0) {
         tasks.push(
-          scenesApi.triggerDiagnose(scene, photoUrl).catch((e) => {
+          scenesApi.triggerDiagnose(scene, photoUrls).catch((e) => {
             setAiError(`诊断触发失败:${(e as Error).message}`);
           }),
         );
@@ -455,6 +457,33 @@ export function FlowPage() {
     nx[idx] = 'accept';
     setDecisions(nx);
     saveDraft.mutate({ decisions: nx });
+  };
+
+  /**
+   * confirm 阶段:在清单里把任意 accepted 条目反悔成 skip。
+   * 跟 review 阶段 `decide('skip', reason)` 同链路 —— 写勘误 + 改状态 + 保存草稿。
+   * 之所以不复用 decide(),是因为 decide() 强制按 reviewIndex 推进,confirm 里不想动 reviewIndex。
+   */
+  const cancelAccepted = (idx: number, reason: string) => {
+    if (!strategy) return;
+    const nextDec = [...decisions];
+    nextDec[idx] = 'skip';
+    const nextReasons = [...skipReasons];
+    nextReasons[idx] = reason;
+    setDecisions(nextDec);
+    setSkipReasons(nextReasons);
+
+    const item = strategy[idx]!;
+    const kind = classifyStrategyKind(item.action);
+    void scenesApi.submitCorrection(scene, {
+      skuCode: item.skuCode,
+      kind: kind === 'remove' ? 'remove' : 'add',
+      scope: 'decision',
+      reasonCode: 'manual_keep',
+      reasonText: reason,
+    }).catch(() => {});
+
+    saveDraft.mutate({ stage: 'confirm', decisions: nextDec, skipReasons: nextReasons });
   };
 
   /** "全部应用" 快进:把当前及之后所有未决条目默认 accept,直接跳到清单确认阶段 */
@@ -942,6 +971,7 @@ export function FlowPage() {
           skus={strategy}
           counts={counts}
           onRestore={restoreSku}
+          onCancelAccepted={cancelAccepted}
           onRecheck={() => { setReviewIndex(0); setStage('review'); }}
           onApply={() => apply.mutate()}
           applying={apply.isPending}
@@ -1571,7 +1601,7 @@ function SkipReasonSheet({
 type AcceptedItem = AiStrategyItem & { kind: StrategyKind };
 
 function ConfirmList({
-  accepted, skippedIdx, skipReasons, skus, counts, onRestore, onRecheck, onApply, applying, applyError,
+  accepted, skippedIdx, skipReasons, skus, counts, onRestore, onCancelAccepted, onRecheck, onApply, applying, applyError,
 }: {
   accepted: AcceptedItem[];
   skippedIdx: number[];
@@ -1579,12 +1609,16 @@ function ConfirmList({
   skus: AiStrategyItem[];
   counts: { remove: number; push: number };
   onRestore: (idx: number) => void;
+  /** 把一条已 accept 的条目改成 skip(等价于"这条跳过"+ 写勘误)。idx 是它在 strategy/skus 数组中的下标 */
+  onCancelAccepted: (idx: number, reason: string) => void;
   onRecheck: () => void;
   onApply: () => void;
   applying: boolean;
   applyError: boolean;
 }) {
   const [showSkipped, setShowSkipped] = useState(false);
+  // 点 accepted 条目的"取消上架/取消停供"→ 弹原因 sheet,选完调 onCancelAccepted
+  const [cancelTarget, setCancelTarget] = useState<{ idx: number; kind: StrategyKind; name: string } | null>(null);
   // 进 confirm 页自动弹一次操作提示。背景不虚化,清单仍可见;按"我知道了"关闭。
   const [showHint, setShowHint] = useState(true);
   const groups = [
@@ -1608,13 +1642,25 @@ function ConfirmList({
         {groups.map((g) => {
           const items = accepted.filter((s) => s.kind === g.kind);
           if (items.length === 0) return null;
+          const cancelLabel = g.kind === 'push' ? '取消上架' : '取消停供';
           return (
             <Card key={g.kind} pad={14}>
               <div style={{ fontSize: 13, fontWeight: 800, color: g.color, marginBottom: 8 }}>{g.label}（{items.length}）</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                {items.map((s) => (
-                  <ProductRow key={s.skuCode} sku={s} right={s.tags[0] ? <Chip tone={g.kind === 'remove' ? 'red' : 'green'} style={{ flexShrink: 0 }}>{s.tags[0]}</Chip> : undefined} />
-                ))}
+                {items.map((s) => {
+                  // 反查在 strategy(skus)中的原始 idx,用于 onCancelAccepted/写勘误。
+                  // strategy 内同 SKU 不会重复出现,findIndex 安全。
+                  const idx = skus.findIndex((x) => x.skuCode === s.skuCode);
+                  return (
+                    <ProductRow
+                      key={s.skuCode}
+                      sku={s}
+                      right={s.tags[0] ? <Chip tone={g.kind === 'remove' ? 'red' : 'green'} style={{ flexShrink: 0 }}>{s.tags[0]}</Chip> : undefined}
+                      cancelLabel={idx >= 0 ? cancelLabel : undefined}
+                      onCancel={idx >= 0 ? () => setCancelTarget({ idx, kind: g.kind, name: s.skuName }) : undefined}
+                    />
+                  );
+                })}
               </div>
             </Card>
           );
@@ -1707,11 +1753,33 @@ function ConfirmList({
           </div>
         </div>
       )}
+
+      {cancelTarget && (
+        <SkipReasonSheet
+          kind={cancelTarget.kind}
+          skuName={cancelTarget.name}
+          onCancel={() => setCancelTarget(null)}
+          onConfirm={(reason) => {
+            onCancelAccepted(cancelTarget.idx, reason);
+            setCancelTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function ProductRow({ sku, right, dim }: { sku: AiStrategyItem; right?: React.ReactNode; dim?: boolean }) {
+function ProductRow({
+  sku, right, dim, cancelLabel, onCancel,
+}: {
+  sku: AiStrategyItem;
+  right?: React.ReactNode;
+  dim?: boolean;
+  /** 详情弹窗里底部"取消上架"/"取消停供"按钮文案;不传则不显示按钮(诊断/跳过区直接复用) */
+  cancelLabel?: string;
+  /** 点击 cancel 按钮 → 由 caller 弹原因 sheet(本组件只关详情弹窗 + 通知) */
+  onCancel?: () => void;
+}) {
   const [detail, setDetail] = useState<SkuDetailLike | null>(null);
   return (
     <>
@@ -1733,7 +1801,12 @@ function ProductRow({ sku, right, dim }: { sku: AiStrategyItem; right?: React.Re
         </span>
         {right}
       </button>
-      <SkuDetailDialog sku={detail} onClose={() => setDetail(null)} />
+      <SkuDetailDialog
+        sku={detail}
+        onClose={() => setDetail(null)}
+        actionLabel={cancelLabel}
+        onAction={onCancel}
+      />
     </>
   );
 }
@@ -1761,6 +1834,28 @@ function AppliedPanel({
   const virtualStatus = rtQ.data?.virtualStatus;
   const virtualReady = virtualStatus === 'completed';
   const virtualFailed = virtualStatus === 'failed';
+
+  // 拿场景名判断"面包架/烘焙类"→ 木质货架外观 + 用商品 length 当视觉高度(平放陈列)。
+  const scenesQ = useQuery({ queryKey: ['scenes', 'list'], queryFn: scenesApi.list });
+  const sceneName = scenesQ.data?.scenes.find((s) => s.scene === scene)?.name ?? '';
+  const isBakery = /面包|烘焙/.test(sceneName);
+
+  // 拉本店 SKU 维度,虚拟陈列图按 length_cm / height_cm 真实比例绘制商品;
+  // 没拉到 → parseDifyOutput 回退到 Dify 的 height_cm 或硬编码 15 cm,导致看起来"统一高度"。
+  const storeSkusQ = useQuery({
+    queryKey: ['store', 'skus', 'scene', scene],
+    queryFn: () => storeApi.skus(scene),
+    enabled: virtualReady,
+    staleTime: 5 * 60_000,
+  });
+  const skuDims = useMemo(
+    () => (storeSkusQ.data?.skus ?? []).map((s) => ({
+      skuCode: s.skuCode,
+      depth: s.lengthCm,
+      height: s.heightCm,
+    })),
+    [storeSkusQ.data],
+  );
 
   // 跟 LastPage 同款 unwrap + shelfWidths 推导;陈列图渲染逻辑一致
   const virtualOutputs = (() => {
@@ -1823,7 +1918,9 @@ function AppliedPanel({
           <Card pad={10}>
             <VirtualShelfRenderer
               rawOutputs={virtualOutputs}
-              context={{ shelfWidths, newListedCodes: pushedSkuCodes }}
+              context={{ shelfWidths, newListedCodes: pushedSkuCodes, useLengthAsHeight: isBakery }}
+              skus={skuDims}
+              variant={isBakery ? 'wooden' : 'fridge'}
             />
           </Card>
         )}

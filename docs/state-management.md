@@ -205,11 +205,12 @@ defaultOptions: {
 
 ### Shelves / Scenes
 
+货架 / 调改业务直接走 [`features/shelves/api.ts`](../apps/web/src/features/shelves/api.ts) 本地 `scenesApi`,**不经过 `lib/hooks.ts`**。各 page 自己 `useQuery({ queryFn: scenesApi.list })`:
+
 | QueryKey | Stale | 消费者 |
 |---|---|---|
-| `['shelves','config', storeId]` | 60 s | SetupPage |
-| `['scenes','list']` | 10 min | 货盘首页、所有 scene 页 |
-| `['scenes','counts', storeId]` | 30 s | 货盘首页 badge |
+| `['scenes','list']` | 10 min | 货盘首页、所有 scene 页(`useScenes` from lib/hooks 也用同一 key) |
+| `['scenes', 'overview']` | — | WorkspacePage |
 | `['scenes', scene, 'runtime']` | — | FlowPage、InfoPage、QAPage、SetupPage |
 | `['scenes', scene, 'shelves']` | — | InfoPage、SetupPage |
 | `['scenes', scene, 'adjustments']` | — | RecordsPage、LastPage |
@@ -219,38 +220,25 @@ defaultOptions: {
 
 | QueryKey | Stale | 消费者 |
 |---|---|---|
-| `['prices','curve', storeId, skuCodes, daysBack]` | — | 价格图、SkuDetailDialog |
-| `['prices','changes', storeId, skuCode?, limit?]` | — | 历史对话框 |
+| `['prices','curve', storeId, skuCodes, daysBack]` | 60 s | 价格图、SkuDetailDialog(`usePriceCurve` from lib/hooks) |
 
-Mutation：`useSubmitPriceChange()` ([lib/prices/...](../apps/web/src/lib/prices) line 126-139)
-→ invalidate `['master','skus', ...]` + `['prices','curve', ...]` + `['prices','changes', ...]`
+V027 起价盘 app 改成"模拟器" —— `usePriceChanges` / `useSubmitPriceChange` / `pricesApi.adjust` / `pricesApi.changes` 已整体下线;调价历史从 `curve.periods` 相邻段不同价推导,"应用调价"按钮只提示用户去经营系统改,不再写后端。
 
 ### Posters
 
-| QueryKey | Stale | 消费者 |
-|---|---|---|
-| `['posters','tasks', scope, status, batchId, storeId, limit]` | 30 s | 海报主屏 |
-| `['posters','task', taskId]` | 30 s | 详情 |
-| `['posters','today-count']` | 60 s | 配额 badge |
-| `['posters','gallery', ...]` | 30 s | 画廊 |
-| `['posters','assets', kind]` | 60 s | 素材选择器 |
-| `['posters','sales-tracking', days]` | 5 min | 销量 dashboard |
-| `['posters','list', ...]` | 30 s | **已 deprecated**，删 |
+海报业务**不走 `lib/hooks.ts`**,改成 TanStack Start server functions:
 
-Mutations（[lib/api-client.ts:211+](../apps/web/src/lib/api-client.ts)）：
-- `useCreatePosterTasks` → invalidate tasks + today-count
-- `useCancelPosterBatch` → invalidate tasks
-- `useRegeneratePosterTask` → invalidate tasks + task detail
-- `useAdoptPoster` → invalidate `['posters']` **通配**（粒度过粗，可优化为 gallery 单 key）
-- `useDownloadPoster` → 不 invalidate（只增计数）
-- `useUploadPosterAsset` / `useDeletePosterAsset` → invalidate assets
+| 文件 | 业务 |
+|---|---|
+| [`lib/poster.functions.ts`](../apps/web/src/lib/poster.functions.ts) | 单张海报生成的同步外壳(POST tasks + 轮询) |
+| [`lib/poster-jobs.functions.ts`](../apps/web/src/lib/poster-jobs.functions.ts) | 任务队列 / 列表 / 取消批次 |
+| [`lib/poster-favorites.functions.ts`](../apps/web/src/lib/poster-favorites.functions.ts) | 收藏夹 CRUD |
+
+下载: `Result.tsx` 走 `lib/poster.functions.ts` 直 `jsonFetch('/posters/.../download')`;销量追踪 tab(`SalesTrackingView.tsx`)从 `JobsContext.recentJobs` 自聚合,不调 `/posters/sales-tracking` 接口。
 
 ### Promotions
 
-| QueryKey | Stale | 消费者 |
-|---|---|---|
-| `['promotions','active']` | 5 min | 海报促销 grid |
-| `['promotions','recommend']` | 5 min | 推荐 carousel |
+走 [`lib/promotions.functions.ts`](../apps/web/src/lib/promotions.functions.ts) 的 `getPersonalizedPromotions` (server function) + [`PromotionContext.tsx`](../apps/web/src/components/posters/PromotionContext.tsx),不走 `lib/hooks.ts`。
 
 ### Route Loader 预拉
 
@@ -427,16 +415,9 @@ JobsContext 用它把"多次入队的多个 batch"聚成一个用户可见的 se
 
 ### 重构残留
 
-1. ❌ `postersApi.generate()` / `postersApi.list()`：已 deprecated 仍在 [api-client.ts](../apps/web/src/lib/api-client.ts)。**全文 grep 后删**。
+1. ❌ 没有 `NO_STORE_SELECTED` (409) 的 catch block。后端现在不再返 409（改成 currentStore: null + route guard 跳转）。如果后端**回退**，前端就会陷入 401-redirect 循环。
 
-2. ❌ 没有 `NO_STORE_SELECTED` (409) 的 catch block。后端现在不再返 409（改成 currentStore: null + route guard 跳转）。如果后端**回退**，前端就会陷入 401-redirect 循环。
-
-3. ⚠️ `extractVirtualShelf()` 返回 raw outputs，VirtualShelfRenderer 消费 `unknown`。Dify workflow 改字段时静默崩，没有 schema 守护。
-
-### 失效粒度过粗
-
-- `useAdoptPoster()` invalidate `['posters']` 通配 → 重拉 tasks + gallery + assets + today-count + sales-tracking 全部
-- 应该只 invalidate `['posters', 'gallery']` 和 `['posters','task', taskId]`
+2. ⚠️ `extractVirtualShelf()` 返回 raw outputs，VirtualShelfRenderer 消费 `unknown`。Dify workflow 改字段时静默崩，没有 schema 守护。
 
 ### 错误兜底缺失
 

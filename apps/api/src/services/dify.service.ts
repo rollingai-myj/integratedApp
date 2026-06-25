@@ -55,6 +55,8 @@ function serializeInputs(
   for (const [k, v] of Object.entries(inputs)) {
     if (v == null || typeof v !== 'object') out[k] = v;
     else if (isDifyFileObject(v)) out[k] = v;
+    // Dify "Files"(数组) 输入必须保持数组形态,不能 JSON.stringify
+    else if (Array.isArray(v) && v.length > 0 && v.every(isDifyFileObject)) out[k] = v;
     else out[k] = JSON.stringify(v);
   }
   return out;

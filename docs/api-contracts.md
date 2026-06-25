@@ -225,8 +225,8 @@
 |---|---|---|---|---|
 | **GET** `/posters/generations/:generationId` | required | `:generationId` | `{ generation, taskId, batchId }` | |
 | **POST** `/posters/generations:claim` | required | `{ generationId? }` | `{ generation, taskId, batchId }` 或 204 | worker 拉队列 |
-| **POST** `/posters/generations/:generationId/adopt` | required + store | `:generationId` | `{ generation }`（含 `adopted:true`, `adoptedAt`） | 用户采纳 |
-| **POST** `/posters/generations/:generationId/download` | required + store | `:generationId` | `{ generation }`（`downloadCount` +1） | |
+| **POST** `/posters/generations/:generationId/adopt` | required + store | `:generationId` | `{ generation }`（含 `adopted:true`, `adoptedAt`） | 显式采纳；前端目前不调，仅集成测试 / 后台手动留存 |
+| **POST** `/posters/generations/:generationId/download` | required + store | `:generationId` | `{ url, count }`（`downloadCount` +1） | **同 task 首次下载 = 隐式采纳**：自动置 `is_adopted=true / adopted_at=now()`，作为销量追踪起点；后续下载只 +count，不改起点 |
 
 ### 画廊 + 配额 + 素材
 

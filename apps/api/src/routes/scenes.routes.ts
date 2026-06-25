@@ -39,7 +39,7 @@ export const scenesRouter = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024, files: 3 },
+  limits: { fileSize: 15 * 1024 * 1024, files: 3 },
 });
 
 function asyncHandler(
@@ -458,7 +458,7 @@ scenesRouter.post(
 // 用户关 tab / 刷新页面任务仍在 API 进程跑;前端通过 GET /scenes/:scene/runtime
 // 轮询 diagnose_status / strategy_status / virtual_status 字段拿状态。
 
-const diagnoseSchema = z.object({ photoUrl: z.string().min(1) });
+const diagnoseSchema = z.object({ photoUrls: z.array(z.string().min(1)).min(1).max(3) });
 
 scenesRouter.post(
   '/scenes/:scene/ai/diagnose', requireAuth, requireStore,
@@ -476,7 +476,7 @@ scenesRouter.post(
       targetStoreId: storeId, payload: { scene },
     }).catch(() => {});
     // fire-and-forget — ensureDiagnose 内部自带 in-flight 去重
-    void ensureDiagnose(storeId, scene, body.photoUrl, buildDifyUser(req.user!));
+    void ensureDiagnose(storeId, scene, body.photoUrls, buildDifyUser(req.user!));
     res.status(202).json({ accepted: true });
   }),
 );

@@ -1355,7 +1355,7 @@ erDiagram
     }
 ```
 
-> 怎么读这张图:店长选好商品 + 文案 + 模式 → 系统开一行 STORE_POSTER_TASKS(意图层,不变);系统调 AI 出图,每次出图记一行 STORE_POSTER_GENERATIONS(同任务可重试,attempt_no 自增,失败也有记录);店长在 N 张里选一张点"采用",该行 is_adopted=true + adopted_at 落时间戳。**这个时间戳是销量追踪的起点** —— 之后每周 ERP 灌进来的销售快照都会跟"采用前最近一期"做对比,在 v_poster_product_sales 视图里直接给"本款海报带来销量增长 X%"的报告。
+> 怎么读这张图:店长选好商品 + 文案 + 模式 → 系统开一行 STORE_POSTER_TASKS(意图层,不变);系统调 AI 出图,每次出图记一行 STORE_POSTER_GENERATIONS(同任务可重试,attempt_no 自增,失败也有记录);**店长点"下载"那一刻 = 采用** —— 同 task 首张被下载的 generation 被自动写 is_adopted=true + adopted_at = now()。**这个时间戳是销量追踪的起点** —— 之后每周 ERP 灌进来的销售快照都会跟"采用前最近一期"做对比,在 v_poster_product_sales 视图里直接给"本款海报带来销量增长 X%"的报告。
 
 ### `store_poster_tasks`
 
@@ -1413,9 +1413,9 @@ erDiagram
 | ai_model / ai_prompt / ai_response | TEXT / TEXT / JSONB | 模型名 / prompt / 原始响应 | 同上 | 审计 / 调试 |
 | generation_ms | INT | 耗时（ms） | 同上 | 性能分析 |
 | error_code / error_message | TEXT | 失败时记下错误码和错文；前端会把"OpenRouter 原始报错"也展给店长（以前只显示泛泛的"生成失败"） | 同上 | 前端错误展示 |
-| **is_adopted** | BOOLEAN NOT NULL | 店长点过"采用"吗？这是销量追踪的起点 —— 从采用那一刻往后看销量涨没涨 | `adoptGeneration` | v_poster_product_sales 销量起点 |
-| adopted_at | TIMESTAMPTZ | 采用时刻 | 同上 | 同上 |
-| download_count | INT NOT NULL, DEFAULT 0 | 下载次数 | `recordDownload` | 使用频率 |
+| **is_adopted** | BOOLEAN NOT NULL | 店长这张海报"用了"吗？销量追踪的起点。**同 task 首次下载会自动置 true**（不需要单独点"采用"按钮）| `recordDownload`（隐式）/ `adoptGeneration`（显式备用）| v_poster_product_sales 销量起点 |
+| adopted_at | TIMESTAMPTZ | 首次下载时刻（= 采用时刻）| 同上 | 同上 |
+| download_count | INT NOT NULL, DEFAULT 0 | 下载次数；首次下载会同时触发采纳 | `recordDownload` | 使用频率 |
 
 **关键约束**：
 - 每个任务的每次尝试号唯一，不会出现两条"第 2 次尝试"（`UNIQUE (task_id, attempt_no)`）
@@ -1741,8 +1741,8 @@ erDiagram
 - **提交任务**：INSERT `store_poster_tasks` + INSERT `store_poster_task_products` + INSERT `store_poster_generations(attempt_no=1, queued)`
 - **worker 认领+生成**：UPDATE generation 进入 claimed → processing → succeeded（写 poster_image_url）/ failed（写 error_*）
 - **重新生成**：取消旧 queued/claimed/processing 的 generation + INSERT 新 generation(attempt_no=max+1)
-- **采用**：UPDATE generation.is_adopted=true / adopted_at
-- **下载**：UPDATE generation.download_count++
+- **下载**：UPDATE generation.download_count++；**同 task 首次** 同时 UPDATE is_adopted=true / adopted_at=now()（隐式采纳）
+- **显式采纳**（手动接口，前端未使用）：UPDATE generation.is_adopted=true / adopted_at
 - **上传素材**：INSERT `store_poster_assets`
 - **删素材**：UPDATE `store_poster_assets.deleted_at`（软删）
 

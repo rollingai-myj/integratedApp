@@ -250,7 +250,10 @@ export function parseDifyOutput(
         if (rb.sku_code) {
           const sku = skuDimMap.get(rb.sku_code);
           if (sku) {
-            const dimVal = useLengthAsHeight ? sku.height : sku.depth;
+            // 普通货架:商品直立摆放,正面视觉高度 = 商品高 (sku.height,即 hq_products.height_cm)
+            // 烘焙类:商品平放在层板上,正面视觉高度 = 商品深 (sku.depth,即 hq_products.length_cm)
+            // Dify 返回的 rb.height_cm 字段语义不可靠,主数据维度可用时直接覆盖。
+            const dimVal = useLengthAsHeight ? sku.depth : sku.height;
             if (dimVal && dimVal > 0) heightCm = dimVal;
           }
         }

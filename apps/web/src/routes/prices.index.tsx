@@ -5,8 +5,9 @@
  * 顶层 level=0 + 子类目）改一处，两个模块自动同步。emoji 派生走 lib/scenes.ts
  * 的 emojiForScene。
  *
- * 当前只有 "冷藏" 场景接入了真实价盘数据 → 链到 /prices/cold；其它场景灰显，
- * Tooltip "数据准备中"。后续接入新场景时把 ENABLED_LINKS 加一行即可。
+ * 是否可点 = 该场景在本店 store_sku_snapshots 是否有数据(perSceneQueries 直接拿
+ * count)。count > 0 → 可点链到 /prices/cold;count = 0 → 灰显"暂无数据"。
+ * `/prices/cold` 一个组件吃所有场景,靠 ?scene= 区分(缺省 = 冷藏,向下兼容旧 URL)。
  *
  * 适配：右上角 ⌂ 主页键回门户(BrandHeader 内置,不传 upTo 时入口无 ← 返回键),
  * 与子页面「左 ← 返回 + 右 ⌂ 主页」交互一致。
@@ -14,12 +15,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { useQueries } from '@tanstack/react-query';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import { IOSDevice } from '@/components/IOSDevice';
 import { BrandHeader } from '@/components/prices/BrandHeader';
 import { useMe } from '@/lib/auth';
@@ -36,16 +31,6 @@ export const Route = createFileRoute('/prices/')({
     ],
   }),
 });
-
-/**
- * 已接入价盘的场景名 → 跳转 search 参数。
- * cold 页一个组件吃两类数据，靠 ?scene= 区分（缺省 = 冷藏，向下兼容旧 URL）。
- * 不在表里的场景灰显。
- */
-const ENABLED_SCENES: Record<string, { scene?: string }> = {
-  '冷藏': {},
-  '面包架【烘焙】': { scene: '面包架【烘焙】' },
-};
 
 function PricesHomePage() {
   const meQuery = useMe();
@@ -72,6 +57,14 @@ function PricesHomePage() {
     countByScene.set(s.scene, q?.data ? q.data.skus.length : null);
   });
 
+  // 可选(有数据)的场景置顶,组内保持原顺序。JS sort 稳定 —— 加载阶段全部 hasData=false,
+  // 排序不打乱原顺序;各 query 陆续返回后,有数据的场景才被浮到顶。
+  const sortedScenes = scenes.slice().sort((a, b) => {
+    const ea = (countByScene.get(a.scene) ?? 0) > 0 ? 1 : 0;
+    const eb = (countByScene.get(b.scene) ?? 0) > 0 ? 1 : 0;
+    return eb - ea;
+  });
+
   return (
     <IOSDevice>
     {/* min-h-full（而非 min-h-screen）：IOSDevice 内层 overflow-y-auto 高度 =
@@ -87,52 +80,47 @@ function PricesHomePage() {
             <Loader2 className="w-5 h-5 animate-spin mr-2" /> 加载场景…
           </div>
         ) : (
-          <TooltipProvider delayDuration={150}>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              {scenes.map((s) => {
-                const key = `${s.scene}-${s.name}`;
-                const enabledSearch = ENABLED_SCENES[s.name];
-                const emoji = emojiForScene(s.name);
-                if (enabledSearch) {
-                  const count = countByScene.get(s.scene);
-                  return (
-                    <Link
-                      key={key}
-                      to="/prices/cold"
-                      search={enabledSearch}
-                      className="group rounded-xl border bg-card p-4 shadow-sm transition active:scale-[0.98]"
-                    >
-                      <div className="text-3xl">{emoji}</div>
-                      <div className="mt-3 text-base font-medium text-foreground">{s.name}</div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
-                        {count === null || count === undefined ? (
-                          <span className="text-muted-foreground/70">加载中…</span>
-                        ) : (
-                          <><span className="num font-semibold text-brand">{count}</span> 个商品</>
-                        )}
-                      </div>
-                      <div className="mt-2 text-[11px] text-brand">进入 →</div>
-                    </Link>
-                  );
-                }
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            {sortedScenes.map((s) => {
+              const key = `${s.scene}-${s.name}`;
+              const emoji = emojiForScene(s.name);
+              const count = countByScene.get(s.scene);
+              const loading = !storeId || count === null || count === undefined;
+              const hasData = !loading && (count ?? 0) > 0;
+              if (hasData) {
+                // 冷藏走默认 URL(向下兼容);其他场景带 ?scene= 走同一个 cold 页组件
+                const searchParam = s.name === '冷藏' ? {} : { scene: s.name };
                 return (
-                  <Tooltip key={key}>
-                    <TooltipTrigger asChild>
-                      <div
-                        aria-disabled
-                        className="cursor-not-allowed rounded-xl border bg-card p-4 opacity-40"
-                      >
-                        <div className="text-3xl">{emoji}</div>
-                        <div className="mt-3 text-base font-medium text-foreground">{s.name}</div>
-                        <div className="mt-0.5 text-xs text-muted-foreground">敬请期待</div>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>数据准备中</TooltipContent>
-                  </Tooltip>
+                  <Link
+                    key={key}
+                    to="/prices/cold"
+                    search={searchParam}
+                    className="group rounded-xl border bg-card p-4 shadow-sm transition active:scale-[0.98]"
+                  >
+                    <div className="text-3xl">{emoji}</div>
+                    <div className="mt-3 text-base font-medium text-foreground">{s.name}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      <span className="num font-semibold text-brand">{count}</span> 个商品
+                    </div>
+                    <div className="mt-2 text-[11px] text-brand">进入 →</div>
+                  </Link>
                 );
-              })}
-            </div>
-          </TooltipProvider>
+              }
+              return (
+                <div
+                  key={key}
+                  aria-disabled
+                  className="cursor-not-allowed rounded-xl border bg-card p-4 opacity-40"
+                >
+                  <div className="text-3xl">{emoji}</div>
+                  <div className="mt-3 text-base font-medium text-foreground">{s.name}</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {loading ? '加载中…' : '暂无数据'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </main>
     </div>

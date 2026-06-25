@@ -5,6 +5,7 @@
  * 字段名以后端实际返回为准（用本地 interface，不强依赖 @myj/shared 旧契约）。
  */
 import { ApiError } from '@/lib/api-client';
+import { compressShelfPhoto } from './lib/compressShelfPhoto';
 
 const BASE = '/api/v1';
 
@@ -70,6 +71,12 @@ export interface StoreSku {
   brand: string | null;
   spec: string | null;
   unit: string | null;
+  /** 商品深度(cm),hq_products.length_cm —— 虚拟陈列图按这个推每个商品高度比例 */
+  lengthCm: number | null;
+  /** 商品宽度(cm) */
+  widthCm: number | null;
+  /** 商品高度(cm),烘焙类陈列图用这个当视觉高度 */
+  heightCm: number | null;
   categoryPath: string | null;
   scene: number | null;
   retailPrice: number | null;
@@ -223,8 +230,9 @@ export const scenesApi = {
 
   /** multipart 上传货架照片 → 后端落 OSS + 追加 runtime.photos */
   uploadPhotos: async (scene: number, files: File[]): Promise<{ urls: string[] }> => {
+    const prepared = await Promise.all(files.map((f) => compressShelfPhoto(f)));
     const fd = new FormData();
-    files.forEach((f) => fd.append('files', f));
+    prepared.forEach((f) => fd.append('files', f));
     const res = await fetch(`${BASE}/scenes/${scene}/photos`, {
       method: 'POST',
       credentials: 'include',
@@ -243,9 +251,9 @@ export const scenesApi = {
    * V028: 触发 Dify align(三段诊断) 后台任务。返回 202 立即,前端轮询 runtime.diagnoseStatus。
    * 不再 SSE 透传 — 关 tab/刷新页面任务仍在 API 进程跑。
    */
-  triggerDiagnose: (scene: number, photoUrl: string) =>
+  triggerDiagnose: (scene: number, photoUrls: string[]) =>
     request<{ accepted: boolean }>(`/scenes/${scene}/ai/diagnose`, {
-      method: 'POST', body: { photoUrl },
+      method: 'POST', body: { photoUrls },
     }),
 
   /** V028: 触发 Dify selection(选品策略) 后台任务。前端轮询 runtime.strategyStatus。 */

@@ -5,6 +5,7 @@
 import { useMemo } from 'react';
 import { parseDifyOutput, type SkuDimLite } from './parseDifyOutput';
 import { VirtualShelfView } from './VirtualShelfView';
+import { WoodenShelfView } from './WoodenShelfView';
 
 interface Ctx {
   /** 每个 shelf_id 的宽度（cm），按数组索引对应 shelf_id-1 */
@@ -20,9 +21,11 @@ interface Props {
   context: Ctx | null | undefined;
   /** 可选：提供 SKU 维度，让真实高度回填到 block.heightCm */
   skus?: SkuDimLite[];
+  /** 货架视觉:fridge=冷柜玻璃门(默认/冷藏场景),wooden=木质烘焙架(面包架场景) */
+  variant?: 'fridge' | 'wooden';
 }
 
-export function VirtualShelfRenderer({ rawOutputs, context, skus = [] }: Props) {
+export function VirtualShelfRenderer({ rawOutputs, context, skus = [], variant = 'fridge' }: Props) {
   const ctx = context ?? {};
   const shelfWidths = ctx.shelfWidths && ctx.shelfWidths.length ? ctx.shelfWidths : [120];
   const layout = useMemo(() => {
@@ -46,6 +49,9 @@ export function VirtualShelfRenderer({ rawOutputs, context, skus = [] }: Props) 
         暂无可渲染的货架布局
       </div>
     );
+  }
+  if (variant === 'wooden') {
+    return <WoodenShelfView layout={layout} shelfWidthCm={shelfWidths[0]} />;
   }
   return <VirtualShelfView layout={layout} shelfWidthCm={shelfWidths[0]} />;
 }
