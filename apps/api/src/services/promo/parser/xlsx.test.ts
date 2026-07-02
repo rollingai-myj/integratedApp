@@ -31,6 +31,17 @@ describe('readWorkbook', () => {
     expect(r.categoryName).toBe('39饼干');
   });
 
+  it('商品代码为 7 位数字时补前导 0', () => {
+    const buf = makeWb({
+      会员价: [
+        ['大类','商品代码','品名及规格','单位','原零售价','具体促销方式','包含商品数','促销价','促销组','开始时间','结束时间'],
+        ['39饼干',1174953,'黄鹤楼(硬8度)香烟(包)','包',20,'18元/1包',1,18,23,'2026-06-15','2026-06-30'],
+      ],
+    });
+    const { rows } = readWorkbook(buf);
+    expect(rows[0]!.skuCode).toBe('01174953');
+  });
+
   it('周末啤酒日: activity_type=weekend_beer', () => {
     const buf = makeWb({
       周末啤酒日: [

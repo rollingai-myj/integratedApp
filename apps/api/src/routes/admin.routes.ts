@@ -23,6 +23,7 @@ import type { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { AppError, ErrorCodes } from '../lib/errors.js';
+import { decodeUploadFileName } from '../lib/upload-input.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireRole } from '../middleware/role.js';
 import { writeAuditEvent, type AuditEventKind } from '../services/audit.service.js';
@@ -473,18 +474,19 @@ adminRouter.post(
     if (!file) {
       throw new AppError(400, ErrorCodes.BAD_REQUEST, '缺少上传文件 (field name: file)');
     }
+    const fileName = decodeUploadFileName(file.originalname, `${kind}.csv`);
     const result = await uploadAndStage({
       kind: kind as UploadKind,
-      fileName: file.originalname || `${kind}.csv`,
+      fileName,
       buffer: file.buffer,
       uploadedBy: req.user!.id,
     });
     auditAdmin(
       req,
       'app_setting_change',
-      `上传 ${kind} CSV (${file.originalname || 'unnamed'}, ${result.validRows}/${result.totalRows} 行有效)`,
+      `上传 ${kind} CSV (${fileName}, ${result.validRows}/${result.totalRows} 行有效)`,
       result.batchId,
-      { kind, fileName: file.originalname, ...result },
+      { kind, fileName, ...result },
     );
     res.status(201).json(result);
   }),

@@ -34,7 +34,7 @@ export function BrandHeader({ upTo }: Props) {
           <Link to="/prices" className="flex min-w-0 items-center gap-2.5">
             <div className="min-w-1 leading-tight">
               <div className="label-eyebrow" style={{ color: 'var(--brand)' }}>
-                Price · 价盘助手
+                Price · 调价模拟器
               </div>
               <div className="truncate text-[13px] font-bold text-foreground">
                 {storeCode ? `门店 ${storeCode}` : '未选择门店'}

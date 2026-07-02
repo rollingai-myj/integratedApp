@@ -172,11 +172,14 @@ const PriceCurveChart = memo(function PriceCurveChart({
   );
 });
 
-function periodLabel(p: CurvePeriod): string {
+function periodLabel(p: CurvePeriod, previousPeriod?: CurvePeriod | null): string {
   if (p.startDate && p.endDate && p.startDate !== p.endDate) {
     return `${fmtShort(new Date(p.startDate))} ～ ${fmtShort(new Date(p.endDate))}`;
   }
-  if (p.endDate) return `之前 ～ ${fmtShort(new Date(p.endDate))}`;
+  if (p.endDate) {
+    const labelStart = previousPeriod?.endDate;
+    return `${labelStart ? fmtShort(new Date(labelStart)) : '之前'} ～ ${fmtShort(new Date(p.endDate))}`;
+  }
   if (p.startDate) return `${fmtShort(new Date(p.startDate))} ～ 至今`;
   return '当前';
 }
@@ -257,17 +260,21 @@ export function SkuDetailDialog({
     }
     // 柱状图只显示销量快照里"已经有数据"的价格段 —— 调价当下的孤立 price_change
     // 在 fact 表只有价格没有销量，柱子永远是 0，渲染出来反而误导
-    return [...periods]
-      .filter((p) => p.hasSalesData)
-      .sort((a, b) => b.price - a.price)
-      .map((p) => ({
-        price: p.price,
-        monthlyProfit: p.monthlyGrossProfit,
-        monthlySales: p.monthlySales,
-        periodLabel: periodLabel(p),
-        startDate: p.startDate,
-        endDate: p.endDate,
-        hasSalesData: p.hasSalesData,
+    return periods
+      .map((p, index) => ({
+        period: p,
+        label: periodLabel(p, periods[index - 1]),
+      }))
+      .filter(({ period }) => period.hasSalesData)
+      .sort((a, b) => b.period.price - a.period.price)
+      .map(({ period, label }) => ({
+        price: period.price,
+        monthlyProfit: period.monthlyGrossProfit,
+        monthlySales: period.monthlySales,
+        periodLabel: label,
+        startDate: period.startDate,
+        endDate: period.endDate,
+        hasSalesData: period.hasSalesData,
       }));
   }, [sku, curve]);
 

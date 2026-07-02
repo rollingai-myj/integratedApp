@@ -3,6 +3,7 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { AppError, ErrorCodes } from '../lib/errors.js';
+import { decodeUploadFileName } from '../lib/upload-input.js';
 import { requireAuth } from '../middleware/auth.js';
 import { requireRole } from '../middleware/role.js';
 import {
@@ -24,8 +25,7 @@ promotionsRouter.post(
   upload.single('file'),
   asyncHandler(async (req, res) => {
     if (!req.file) throw new AppError(400, ErrorCodes.BAD_REQUEST, '缺少 file 字段');
-    // multer 按 RFC2047 / latin1 解 multipart filename;中文文件名要按 utf8 重解一遍
-    const fileName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+    const fileName = decodeUploadFileName(req.file.originalname, 'promotions.xlsx');
     const result = await uploadPromotion(
       {
         fileBuffer: req.file.buffer,
