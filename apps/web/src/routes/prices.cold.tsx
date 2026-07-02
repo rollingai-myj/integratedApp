@@ -350,7 +350,6 @@ function ColdPage() {
       <SkuDetailDialog
         row={detailRow}
         curve={detailRow ? curveByCode.get(detailRow.skuCode) ?? null : null}
-        diagnosis={detailRow ? diagnoses[detailRow.skuCode] : undefined}
         open={!!detailRow}
         onOpenChange={(v) => !v && setDetailRow(null)}
       />
@@ -413,8 +412,6 @@ function SkuCard({
 }) {
   const sku = rowToSku(row, curve?.raw);
   const changed = sku.hasAdjusted;
-  const suggestion = diagnosis?.suggestion;
-  const showTag = diagnosis && (suggestion === 'raise' || suggestion === 'lower');
 
   return (
     <div
@@ -447,28 +444,22 @@ function SkuCard({
                 {sku.spec} · {sku.brand}
               </div>
             </div>
-            {showTag && (
+            {diagnosis && (
               <span
-                className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight"
+                className="inline-flex min-h-7 w-[136px] shrink-0 items-center justify-center rounded-full px-2 py-1 text-center text-[10px] font-semibold leading-[1.15]"
                 style={{
-                  maxWidth: diagnosis.source === 'rule' ? '120px' : undefined,
-                  textAlign: 'right',
                   background:
-                    suggestion === 'raise'
+                    diagnosis.profitDirection === 'up'
                       ? 'color-mix(in oklab, #10B981 12%, transparent)'
                       : 'color-mix(in oklab, #EF4444 12%, transparent)',
-                  color: suggestion === 'raise' ? '#059669' : '#DC2626',
+                  color: diagnosis.profitDirection === 'up' ? '#059669' : '#DC2626',
                   border:
-                    suggestion === 'raise'
+                    diagnosis.profitDirection === 'up'
                       ? '1px solid color-mix(in oklab, #10B981 24%, transparent)'
                       : '1px solid color-mix(in oklab, #EF4444 24%, transparent)',
                 }}
               >
-                {diagnosis.source === 'rule'
-                  ? diagnosis.diagnosis
-                  : suggestion === 'raise'
-                  ? '有涨价机会'
-                  : '有降价空间'}
+                {diagnosis.diagnosis}
               </span>
             )}
           </div>

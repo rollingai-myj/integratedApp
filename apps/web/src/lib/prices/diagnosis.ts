@@ -8,8 +8,24 @@ import type { CurveData, SKU } from './types';
 export interface SkuDiagnosis {
   diagnosis: string;
   suggestion: 'raise' | 'lower' | 'keep';
+  profitDirection: 'up' | 'down';
   /** 当前只有 'rule'；保留 source 字段为后续扩展留口 */
   source: 'rule';
+}
+
+function daysBetween(start: string | null, end: string | null): number | null {
+  if (!start || !end) return null;
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return null;
+  return Math.max(1, Math.round((endMs - startMs) / 86_400_000));
+}
+
+function formatYuan(value: number): string {
+  return (Math.round(value * 100) / 100).toLocaleString('zh-CN', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
 }
 
 /**
@@ -30,18 +46,24 @@ export function ruleBasedDiagnosis(_sku: SKU, curve: CurveData | null): SkuDiagn
   if (Math.abs(first.price - last.price) < 0.01) return null;
   const priceDown = last.price < first.price;
   const profitUp = last.monthlyGrossProfit > first.monthlyGrossProfit;
+  const days = daysBetween(first.endDate ?? first.startDate, last.endDate ?? last.startDate);
+  const action = priceDown ? '降价' : '涨价';
+  const profitDirection = profitUp ? 'up' : 'down';
+  const profitText = profitUp ? '增加' : '减少';
+  const profitDelta = Math.abs(last.monthlyGrossProfit - first.monthlyGrossProfit);
+  const diagnosis = `${action}后${days != null ? `${days}天内` : ''}，月均利润${profitText}${formatYuan(profitDelta)}元`;
 
   if (priceDown && profitUp) {
-    return { diagnosis: '降价后利润增加，可尝试继续降价', suggestion: 'lower', source: 'rule' };
+    return { diagnosis, suggestion: 'lower', profitDirection, source: 'rule' };
   }
   if (priceDown && !profitUp) {
-    return { diagnosis: '降价后利润减少，可尝试回调价格', suggestion: 'raise', source: 'rule' };
+    return { diagnosis, suggestion: 'raise', profitDirection, source: 'rule' };
   }
   if (!priceDown && profitUp) {
-    return { diagnosis: '涨价后利润增加，可尝试继续涨价', suggestion: 'raise', source: 'rule' };
+    return { diagnosis, suggestion: 'raise', profitDirection, source: 'rule' };
   }
   if (!priceDown && !profitUp) {
-    return { diagnosis: '涨价后利润减少，可尝试回调价格', suggestion: 'lower', source: 'rule' };
+    return { diagnosis, suggestion: 'lower', profitDirection, source: 'rule' };
   }
   return null;
 }

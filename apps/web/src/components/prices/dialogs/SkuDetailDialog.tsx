@@ -40,12 +40,10 @@ import {
   type SKU,
 } from '@/lib/prices/types';
 import type { StoreSkuRow } from '@myj/shared';
-import type { SkuDiagnosis } from '@/lib/prices/diagnosis';
 
 interface Props {
   row: StoreSkuRow | null;
   curve: CurveData | null;          // 已适配好的曲线数据
-  diagnosis?: SkuDiagnosis;          // 当前 SKU 的诊断（若有）
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }
@@ -187,7 +185,6 @@ function periodLabel(p: CurvePeriod, previousPeriod?: CurvePeriod | null): strin
 export function SkuDetailDialog({
   row,
   curve,
-  diagnosis,
   open,
   onOpenChange,
 }: Props) {
@@ -527,30 +524,6 @@ export function SkuDetailDialog({
               <Cell label="月销量" value={sku.ownStoreSales.toString()} />
               <Cell label="月销售额" value={fmtMoney(monthSales)} />
               <Cell label="月均毛利" value={fmtMoney(monthProfit)} brand />
-            </div>
-          )}
-
-          {diagnosis?.diagnosis && (
-            <div
-              className="px-3 py-2.5 text-xs leading-relaxed"
-              style={{
-                borderRadius: '14px',
-                background:
-                  diagnosis.suggestion === 'raise'
-                    ? 'color-mix(in oklab, #10B981 8%, transparent)'
-                    : diagnosis.suggestion === 'lower'
-                    ? 'color-mix(in oklab, #EF4444 8%, transparent)'
-                    : 'color-mix(in oklab, var(--brand) 6%, transparent)',
-                border:
-                  diagnosis.suggestion === 'raise'
-                    ? '1px solid color-mix(in oklab, #10B981 20%, transparent)'
-                    : diagnosis.suggestion === 'lower'
-                    ? '1px solid color-mix(in oklab, #EF4444 20%, transparent)'
-                    : '1px solid var(--border)',
-              }}
-            >
-              <span className="font-semibold">🤖 智能建议：</span>
-              <span className="text-muted-foreground">{diagnosis.diagnosis}</span>
             </div>
           )}
 
