@@ -1,6 +1,7 @@
 // apps/api/src/services/promo/parser/xlsx.ts
 import * as XLSX from 'xlsx';
 import type { PromoActivityType } from '@myj/shared';
+import { normalizeSkuCode } from '../../../lib/upload-input.js';
 
 export interface RawSheetRow {
   activityType: PromoActivityType;
@@ -91,7 +92,7 @@ export function readWorkbook(buf: Buffer): {
       const row: RawSheetRow = {
         activityType,
         sheetRowNo: i + 1,
-        skuCode: String(r[cSku]).trim(),
+        skuCode: normalizeSkuCode(String(r[cSku])),
         skuNameOriginal: String(r[cName] ?? '').trim(),
         unit: cUnit >= 0 ? (r[cUnit] != null ? String(r[cUnit]).trim() : null) : null,
         originalPrice: origPrice,

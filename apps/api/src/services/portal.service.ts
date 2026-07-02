@@ -21,7 +21,7 @@ import type {
 
 const MODULE_DEFS: Array<{ key: ModuleKey; label: string }> = [
   { key: 'shelves', label: '货盘选品' },
-  { key: 'prices', label: '价盘管理' },
+  { key: 'prices', label: '调价模拟器' },
   { key: 'posters', label: '活动海报' },
   { key: 'admin', label: '后台管理' },
 ];

@@ -26,7 +26,7 @@ export const Route = createFileRoute('/prices/')({
   component: PricesHomePage,
   head: () => ({
     meta: [
-      { title: '美宜佳价盘调整助手 · 品类选择' },
+      { title: '美宜佳调价模拟器 · 品类选择' },
       { name: 'description', content: '美宜佳便利店运营人员的单品类价格调整决策工具' },
     ],
   }),

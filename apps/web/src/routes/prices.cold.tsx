@@ -56,7 +56,7 @@ export const Route = createFileRoute('/prices/cold')({
   }),
   head: () => ({
     meta: [
-      { title: '价盘分析 · 美宜佳' },
+      { title: '调价模拟器 · 美宜佳' },
       { name: 'description', content: '美宜佳门店价格诊断、调整与效果追踪' },
       {
         name: 'viewport',
@@ -100,7 +100,7 @@ function ColdPage() {
     () => allRows.map((r: StoreSkuRow) => r.skuCode),
     [allRows],
   );
-  const curveQuery = usePriceCurve(storeId, allSkuCodes, 90);
+  const curveQuery = usePriceCurve(storeId, allSkuCodes, 365);
 
   // 曲线按 skuCode 索引 + 适配到原版 CurveData（V027：内含 raw PriceCurveSku 供 rowToSku 用）
   const curveByCode = useMemo(() => {
@@ -250,7 +250,7 @@ function ColdPage() {
         <div className="min-h-screen bg-background">
           <BrandHeader upTo="/prices" />
           <div className="px-6 py-16 text-center text-sm text-muted-foreground">
-            请先选择门店再进入价盘
+            请先选择门店再进入调价模拟器
           </div>
         </div>
       </IOSDevice>
@@ -269,7 +269,7 @@ function ColdPage() {
               COLD CHAIN · 2025 Q4
             </div>
             <h1 className="mt-1 text-[26px] font-extrabold leading-[1.1] tracking-tight">
-              {sceneName}价盘
+              {sceneName}调价模拟器
             </h1>
           </div>
           <button
@@ -413,7 +413,6 @@ function SkuCard({
 }) {
   const sku = rowToSku(row, curve?.raw);
   const changed = sku.hasAdjusted;
-  const up = sku.currentPrice > sku.originalPrice;
   const suggestion = diagnosis?.suggestion;
   const showTag = diagnosis && (suggestion === 'raise' || suggestion === 'lower');
 
@@ -477,27 +476,8 @@ function SkuCard({
           <div className="mt-2 flex items-center justify-between gap-2">
             <div className="flex items-baseline gap-2">
               <span className="num text-[18px] leading-none">{fmtMoney(sku.currentPrice)}</span>
-              {changed && (
-                <span
-                  className={up ? 'chip-base' : 'chip-base chip-green-soft'}
-                  style={
-                    up
-                      ? {
-                          background: 'color-mix(in oklab, var(--up) 12%, transparent)',
-                          color: 'var(--up)',
-                          borderColor: 'color-mix(in oklab, var(--up) 20%, transparent)',
-                        }
-                      : undefined
-                  }
-                >
-                  <span className="num">
-                    {up ? '▲' : '▼'}{' '}
-                    {fmtMoney(Math.abs(sku.currentPrice - sku.originalPrice))}
-                  </span>
-                </span>
-              )}
               <span className="num text-[11px] text-muted-foreground">
-                批 {fmtMoney(sku.wholesalePrice)}
+                批发价 {fmtMoney(sku.wholesalePrice)}
               </span>
             </div>
             <button

@@ -10,6 +10,7 @@
  * 字段值都是人类友好的(store_code / category_name 而不是 UUID),
  * 后端解析时做 FK lookup,把 store_code → store_id 等。
  */
+import { normalizeSkuCode } from '../../lib/upload-input.js';
 
 // promotions 不走这套简化 CSV staging 框架,继续用 hq_promo_batches 的 xlsx 工作流
 // (POST /promotions/batches:upload),因为它需要多 sheet 解析 + 库内联表 + 凑单池
@@ -238,7 +239,7 @@ export function parseRow(
 
     switch (col.type) {
       case 'string':
-        data[col.key ?? col.name] = raw;
+        data[col.key ?? col.name] = col.name === 'sku_code' ? normalizeSkuCode(raw) : raw;
         break;
       case 'number': {
         const n = Number(raw);
